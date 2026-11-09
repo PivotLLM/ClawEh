@@ -10,10 +10,10 @@ group of the sidebar.
 
 | Use | Config key | What it does now |
 |---|---|---|
-| **Text** | `text` | Recorded for agents to use in a later release. |
-| **Images** | `image` | Recorded for agents to use in a later release. |
-| **Speech (TTS)** | `tts` | Recorded for agents to use in a later release. Shows **Voice** and **Format**, the defaults a speech call uses (`tts_defaults`). |
-| **Transcription (STT)** | `stt` | Turns incoming voice messages into text. See [Voice messages and transcription](../channels/voice.md). |
+| **Text** | `text` | Writes, translates or summarises for an agent. See [Agents using task models](#agents-using-task-models). |
+| **Images** | `image` | Makes or edits images for an agent. Shows **Images through** (`image_api`): **Chat (image output)** (`chat`, the default: a chat call that returns images, as Gemini image models do) or **Images API** (`images`: OpenAI-style `/images/generations` and `/images/edits`; OpenRouter's `/images`, which can't edit). |
+| **Speech (TTS)** | `tts` | Speaks text aloud for an agent. Shows **Voice** and **Format**, the defaults a speech call uses (`tts_defaults`). |
+| **Transcription (STT)** | `stt` | Turns incoming voice messages into text, and transcribes audio for an agent. See [Voice messages and transcription](../channels/voice.md). |
 | **Vision** | `vision` | Describes images for an agent whose model can't see them. See [Vision](#vision). |
 | **Classify** | `classify` | The models an agent's **Classifier model** can be. See [Classifiers](../agents/classifiers.md). |
 
@@ -35,10 +35,21 @@ from the provider's protocol:
 
 | Use | Providers that can serve it |
 |---|---|
-| Text, Classify | Any provider except a person. |
-| Transcription (STT) | `openai-chat` and `openai-responses` providers (an OpenAI-style `/audio/transcriptions` endpoint). The provider also needs a **Base URL** and an **API Key**; a model without them is skipped when voice is transcribed. |
+| Text, Classify | Any provider except a person, `gemini` and `elevenlabs`. |
+| Transcription (STT), Speech (TTS) | `openai-chat` and `openai-responses` providers (OpenAI-style `/audio` endpoints; OpenRouter's transcription is recognised by its address), and `gemini` and `elevenlabs` providers. An OpenAI-style provider also needs a **Base URL**; every one needs an **API Key**; a model without them is skipped. |
 | Vision | HTTP providers. For a CLI provider it is not known, so it is not marked. |
-| Images, Speech (TTS) | Not known from the protocol, so never marked. |
+| Images | `openai-chat` and `openai-responses` providers. For others it is not known, so it is not marked. |
+
+### Gemini and ElevenLabs
+
+To use Google's Gemini API or ElevenLabs for speech, add a provider on the
+**Providers** page with the protocol `gemini` or `elevenlabs` and its **API
+Key**; the **Base URL** may be left blank for the vendor's own. Then add the
+model (for example a Gemini TTS model, or ElevenLabs' `scribe_v1` or a voice
+model) on the Models page and tick **Speech (TTS)** or **Transcription (STT)**
+for it here. A model on one of these providers can't chat: an agent can't use
+it as its own model. Gemini returns raw audio, which ClawEh saves as a WAV
+file.
 
 A model that is disabled on the Models page, or no longer there, is marked too
 and is not used.
@@ -51,11 +62,53 @@ When an agent's model is set to **Off** and it receives an image, ClawEh sends
 the image to the models ticked **Vision**, in order, and gives the agent the
 text description. With no Vision model, images are dropped for such models.
 
+## Agents using task models
+
+An agent calls a task model with `agent_spawn` and the `kind` argument:
+
+| `kind` | `task` is | Inputs | Output |
+|---|---|---|---|
+| `text` | The prompt. | Text files are added to the prompt; images are attached. | A `.md` file, and the text in the result. |
+| `image` | The prompt. | Images to edit. | The image files. |
+| `tts` | The text to speak. | None; `voice` and `format` override the model's defaults. | An audio file. |
+| `stt` | An optional hint (names, terms). | Exactly one audio file. | A `.md` transcript, and the text in the result. |
+
+- Inputs are `files` (up to 10 paths in the agent's workspace, read with its
+  file permission, like `msg_send_file`: the agent needs **file_read_lines**
+  or **file_read_bytes**, and each file must be within
+  `agents.defaults.max_media_size`) or `media` (attachments from the
+  conversation).
+- `model` names one task model of that kind; without it, the models ticked
+  for the kind are tried in page order, skipping any in cooldown and moving
+  on when one fails.
+- Output is saved in the agent's workspace (a clone's: its source's) under
+  `files/generated/<date>/`. The result gives the paths; images and audio are
+  never put in the agent's context, so it sends them with `msg_send_file`.
+  Text comes back in the result up to **Text in results (characters)**, cut
+  after that with the file named.
+- `mode` `wait` returns the result; `callback` (the default) runs it in the
+  background and reports back, like a sub-agent (see
+  [Sub-agents](../agents/subagents.md)). A task model has no tools and adds no
+  sub-agent level; it is refused at the maximum depth like any spawn.
+- `agent_id` and `character_card` can't be used with `kind`.
+- A reported cost counts toward `agents.defaults.daily_spend_alert_usd`, each
+  attempt is logged, and each call is in the [audit log](../admin/audit.md) as
+  **Task model**.
+
+### Allow task models
+
+An agent may use only the kinds ticked under **Allow task models** on its
+card on the **Agents** page (`agents.list[].task_models`: `text`, `image`,
+`tts`, `stt`; all off by default). Any other kind is refused, for example
+"Alice is not allowed to use task models for images." A kind with no model
+ticked here is noted under its box. The agent also needs `agent_spawn` among
+its tools. Check Up lists each agent's allowed kinds.
+
 ## Settings
 
 | Setting | Config key | Notes |
 |---|---|---|
-| **Text in results (characters)** | `result_text_chars` | How much text a task result carries; longer text is cut. Blank or 0 uses the default, 8000. |
+| **Text in results (characters)** | `result_text_chars` | How much text a task result gives the agent; longer text is cut, and the whole text is in the saved file. Blank or 0 uses the default, 8000. |
 | **Echo transcription** | `echo_transcription` | Sends the transcript of a voice message back to the sender before the agent answers. Works only with a Transcription (STT) model. |
 
 ## In config.json
@@ -67,7 +120,8 @@ text description. With no Vision model, images are dropped for such models.
   "models": [
     { "model": "whisper", "stt": true },
     { "model": "fast", "text": true, "vision": true, "classify": true },
-    { "model": "tts-1", "tts": true, "tts_defaults": { "voice": "alloy", "format": "mp3" } }
+    { "model": "tts-1", "tts": true, "tts_defaults": { "voice": "alloy", "format": "mp3" } },
+    { "model": "gpt-image", "image": true, "image_api": "images" }
   ]
 }
 ```

@@ -65,6 +65,7 @@ Some tool sets are switched on and off as a whole, on the lower part of the card
 |---|---|---|
 | **Cognitive memory** | On | Long-term memory, recalled automatically, with the `cogmem_*` tools. See [Conversation and memory](./memory.md). |
 | **Maestro** | Off | The [Maestro](../maestro.md) task-orchestration tools (projects, playbooks, tasks). Its data is kept in the agent's `maestro/` folder. Tasks run as [sub-agents](./subagents.md). When on, it shows its own concurrency and rate-limit settings. |
+| **Allow task models** | Off | One box per kind (**Text**, **Images**, **Speech (TTS)**, **Transcription (STT)**): which [task models](../providers/task-models.md#agents-using-task-models) it may call through `agent_spawn`. |
 | **Allow classifiers** | Off | The `classifier_*` tools, to sort the items its tools can list ([Classifiers](./classifiers.md)). When on, it shows the **Classifier model** selector. |
 | **Fusion (REST-API tools)** | Off | The [Fusion](../mcpfusion.md) services ticked under **Fusion services**, and nothing else. |
 | **Allow forum** | Off | The `forum_*` tools, to hold structured discussions ([Forums](../forums/index.md)) with the agents it may message (see [Messages between agents](./messaging.md#who-may-message-whom)). |

@@ -9,8 +9,8 @@ A **provider** is a named endpoint. It holds what is shared by everything reache
 | Field | Config key | Meaning |
 |---|---|---|
 | Name | `name` | A unique name. Models refer to the provider by it. |
-| Protocol | `protocol` | The wire protocol: `openai-chat`, `openai-responses`, `azure`, `anthropic` (same as `anthropic-messages`), one of the CLI protocols (`claude-cli`, `codex-cli`, `antigravity-cli`, `cursor-cli`), or `human` (see [Human agents](../agents/human-agents.md)). |
-| Base URL | `base_url` | Required for the HTTP protocols. Not used by CLI providers. |
+| Protocol | `protocol` | The wire protocol: `openai-chat`, `openai-responses`, `azure`, `anthropic` (same as `anthropic-messages`), one of the CLI protocols (`claude-cli`, `codex-cli`, `antigravity-cli`, `cursor-cli`), `human` (see [Human agents](../agents/human-agents.md)), or `gemini` or `elevenlabs` for speech [task models](./task-models.md#gemini-and-elevenlabs) only. |
+| Base URL | `base_url` | Required for the HTTP protocols; optional for `gemini` and `elevenlabs` (the vendor's own). Not used by CLI providers. |
 | API Key | `api_key` | The key for a cloud service. CLI providers sign in on their own and need none. |
 | HTTP Proxy | `proxy` | Optional outbound proxy. |
 

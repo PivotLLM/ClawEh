@@ -22,6 +22,8 @@ Sub-agents are useful for self-contained work (research, a long file review) or 
 
 ## How the agent uses it
 
+With the `kind` argument, `agent_spawn` calls a task model instead of a sub-agent: see [Task models](../providers/task-models.md#agents-using-task-models).
+
 The `agent_spawn` tool takes:
 
 | Argument | Meaning |

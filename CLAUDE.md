@@ -492,29 +492,57 @@ production instance directly; test against a dev instance.
   whose §2 decisions win; `manual/providers/task-models.md`): `task_models`
   (`result_text_chars`, 0/absent = `DefaultTaskResultTextChars` 8000, negative
   refused; `echo_transcription`, env `CLAW_TASK_MODELS_ECHO_TRANSCRIPTION`;
-  `models[]` of `{model, text, image, tts, stt, vision, classify,
-  tts_defaults{voice, format}}`). `model` is a `model_list[].model_name`, at
-  most once, never blank (`TaskModelsConfig.Validate`, at load and on save);
-  list order is the fallback order per use (`ModelsFor(use)`). Each entry is a
-  model reference site (`task_models.models[<name>]`, role "a task model":
-  rename follows it, delete is refused, a missing model is pruned and the
-  entry dropped, `dropBlankTaskModels`, as is a human model). Built-in uses go
-  by use in page order: incoming voice uses the `stt` models
-  (`voice.DetectTranscriberWithAlerter`: every enabled `model_list` entry of
-  such a name gives provider + model id to the existing whisper/OpenRouter
-  transcribers; the OpenAI-protocol + base_url + api_key rule lives there
-  only), vision describes use the `vision` models (`wireVisionClients`),
-  classifier models must be `classify` models (see Classifiers). Text, Images
-  and TTS are only recorded for now (phase B: `agent_spawn` kinds, per-agent
-  grants, spawnllm STT/TTS/images). `TaskUseSupportFor(protocol, use)` says
-  yes/no/unknown from the protocol alone (STT: openai-chat/-responses; vision:
-  HTTP protocols, unknown for CLI; text/classify: any but a person;
-  images/TTS: unknown). WebUI **Task models** page (`/task-models`, Models
-  group; `GET`/`PUT /api/task-models`, the PUT replaces the block through
-  `h.updateConfig` and reloads; the GET adds per-model support), defaults
-  shared with the frontend through `config/testdata/task_model_defaults.json`.
-  Check Up: "Speech to text" / "Vision" assessment rows ("No model.", linked to
-  the page) and a "Task models" table in the providers section.
+  `models[]` of `{model, text, image, tts, stt, vision, classify, image_api
+  ("chat" default | "images"), tts_defaults{voice, format}}`). `model` is a
+  `model_list[].model_name`, at most once, never blank
+  (`TaskModelsConfig.Validate`, at load and on save); list order is the
+  fallback order per use (`ModelsFor(use)`). Each entry is a model reference
+  site (`task_models.models[<name>]`, role "a task model": rename follows it,
+  delete is refused, a missing model is pruned and the entry dropped,
+  `dropBlankTaskModels`, as is a human model). All speech and image HTTP calls
+  are spawnllm's (`speech`, `imagegen`; no default timeout, so every call has
+  a context deadline); `voice.SpeechBackend(provider)` picks the client by
+  protocol (openai-chat/-responses → `speech.NewOpenAI`, OpenRouter's JSON
+  body chosen by host; `gemini` → `NewGemini`; `elevenlabs` →
+  `NewElevenLabs`); the usability rules (base_url, api_key) live there only.
+  `gemini` and `elevenlabs` are provider protocols for task models only
+  (`config.TaskOnlyProtocol`: base_url optional, api_key required, no chat
+  client in `factory_provider.go`). Built-in uses go by use in page order:
+  incoming voice uses the `stt` models (`voice.DetectTranscriberWithAlerter`,
+  60 s per attempt, every enabled `model_list` entry of such a name),
+  vision describes use the `vision` models (`wireVisionClients`), classifier
+  models must be `classify` models (see Classifiers). Agents reach
+  text/image/tts/stt through `agent_spawn`'s `kind` (`tools/agents/taskmodels.go`:
+  `Spawner.spawnTask`, refused with `agent_id`/`character_card`, at the max
+  depth, adds no level; `files` (≤10 workspace paths), `media`, `voice`,
+  `format`; wait/callback through the existing task records, `TaskRecord.Kind`;
+  the result text is `taskResultText`). The host is `agent/task_models.go`
+  (`taskModelHost`, injected as `SubagentManagerConfig.TaskRunner`): grant
+  check (`agents.list[].task_models {text, image, tts, stt}`,
+  `AgentConfig.TaskModelAllowed`, "Alice is not allowed to use task models
+  for images."), candidates (the named one, else every model ticked for the
+  kind), cooldown skip and fallback, files read like `msg_send_file`
+  (`toolsmsg.OpenReadable`, needs a file-reading tool), text as one
+  dispatcher Chat with no tools (CLI via `GetIsolated` in
+  `internal/temp/task-<agent>-*`), images by `image_api` (chat
+  `LLMResponse.Images` or `imagegen`), tts/stt through `voice.SpeechBackend`
+  (Gemini PCM → WAV); output `files/generated/<date>/<kind>-<time>-<rand>.<ext>`
+  in the caller's workspace (a clone's: its source's) with agents-area modes,
+  text cut to `result_text_chars` with the file named (`cutText`);
+  `recordSpend`, an INFO line per attempt, audit kind `task_model`.
+  `TaskUseSupportFor(protocol, use)` says yes/no/unknown from the protocol
+  alone (gemini/elevenlabs: stt, tts only; STT/TTS: openai-chat/-responses;
+  vision: HTTP protocols, unknown for CLI; images: openai protocols, else
+  unknown; text/classify: any other but a person). WebUI **Task models** page
+  (`/task-models`, Models group; `GET`/`PUT /api/task-models`, the PUT
+  replaces the block through `h.updateConfig` and reloads; the GET adds
+  per-model support; "Images through" select), Agents page **Allow task
+  models** (four boxes, each noting a kind with no model), defaults shared
+  with the frontend through `config/testdata/task_model_defaults.json`.
+  Check Up: "Speech to text" / "Vision" assessment rows ("No model.", linked
+  to the page), a "Task models" table in the providers section, a per-agent
+  "Task models" settings row; the capabilities golden lists each agent's
+  kinds.
 - **Tool schemas**: `tools.ToolToSchema` (models) and the MCP host publish every
   object parameter that lists no members with `"additionalProperties": true`
   (`tools.OpenObjectProperties`); some upstreams otherwise send a blank string.
