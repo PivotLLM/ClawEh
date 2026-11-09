@@ -10,6 +10,7 @@ export type AuditKind =
   | "card_delete"
   | "classifier_write"
   | "classification"
+  | "task_model"
 
 export const AUDIT_KINDS: AuditKind[] = [
   "tool_call",
@@ -20,6 +21,7 @@ export const AUDIT_KINDS: AuditKind[] = [
   "card_delete",
   "classifier_write",
   "classification",
+  "task_model",
 ]
 
 export interface AuditEvent {

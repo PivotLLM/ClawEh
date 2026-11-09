@@ -760,6 +760,16 @@ else
         echo "  4b.8 agent_message not registered on this host (skipped)"
     fi
 
+    # agent_spawn with a kind calls a task model; the test agent has no
+    # task-model grant (and no task model is ticked), so the call must be
+    # refused with a tool error naming the kind.
+    if echo "$LIST_OUT" | grep -qw "agent_spawn"; then
+        run_test_err_msg_auth "4b.9 agent_spawn kind — refused without a task-model grant" \
+            "agent_spawn" '{"kind":"text","task":"probe","mode":"wait"}' "is not allowed to use task models for text"
+    else
+        echo "  4b.9 agent_spawn not registered on this host (skipped)"
+    fi
+
     #---------------------------------------------------------------------------
     # Section 4c: Cognitive-memory tools (cogmem_*). Session-scoped, off by
     # default (DefaultAllow=false) — the test agent's allowlist enables them via

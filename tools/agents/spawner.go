@@ -68,15 +68,23 @@ func (s *Spawner) Spawn(ctx context.Context, req global.SpawnRequest) (*global.R
 	if s == nil || s.mgr == nil {
 		return &global.Result{IsError: true, ForLLM: "spawn is not available"}, nil
 	}
-	if strings.TrimSpace(req.Task) == "" {
-		return &global.Result{IsError: true, ForLLM: "task is required and must be a non-empty string"}, nil
-	}
-
-	// Bound recursion: a sub-agent already at the depth bound may not spawn deeper.
+	// Bound recursion: a sub-agent already at the depth bound may not spawn
+	// deeper, nor call a task model.
 	if limit := s.maxSpawnDepth(); SpawnDepth(ctx) >= limit {
 		return &global.Result{IsError: true, ForLLM: fmt.Sprintf(
 			"maximum sub-agent depth (%d) reached; this task is already nested %d level(s) deep and cannot spawn further sub-agents",
 			limit, SpawnDepth(ctx))}, nil
+	}
+
+	// A kind makes it a task-model call: no agent, no tools, no depth level.
+	if strings.TrimSpace(req.Kind) != "" {
+		return s.spawnTask(ctx, req)
+	}
+	if len(req.Files) > 0 || req.Voice != "" || req.Format != "" {
+		return &global.Result{IsError: true, ForLLM: "files, voice and format are for task models: give kind too."}, nil
+	}
+	if strings.TrimSpace(req.Task) == "" {
+		return &global.Result{IsError: true, ForLLM: "task is required and must be a non-empty string"}, nil
 	}
 
 	// Authorize targeted spawns. Self-spawns are authorized by the caller already

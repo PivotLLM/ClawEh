@@ -210,7 +210,9 @@ func fakeSTT(t *testing.T, text string) (*httptest.Server, *[]string) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seen = append(seen, r.URL.Path+" "+r.Header.Get("Authorization")+" "+r.Header.Get("Content-Type"))
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"text": text, "language": "en", "duration": 1.5})
+		if err := json.NewEncoder(w).Encode(map[string]any{"text": text, "language": "en", "duration": 1.5}); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
 	}))
 	t.Cleanup(srv.Close)
 	return srv, &seen

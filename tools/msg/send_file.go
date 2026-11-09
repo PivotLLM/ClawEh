@@ -185,50 +185,12 @@ func parseFileRequests(args map[string]any) (requests []fileRequest, problem str
 	return requests, ""
 }
 
-// openFile applies the agent's file-reading permission to req, exactly as
-// the file tools do, to the path and to the file it finally names (a
-// symbolic link's target), then opens that file once, without following a
-// link and without blocking, and checks the open file: it must be the file
-// checked, a regular file, and within the size limit. What is sent is read
-// from this descriptor, so the path cannot be swapped after the check.
-// problem names the path when the file may not be sent.
+// openFile applies the agent's file-reading permission to req and opens the
+// file once (OpenReadable); problem names the path when the file may not be
+// sent.
 func (t *SendFileTool) openFile(req fileRequest) (*os.File, tools.OutgoingFile, string) {
-	cannotRead := fmt.Sprintf("Can't send %q: you can't read it, or it does not exist.", req.path)
-	abs, err := t.reader.Resolve(req.path)
-	if err != nil {
-		return nil, tools.OutgoingFile{}, cannotRead
-	}
-	target, err := filepath.EvalSymlinks(abs)
-	if err != nil || t.reader.Allowed(target) != nil {
-		return nil, tools.OutgoingFile{}, cannotRead
-	}
-	checked, err := os.Lstat(target)
-	if err != nil {
-		return nil, tools.OutgoingFile{}, cannotRead
-	}
-	if checked.IsDir() {
-		return nil, tools.OutgoingFile{}, fmt.Sprintf("Can't send %q: it is a folder.", req.path)
-	}
-	if !checked.Mode().IsRegular() {
-		return nil, tools.OutgoingFile{}, fmt.Sprintf("Can't send %q: it is not a regular file.", req.path)
-	}
-	f, err := openNoFollow(target)
-	if err != nil {
-		return nil, tools.OutgoingFile{}, cannotRead
-	}
-	info, err := f.Stat()
-	problem := ""
-	switch {
-	case err != nil || !os.SameFile(checked, info):
-		problem = fmt.Sprintf("Can't send %q: it changed while it was being checked.", req.path)
-	case !info.Mode().IsRegular():
-		problem = fmt.Sprintf("Can't send %q: it is not a regular file.", req.path)
-	case info.Size() > int64(t.maxFileSize):
-		problem = fmt.Sprintf("Can't send %q: it is %d bytes, more than the limit of %d bytes.",
-			req.path, info.Size(), t.maxFileSize)
-	}
+	f, abs, problem := OpenReadable(t.reader, req.path, int64(t.maxFileSize), "send")
 	if problem != "" {
-		utils.CloseQuietly(f)
 		return nil, tools.OutgoingFile{}, problem
 	}
 	filename := req.filename
@@ -236,6 +198,58 @@ func (t *SendFileTool) openFile(req fileRequest) (*os.File, tools.OutgoingFile, 
 		filename = filepath.Base(abs)
 	}
 	return f, tools.OutgoingFile{File: f, Filename: filename, MaxSize: int64(t.maxFileSize)}, ""
+}
+
+// OpenReadable applies the agent's file-reading permission to path, exactly
+// as the file tools do, to the path and to the file it finally names (a
+// symbolic link's target), then opens that file once, without following a
+// link and without blocking, and checks the open file: it must be the file
+// checked, a regular file, and within maxSize bytes. What the caller uses is
+// read from this descriptor, so the path cannot be swapped after the check.
+// problem is the refusal, naming the path, with verb saying what was
+// attempted ("Can't send …"); the caller closes the file.
+func OpenReadable(reader FileReader, path string, maxSize int64, verb string) (f *os.File, abs string, problem string) {
+	cannotRead := fmt.Sprintf("Can't %s %q: you can't read it, or it does not exist.", verb, path)
+	if reader == nil {
+		return nil, "", cannotRead
+	}
+	abs, err := reader.Resolve(path)
+	if err != nil {
+		return nil, "", cannotRead
+	}
+	target, err := filepath.EvalSymlinks(abs)
+	if err != nil || reader.Allowed(target) != nil {
+		return nil, "", cannotRead
+	}
+	checked, err := os.Lstat(target)
+	if err != nil {
+		return nil, "", cannotRead
+	}
+	if checked.IsDir() {
+		return nil, "", fmt.Sprintf("Can't %s %q: it is a folder.", verb, path)
+	}
+	if !checked.Mode().IsRegular() {
+		return nil, "", fmt.Sprintf("Can't %s %q: it is not a regular file.", verb, path)
+	}
+	f, err = openNoFollow(target)
+	if err != nil {
+		return nil, "", cannotRead
+	}
+	info, err := f.Stat()
+	switch {
+	case err != nil || !os.SameFile(checked, info):
+		problem = fmt.Sprintf("Can't %s %q: it changed while it was being checked.", verb, path)
+	case !info.Mode().IsRegular():
+		problem = fmt.Sprintf("Can't %s %q: it is not a regular file.", verb, path)
+	case info.Size() > maxSize:
+		problem = fmt.Sprintf("Can't %s %q: it is %d bytes, more than the limit of %d bytes.",
+			verb, path, info.Size(), maxSize)
+	}
+	if problem != "" {
+		utils.CloseQuietly(f)
+		return nil, "", problem
+	}
+	return f, abs, ""
 }
 
 // sendReport is the result of a send: every file sent, or each file's

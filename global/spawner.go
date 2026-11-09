@@ -49,6 +49,14 @@ type SpawnRequest struct {
 	Media         []string // optional media:// refs attached to the worker's initial message (e.g. hand an image to a vision-capable agent)
 	Channel       string   // originating channel (for attribution / callback routing)
 	ChatID        string   // originating chat id
+	// Kind makes the spawn a task-model call (text, image, tts, stt) instead
+	// of a sub-agent: Model then names a task model of that kind, Task is
+	// the prompt (or the text to speak, or an optional transcription hint),
+	// Files and Media are its inputs, Voice and Format a speech call's.
+	Kind   string
+	Files  []string // workspace paths, read with the agent's file permission
+	Voice  string
+	Format string
 	// OnResult receives the compact completion pointer for SpawnCallback. Ignored
 	// for SpawnAndWait. The host supplies it; a nil OnResult is fine — the worker
 	// still runs and is tracked, the push is simply skipped (the result remains in

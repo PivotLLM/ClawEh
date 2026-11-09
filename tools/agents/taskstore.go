@@ -70,6 +70,13 @@ type TaskRecord struct {
 	// spawned by a primary turn). Persisted so the depth survives the detached
 	// async context and process restarts; the worker runs at SpawnDepth+1.
 	SpawnDepth int `json:"spawn_depth,omitempty"`
+	// Kind is set for a task-model call (text, image, tts, stt) instead of
+	// a sub-agent; Task is then its prompt and Files, Voice and Format its
+	// other arguments.
+	Kind   string   `json:"kind,omitempty"`
+	Files  []string `json:"files,omitempty"`
+	Voice  string   `json:"voice,omitempty"`
+	Format string   `json:"format,omitempty"`
 }
 
 // TaskResults is the worker's output payload, persisted to <uuid>-results.json.

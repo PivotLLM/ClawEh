@@ -105,6 +105,34 @@
   **Vision: No model** while no model is ticked for them, marks a classifier
   model when no model is ticked Classify, and the full report has a Task
   models table. API: `GET /api/task-models`, `PUT /api/task-models`.
+- **Agents can use task models through `agent_spawn`.** A new `kind`
+  argument (`text`, `image`, `tts`, `stt`) makes the call one request to a
+  task model instead of a sub-agent: no tools, no agent, no depth level
+  (still refused at the maximum depth). `task` is the prompt, the text to
+  speak, or an optional transcription hint; `model` may name one task model
+  of that kind, otherwise the models ticked for it on the Task models page
+  are tried in order, skipping any in cooldown; `files` (new, up to 10
+  workspace paths, each checked like `msg_send_file`) and `media` are the
+  inputs; `voice` and `format` (new) set a speech call's voice and format,
+  else the model's `tts_defaults`. `agent_id` and `character_card` are refused
+  with `kind`. Output is saved in the agent's workspace (a clone's: its
+  source's) under `files/generated/<date>/`: text and transcripts as `.md`,
+  returned inline up to `task_models.result_text_chars` and cut after it with
+  the file named; images and audio are returned as paths, to send with
+  `msg_send_file`. `wait` and `callback` modes, `agent_status` and
+  `agent_list` work as for sub-agents. Speech from Gemini, which returns raw
+  PCM, is saved as a WAV file. A reported cost counts toward
+  `agents.defaults.daily_spend_alert_usd`, every attempt is logged, and each
+  call is recorded in the audit log as **Task model** (`task_model`).
+- **Per-agent task-model grants.** `agents.list[].task_models` (`text`,
+  `image`, `tts`, `stt`; absent = all off) says which kinds an agent may use
+  through `agent_spawn`; any other is refused with a sentence naming the
+  agent and the kind ("Alice is not allowed to use task models for
+  images.").
+- **Images API for task models.** `task_models.models[].image_api` chooses
+  how an Images model is called: `chat` (the default: image output of a chat
+  call) or `images` (OpenAI-style `/images/generations` and `/images/edits`;
+  OpenRouter's `/images`, which has no edits).
 - **Gemini and ElevenLabs speech.** Two provider protocols, `gemini` and
   `elevenlabs`, reach Google's Gemini API and ElevenLabs for speech: a model
   on one serves Transcription (STT) and Speech (TTS) on the Task models page

@@ -657,7 +657,8 @@
         "card_import": "Card import",
         "card_delete": "Card delete",
         "classifier_write": "Classifier change",
-        "classification": "Classification"
+        "classification": "Classification",
+        "task_model": "Task model"
       },
       "col": {
         "time": "Time",

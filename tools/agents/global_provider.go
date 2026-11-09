@@ -33,7 +33,15 @@ const spawnToolDescription = "Spawn a subagent to handle a task. Use 'mode' to c
 	"in your workspace (read it with your file tools, or poll agent_status); 'wait' runs it to completion and " +
 	"returns the result immediately. Callback mode requires 'name', a short identifier for the task. " +
 	"'media' attaches media:// refs (from '[attachment ref(s): …]' markers in the conversation) to the subagent's " +
-	"initial message — useful to hand an image you cannot view to a vision-capable agent or model for analysis."
+	"initial message — useful to hand an image you cannot view to a vision-capable agent or model for analysis. " +
+	"With 'kind' it calls a task model instead of a subagent: one call, no tools, no agent. Kinds: 'text' (write, " +
+	"translate or summarise: 'task' is the prompt, text 'files' are added to it), 'image' (generate, or edit the " +
+	"images in 'files'/'media': 'task' is the prompt), 'tts' (speak 'task' aloud; optional 'voice' and 'format'), " +
+	"'stt' (transcribe the one audio file in 'files' or 'media'; 'task' is an optional hint). 'model' then names a " +
+	"task model of that kind; omit it to use the first one that works. Output is saved in your workspace under " +
+	"files/generated/<date>/ and the result gives the paths: images and audio come back as paths only, so send one " +
+	"to the chat with msg_send_file; text and transcripts come back inline too, cut when long, with the full text in " +
+	"a .md file. agent_id and character_card can't be used with kind."
 
 func spawnToolSchema() map[string]any {
 	return map[string]any{
@@ -68,6 +76,25 @@ func spawnToolSchema() map[string]any {
 			"character_card": map[string]any{
 				"type":        "string",
 				"description": "Optional character card id from the library: the subagent runs as that character instead of with the agent's own card. The card must exist.",
+			},
+			"kind": map[string]any{
+				"type":        "string",
+				"description": "Call a task model instead of a subagent: text, image, tts (speech) or stt (transcription). You must be allowed that kind.",
+				"enum":        TaskKinds,
+			},
+			"files": map[string]any{
+				"type":        "array",
+				"items":       map[string]any{"type": "string"},
+				"maxItems":    MaxTaskFiles,
+				"description": "With kind: workspace paths of input files (text to use, images to edit, the audio to transcribe), as the file tools take them. You must be allowed to read them.",
+			},
+			"voice": map[string]any{
+				"type":        "string",
+				"description": "With kind tts: the voice. Omit for the model's default.",
+			},
+			"format": map[string]any{
+				"type":        "string",
+				"description": "With kind tts: the audio format in the API's terms (mp3, wav, …). Omit for the model's default.",
 			},
 		},
 		"required": []string{"task"},
@@ -129,6 +156,10 @@ func (globalAgentProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 				if badMedia != "" {
 					return &global.Result{IsError: true, ForLLM: badMedia}, nil
 				}
+				files, badFiles := parseFilesArg(call.Args["files"])
+				if badFiles != "" {
+					return &global.Result{IsError: true, ForLLM: badFiles}, nil
+				}
 
 				mode, onResult := resolveSpawnMode(modeStr, call)
 				// A background result returns to the chat of the spawning
@@ -145,6 +176,10 @@ func (globalAgentProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 					Model:         model,
 					CharacterCard: characterCard,
 					Media:         media,
+					Kind:          strArg(call.Args, "kind"),
+					Files:         files,
+					Voice:         strArg(call.Args, "voice"),
+					Format:        strArg(call.Args, "format"),
 					Channel:       call.Channel,
 					ChatID:        call.ChatID,
 					OnResult:      onResult,
@@ -226,6 +261,33 @@ func parseMediaArg(v any) ([]string, string) {
 			return nil, fmt.Sprintf("invalid media entry %v: each entry must be a media:// ref (see '[attachment ref(s): …]' markers)", item)
 		}
 		out = append(out, s)
+	}
+	return out, ""
+}
+
+// MaxTaskFiles is the most input files one task-model call takes.
+const MaxTaskFiles = 10
+
+// parseFilesArg reads the tool's "files" argument (workspace paths).
+// Returns a non-empty error string on malformed input.
+func parseFilesArg(v any) ([]string, string) {
+	if v == nil {
+		return nil, ""
+	}
+	items, ok := v.([]any)
+	if !ok {
+		return nil, "files must be an array of workspace paths"
+	}
+	if len(items) > MaxTaskFiles {
+		return nil, fmt.Sprintf("at most %d files can be given", MaxTaskFiles)
+	}
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		s, ok := item.(string)
+		if !ok || strings.TrimSpace(s) == "" {
+			return nil, fmt.Sprintf("invalid files entry %v: each entry must be a workspace path", item)
+		}
+		out = append(out, strings.TrimSpace(s))
 	}
 	return out, ""
 }

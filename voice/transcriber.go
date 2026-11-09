@@ -56,6 +56,12 @@ type SpeechClient interface {
 // These rules belong to the HTTP backends only; config and the Task models
 // page do not apply them.
 func SpeechBackend(p *config.Provider) (SpeechClient, string) {
+	return SpeechBackendWith(p)
+}
+
+// SpeechBackendWith is SpeechBackend with options for the client (an HTTP
+// client of the caller's).
+func SpeechBackendWith(p *config.Provider, opts ...speech.Option) (SpeechClient, string) {
 	switch {
 	case isOpenAIProtocol(p.Protocol):
 		if p.BaseURL == "" {
@@ -64,17 +70,17 @@ func SpeechBackend(p *config.Provider) (SpeechClient, string) {
 		if p.APIKey == "" {
 			return nil, "provider has no API key"
 		}
-		return speech.NewOpenAI(p.BaseURL, p.APIKey), ""
+		return speech.NewOpenAI(p.BaseURL, p.APIKey, opts...), ""
 	case p.Protocol == config.GeminiProtocol:
 		if p.APIKey == "" {
 			return nil, "provider has no API key"
 		}
-		return speech.NewGemini(p.BaseURL, p.APIKey), ""
+		return speech.NewGemini(p.BaseURL, p.APIKey, opts...), ""
 	case p.Protocol == config.ElevenLabsProtocol:
 		if p.APIKey == "" {
 			return nil, "provider has no API key"
 		}
-		return speech.NewElevenLabs(p.BaseURL, p.APIKey), ""
+		return speech.NewElevenLabs(p.BaseURL, p.APIKey, opts...), ""
 	default:
 		return nil, "provider protocol does not serve speech"
 	}
@@ -121,8 +127,7 @@ func (t *speechTranscriber) Transcribe(ctx context.Context, audioFilePath string
 		ContentType: mime.TypeByExtension(filepath.Ext(audioFilePath)),
 	})
 	if err != nil {
-		var se *common.HTTPStatusError
-		if errors.As(err, &se) {
+		if se, ok := errors.AsType[*common.HTTPStatusError](err); ok {
 			alertRejected(t.alerter, t.name, se.StatusCode, se.BodyPreview)
 		}
 		logger.WarnCF("voice", "Transcription failed", map[string]any{

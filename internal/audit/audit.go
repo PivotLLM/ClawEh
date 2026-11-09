@@ -52,6 +52,9 @@ const (
 	// KindClassification is one item a classifier handled: its category and
 	// the action that ran.
 	KindClassification = "classification"
+	// KindTaskModel is one task-model call made for an agent through
+	// agent_spawn's kind: the kind, the model and the files written.
+	KindTaskModel = "task_model"
 )
 
 // Outcome values.
