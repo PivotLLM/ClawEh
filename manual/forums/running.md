@@ -36,7 +36,7 @@ agent's replies, the completion notice and the log then call it
 
 Material for the participants comes from **sources**: text written into the
 setup, or a file. A file is read exactly as the agent's own file tools would
-read it: from its workspace, or from one of its [mounts](../agents/files-and-mounts.md) such as `maestro/`.
+read it: from its workspace (including `maestro/`), or from one of its [allowed folders](../agents/allowed-folders.md) by its full path.
 
 ## Run it again on new material
 

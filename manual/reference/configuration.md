@@ -41,7 +41,7 @@ The reference is written back unchanged when the configuration is saved. A refer
 
 | Section | What it controls | Where to change it |
 |---|---|---|
-| `agents` | The agents (`agents.list`): their ids, names, models, tools, skills, switches and mounts. `agents.defaults` holds values every agent inherits, such as the default model list, timeouts and memory settings. `agents.base_dir` and `agents.common_dir` move the agent folders and the shared folder. | **Agents** page; **System** page, sections **Agent** and **Agent defaults**. See [Agents](../agents/index.md). |
+| `agents` | The agents (`agents.list`): their ids, names, models, tools, skills, switches and allowed folders. `agents.defaults` holds values every agent inherits, such as the default model list, timeouts and memory settings. `agents.base_dir` and `agents.common_dir` move the agent folders and the shared folder. | **Agents** page; **System** page, sections **Agent** and **Agent defaults**. See [Agents](../agents/index.md). |
 | `bindings` | Which agent answers which channel, chat or account, and each agent's default channel. Unbound messages go to the default agent. | **Bindings** page. See [Channels](../channels/index.md). |
 | `agent_mentions` | `triggers`: the characters that introduce an agent's name in a message (default `@`, `/` and `.`). The names each binding answers to are set on the binding. | `config.json` only; the names per binding on the **Bindings** page. |
 | `session` | `retention_days`: deletes idle conversation archives older than this. An agent's main conversation is never deleted. Absent means keep everything. | `config.json` only. |

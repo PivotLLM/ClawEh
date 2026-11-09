@@ -36,7 +36,7 @@ Changes on the Agents page are saved as you make them.
 
 Some capabilities have their own switch on the same card, each off by default:
 
-- **Allow shell commands** lets the agent run commands on this machine.
+- **Allow shell commands (full account access)** lets the agent run commands on this machine.
 - **Maestro**, **Fusion (REST-API tools)** and **Allow forum** add their tool suites.
 - **Cognitive memory** is on by default; turn it off for an agent that should keep no memory.
 

@@ -1,6 +1,6 @@
 # Upgrading
 
-This page explains how to upgrade ClawEh and what to check after upgrading to 0.6.0.
+This page explains how to upgrade ClawEh and what to check after upgrading to 0.6.0 and 0.6.4.
 
 ## Upgrade with `claw upgrade`
 
@@ -71,7 +71,7 @@ See [Tools and skills](../agents/tools-and-skills.md).
 
 ### Shell commands are a per-agent switch
 
-`tools.exec.allow_remote` and the install-wide shell setting are gone. Turn on **Allow shell commands** on the card of each agent that should run shell commands. It is off by default. See [Tools and skills](../agents/tools-and-skills.md#shell-commands).
+`tools.exec.allow_remote` and the install-wide shell setting are gone. Turn on **Allow shell commands (full account access)** on the card of each agent that should run shell commands. It is off by default. See [Tools and skills](../agents/tools-and-skills.md#shell-commands).
 
 ### CLI providers no longer bypass their permission prompts
 
@@ -96,6 +96,16 @@ ClawEh's own files moved into `internal/`, shared skills into `skills/`, and the
 ### The device listener needs a secret
 
 An enabled device listener on a network address now needs a token and approval of each device. Use **Pair a device** on the **Devices** page to set a token. See [Devices](../channels/devices.md).
+
+## Upgrading to 0.6.4
+
+### Mounts are now allowed folders
+
+An agent's mounts become [allowed folders](../agents/allowed-folders.md) at load, with the same path and notify setting. The agent now uses the folder's real path, such as `/srv/src/notes.md`, instead of `notes/...`; tell it so in its instructions if they name the old path. Write access now follows file permissions: where a mount was read-only, make the folder read-only for the account ClawEh runs as.
+
+### Shell commands are not limited by path
+
+`shell_exec` no longer refuses a command for the paths in it or for its working folder. It runs with the full access of the account ClawEh runs as; the deny patterns still apply. Check that each agent with **Allow shell commands (full account access)** should have it.
 
 ## After any upgrade
 

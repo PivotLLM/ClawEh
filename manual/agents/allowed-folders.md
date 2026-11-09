@@ -1,8 +1,8 @@
-# Files and mounts
+# Files and allowed folders
 
-An agent's file tools work inside its own folder, plus any external folders you mount for it and the shared common folder.
+An agent's file tools work inside its own folder, plus any outside folders you allow for it and the shared common folder.
 
-These rules apply to the file tools (`file_read_lines`, `file_write`, `file_list` and the rest), which the agent has only if you [grant them](./tools-and-skills.md). Shell commands are not confined by them: an agent allowed shell commands can reach anything the ClawEh service account can.
+These rules apply to the file tools (`file_read_lines`, `file_write`, `file_list` and the rest), which the agent has only if you [grant them](./tools-and-skills.md). They also decide which files the agent can send with `msg_send_file`, attach to its memory, use as a forum source or hand to a task model. Shell commands are not confined by them: an agent allowed shell commands can reach anything the ClawEh service account can.
 
 ## The folders in a workspace
 
@@ -22,51 +22,54 @@ Each agent's workspace (see [Creating and editing agents](./creating.md#workspac
 
 The instruction files at the top of the workspace (`AGENTS.md`, `SOUL.md` and the others) are already in the agent's prompt; it does not read or change them with file tools.
 
-The agent refers to these folders by name, for example `files/report.md`. It makes folders with `file_mkdir`, removes them with `file_rmdir`, and moves or renames them with `file_move`; it cannot remove `files/` itself or a mount.
+The agent refers to these folders by name, for example `files/report.md`: a relative path starts at the workspace. It makes folders with `file_mkdir`, removes them with `file_rmdir`, and moves or renames them with `file_move`; it cannot remove `files/` itself or an allowed folder.
 
 ### Install-wide file settings
 
 On the **System** page, in **Agent**:
 
-- **Restrict to workspace** (on by default) keeps file tools inside the workspace and mounts. Turning it off lets file tools read and write anything the service account can, and [Check Up](../admin/checkup.md) marks it.
+- **Restrict to workspace** (on by default) keeps file tools inside the workspace and the allowed folders. Turning it off lets file tools read and write anything the service account can, and [Check Up](../admin/checkup.md) marks it. It applies to file tools only, not to shell commands.
 - **Agent base directory** moves every agent's workspace to another location.
 - **Common directory** sets where the [common folder](#the-common-folder) is.
 
-## Mounts: external folders
+## Allowed folders
 
-A mount makes a folder elsewhere on the machine available to one agent under a name of your choice, beside `files/`. A mount named `notes` is reached as `notes/...`.
+An allowed folder gives one agent's file tools a folder elsewhere on the machine. The agent uses its real path, for example `/srv/src/notes.md`.
 
-1. Open the agent's card on the **Agents** page and find **Mounts (external folders, beside files/)**.
-2. Click **Add mount**.
-3. Type the name (letters, digits and `-`, for example `notes`) and the absolute path (`/srv/shared/notes`).
-4. Turn on **write** to let the agent change files there. Without it the mount is read-only.
-5. Turn on **notify** to tell the agent when a new file appears there (see below).
+1. Open the agent's card on the **Agents** page and find **Allowed folders**.
+2. Add a row and type the folder's absolute path, for example `/srv/src`.
+3. Tick **Notify on new files** to tell the agent when a new file appears there (see below).
 
-The agent cannot leave the mounted folder with `..`. The trash icon removes a mount.
+The trash icon removes a folder. A path that is not absolute is refused, for example "Alice's allowed folder "src" must be an absolute path."
+
+ClawEh does not decide write access. The agent may read and write wherever the account ClawEh runs as may; in a folder that account cannot write, a write fails with "permission denied: \<path\> is read-only for this app". To give an agent a read-only folder, make it read-only for that account.
+
+The agent's prompt lists each allowed folder by its path, marked "(read-only)" when the account cannot write it.
+
+Paths are checked after following symbolic links: a link inside an allowed folder that leads outside the workspace and every allowed folder is refused.
 
 In `config.json`:
 
 ```json
 {
   "id": "alice",
-  "mounts": [
-    { "name": "notes", "path": "/srv/shared/notes", "writable": true, "notify": true }
+  "allowed_folders": [
+    { "path": "/srv/src", "notify": true }
   ]
 }
 ```
 
 ### New-file notices
 
-With **notify** on, ClawEh checks the mounted folder every 10 seconds. When a new file appears, the agent gets the message "A new file is available in a mounted folder: \<path\>" in its default channel, as if it had been sent there, and handles it like any other message. Files that are only changed do not count. The agent needs a **Default Channel** for this; without one the notice is skipped and logged.
+With **Notify on new files** ticked, ClawEh checks the folder every 10 seconds. When a new file appears, the agent gets a message naming the agent, the folder and the file, such as "New file in Alice's allowed folder /srv/src: /srv/src/sub/x.md", in its default channel, as if it had been sent there, and handles it like any other message. Files that are only changed do not count. The agent needs a **Default Channel** for this; without one the notice is skipped and logged.
 
-### Reserved names
+ClawEh keeps the list of files it has seen in a `.claw` file in the folder, so the folder must be writable for notices to work. The first check of a folder only records what is already there.
 
-A mount cannot use the name of a workspace folder, in any case: `files`, `skills`, `tasks`, `tmp`, `forums`, `maestro`, `sessions`, `cogmem`, `state`, `common`.
+### Folders set as mounts before 0.6.4
 
-- Saving such a mount is refused, for example "Alice's mount "files" uses a reserved name; choose another name."
-- A mount with such a name already in `config.json` is ignored until renamed. Its row on the card says `Ignored: "files" is a reserved name.`, and **Check Up** lists it.
+Older versions gave an agent outside folders as *mounts*, each under a name (`notes/...`). At load each `mounts` entry becomes an allowed folder with the same path and notify setting; its name and its write setting are dropped, and the log has one warning per entry naming the agent and the path. The next save writes only `allowed_folders`. Tell the agent to use the real path instead of the old name, and set file permissions where a mount used to be read-only.
 
-When **Maestro** is on, its folder is mounted automatically as `maestro/`.
+When **Maestro** is on, `maestro/` is simply part of the workspace; there is no automatic mount any more.
 
 ## The common folder
 

@@ -22,7 +22,7 @@ An agent with no tools at all is told so in its instructions, and asks the perso
 | [Tools and skills](./tools-and-skills.md) | Granting tools and skills, shell commands, MCP and Fusion access, Maestro, forums, memory |
 | [Web search and fetch](./web-search.md) | The search providers, how to set one up, and fetching pages |
 | [Conversation and memory](./memory.md) | The one conversation per agent, how it is kept short, long-term memory, `/clear` and `/compact` |
-| [Files and mounts](./files-and-mounts.md) | The agent's folders, what it may read and write, external folders, the common folder |
+| [Files and allowed folders](./allowed-folders.md) | The agent's folders, what it may read and write, outside folders, the common folder |
 | [Messages between agents](./messaging.md) | `agent_message`, `/ask` and `/whisper` |
 | [Human agents](./human-agents.md) | An agent that is a person, answering by hand |
 | [Character cards](./character-cards.md) | Giving an agent a character to play, the card library and the `ccv3` tool |

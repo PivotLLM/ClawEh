@@ -103,8 +103,8 @@ One JSON object, the forum's configuration (see
   otherwise the forum's ID is used.
 - `brief` goes to every participant; `instructions` only to its participant.
 - `sources` are `inline` or a `file`. A `file` is read exactly as Alice's
-  file tools would read that path: relative to her workspace, or in one of
-  her mounts such as `maestro/`.
+  file tools would read that path: relative to her workspace (`maestro/` included),
+  or an absolute path in one of her allowed folders.
 - `layers` run in order. `delivery` is `after_round` (turns in a round do not
   see each other) or `per_turn` (each turn sees the earlier ones). A layer may
   have a `moderator` that continues, guides or stops it, and JSON output may be

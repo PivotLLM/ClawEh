@@ -8,6 +8,8 @@ This page explains the terms used in ClawEh and this manual.
 
 **Agent id** — The agent's permanent name in the configuration: 1 to 64 letters, digits, `-` and `_`, starting with a letter or digit. Case-insensitive: `Alice` and `alice` are the same agent. See [Agent ids](../agents/creating.md#agent-ids).
 
+**Allowed folder** — A folder outside the workspace that one agent's file tools may use, by its real path. Write access follows file permissions. Set per agent on the Agents page. See [Allowed folders](../agents/allowed-folders.md#allowed-folders).
+
 **Allowed networks** — The networks from which other machines may reach the WebUI (`gateway.allowed_cidrs`). Empty means this machine only. See [Network access](../admin/network.md).
 
 **Allowed senders** (`allow_from`) — The users who may message an agent through a channel. An empty list lets nobody in; `*` lets everyone in. See [Channels](../channels/index.md).
@@ -28,7 +30,7 @@ This page explains the terms used in ClawEh and this manual.
 
 **Cognitive memory** (cogmem) — An agent's long-term memory. It is updated in the background from the conversation, organised into domains, and recalled into the prompt when relevant. On by default; switched per agent. See [Conversation and memory](../agents/memory.md).
 
-**Common directory** — A shared folder that agents with **Share common directory** on can use to exchange files. See [Files and mounts](../agents/files-and-mounts.md#the-common-folder).
+**Common directory** — A shared folder that agents with **Share common directory** on can use to exchange files. See [Files and allowed folders](../agents/allowed-folders.md#the-common-folder).
 
 **Conversation** — The message history of an agent. Each agent has exactly one, shared by every channel that reaches it.
 
@@ -60,13 +62,13 @@ This page explains the terms used in ClawEh and this manual.
 
 **Model** — A named language model reached through a provider. An agent tries its models in order. See [Providers and models](../providers/index.md).
 
-**Mount** — An outside folder given to an agent under a name, read-only unless made writable. Set per agent on the Agents page. See [Files and mounts](../agents/files-and-mounts.md#mounts-external-folders).
+**Mount** — The former name of an allowed folder; old `mounts` entries are turned into allowed folders at load. See [Allowed folders](../agents/allowed-folders.md#folders-set-as-mounts-before-0-6-4).
 
 **Provider** — Where models are reached: an API endpoint with its key, or a CLI. See [Providers and models](../providers/index.md).
 
 **Service token** — A long-lived credential that lets an external MCP client use an agent's tools. Managed with `claw token`. See [Service tokens](../mcp.md#service-tokens).
 
-**Shell commands** — The `shell_exec` tool, which runs commands on the machine. Granted per agent with **Allow shell commands**; off by default. See [Shell commands](../agents/tools-and-skills.md#shell-commands).
+**Shell commands** — The `shell_exec` tool, which runs commands on the machine. Granted per agent with **Allow shell commands (full account access)**; off by default. See [Shell commands](../agents/tools-and-skills.md#shell-commands).
 
 **Skill** — A packaged set of instructions an agent can follow for a kind of task. An agent uses only the skills its list includes. See [Grant skills](../agents/tools-and-skills.md#grant-skills).
 
@@ -78,4 +80,4 @@ This page explains the terms used in ClawEh and this manual.
 
 **WebUI** — The web interface for chatting with agents and configuring ClawEh. Served on port 18790 (HTTP) and 18443 (HTTPS) by default. See [HTTPS and certificates](../admin/https.md).
 
-**Workspace** — An agent's folder, `agents/<id>/` in the data directory. It holds the agent's prompt files, its `files/` working area, its skills and its data. See [Files and mounts](../agents/files-and-mounts.md).
+**Workspace** — An agent's folder, `agents/<id>/` in the data directory. It holds the agent's prompt files, its `files/` working area, its skills and its data. See [Files and allowed folders](../agents/allowed-folders.md).

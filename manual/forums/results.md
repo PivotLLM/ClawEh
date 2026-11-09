@@ -66,7 +66,7 @@ forums/<id>/
 
 Nothing is deleted until the agent deletes the forum.
 
-The agent's [file tools](../agents/files-and-mounts.md) can read its `forums/` folder but cannot write to it,
+The agent's [file tools](../agents/allowed-folders.md) can read its `forums/` folder but cannot write to it,
 and cannot read another agent's forums.
 
 ## The transcript

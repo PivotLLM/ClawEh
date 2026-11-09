@@ -23,7 +23,7 @@ The **Tools** box on the agent's card has these parts:
    - **Clear** empties the list.
    - Each checkbox grants one tool. Hover a tool for its description.
 4. **May message**: the other agents this agent may message with `agent_message`, start as sub-agents or invite to forums. See [Messages between agents](./messaging.md#who-may-message-whom).
-5. **Allow shell commands**: see [Shell commands](#shell-commands).
+5. **Allow shell commands (full account access)**: see [Shell commands](#shell-commands).
 6. **Denied tools**: see [Deny a tool](#deny-a-tool).
 
 ### Grant tools in config.json
@@ -43,11 +43,12 @@ The same lists can be written by hand. Entries are tool names; a trailing `*` ma
 
 ## Shell commands
 
-**Allow shell commands** lets the agent run commands on this machine with the `shell_exec` tool. It is off by default.
+**Allow shell commands (full account access)** lets the agent run commands on this machine with the `shell_exec` tool. It is off by default.
 
 - It is the only way to grant `shell_exec`: `"*"` and `file_*`-style entries never include it.
 - It applies everywhere the agent acts: every chat, its sub-agents and clones, questions from other agents, forum turns and its MCP tokens.
-- Shell commands are **not** confined to the agent's folder, even when file tools are.
+- Shell commands run with the full access of the account ClawEh runs as. They are **not** confined to the agent's folder or its allowed folders, even when file tools are, and **Restrict to workspace** does not apply to them. The deny patterns still block dangerous commands.
+- `working_dir` may be any existing folder; the default is the agent's workspace.
 - If `shell_exec` is also in **Denied tools**, the card shows "Ignored: blocked by Denied tools." and the agent cannot run commands.
 - An agent allowed to message or spawn another agent that has shell commands can have that agent run them. **Check Up** lists both under **Shell access**.
 
@@ -70,7 +71,7 @@ Some tool sets are switched on and off as a whole, on the lower part of the card
 | **Fusion (REST-API tools)** | Off | The [Fusion](../mcpfusion.md) services ticked under **Fusion services**, and nothing else. |
 | **Allow forum** | Off | The `forum_*` tools, to hold structured discussions ([Forums](../forums/index.md)) with the agents it may message (see [Messages between agents](./messaging.md#who-may-message-whom)). |
 | **Allow character card tools** | Off | The `ccv3` tool, to create, edit and delete [character cards](./character-cards.md) in the library. |
-| **Share common directory** | On | Access to the shared common folder through the `common_*` tools, which must also be granted. See [Files and mounts](./files-and-mounts.md#the-common-folder). |
+| **Share common directory** | On | Access to the shared common folder through the `common_*` tools, which must also be granted. See [Files and allowed folders](./allowed-folders.md#the-common-folder). |
 | **Global cron** | Off | Lets the agent create and manage scheduled jobs for other agents. See [Scheduled jobs](./scheduling.md). |
 
 **Check Up** marks an agent with Fusion on and no service ticked: **Fusion on with no service (alice)**.

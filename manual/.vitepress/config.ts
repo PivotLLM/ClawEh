@@ -56,7 +56,7 @@ export default defineConfig({
           { text: "Tools and skills", link: "/agents/tools-and-skills" },
           { text: "Web search and fetch", link: "/agents/web-search" },
           { text: "Conversation and memory", link: "/agents/memory" },
-          { text: "Files and mounts", link: "/agents/files-and-mounts" },
+          { text: "Files and allowed folders", link: "/agents/allowed-folders" },
           { text: "Messages between agents", link: "/agents/messaging" },
           { text: "Human agents", link: "/agents/human-agents" },
           { text: "Character cards", link: "/agents/character-cards" },

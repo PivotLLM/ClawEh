@@ -91,7 +91,7 @@ If one particular tool is missing:
 
 | Tool | Where it is granted |
 |---|---|
-| Shell commands (`shell_exec`) | **Allow shell commands** on the agent's card ([Shell commands](../agents/tools-and-skills.md#shell-commands)). Not included by **Default tools** or `"*"`. |
+| Shell commands (`shell_exec`) | **Allow shell commands (full account access)** on the agent's card ([Shell commands](../agents/tools-and-skills.md#shell-commands)). Not included by **Default tools** or `"*"`. |
 | Tools of an MCP server | **MCP access** under the agent's **Tools** ([MCP](../mcp.md#grant-a-server-to-an-agent)). |
 | Fusion services | **Fusion (REST-API tools)** on, and the service ticked under **Fusion services**. Check Up marks **Fusion on with no service (…)** otherwise ([MCPFusion](../mcpfusion.md#give-an-agent-access)). |
 | Maestro, forum, memory tools | **Maestro**, **Allow forum**, **Cognitive memory** on the agent's card ([Tool suites](../agents/tools-and-skills.md#tool-suites)). |
@@ -126,10 +126,9 @@ Common marked rows and what they mean:
 |---|---|---|
 | Data directory permissions | Files in the data directory can be read by others. | Restart ClawEh, which tightens them, or `chmod 700`/`600` as listed. |
 | File confinement | Agents may read or write outside their workspace. | Turn on **Restrict to workspace** on the **System** page, under **Agent**. |
-| Shell access | Agents may run shell commands without the built-in deny patterns. | Turn deny patterns back on (`tools.exec.enable_deny_patterns`), or remove **Allow shell commands** from the agents listed. |
+| Shell access | Agents may run shell commands without the built-in deny patterns. | Turn deny patterns back on (`tools.exec.enable_deny_patterns`), or remove **Allow shell commands (full account access)** from the agents listed. |
 | Channels accepting any sender | A channel's allowed senders contain `*`. | List the allowed users instead. |
 | Message content in logs | Logging options write message text to disk. | Turn off the listed `logging` options if you do not want that. |
-| Mount (…) | A mount uses a reserved folder name and is ignored. | Rename the mount on the **Agents** page. |
 | Fusion on with no service (…) | The agent has Fusion on but no service ticked. | Tick its services under **Fusion services**. |
 
 Rows without a mark describe the install and need no action. See [Check Up and the full report](../admin/checkup.md) for every row.

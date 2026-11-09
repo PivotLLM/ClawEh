@@ -37,7 +37,7 @@ Only configured agents can be messaged, never temporary ones. A message is refus
 
 - Bob is not in the list: "You may not message Bob: it is not in your subagents.allow_agents."
 - No agent has that name: "There is no agent named Bob."
-- It is longer than 8,000 characters: "Messages to other agents are limited to 8,000 characters." Put long text in a file the other agent can read, such as one in the [common folder](./files-and-mounts.md#the-common-folder).
+- It is longer than 8,000 characters: "Messages to other agents are limited to 8,000 characters." Put long text in a file the other agent can read, such as one in the [common folder](./allowed-folders.md#the-common-folder).
 
 ## Asks
 

@@ -63,7 +63,7 @@ Each agent has a folder, its workspace. By default it is `agents/<id>` in the da
 { "id": "alice", "workspace": "/srv/agents/alice" }
 ```
 
-The workspace holds the agent's instructions, its files, its conversation and its memory. See [Files and mounts](./files-and-mounts.md).
+The workspace holds the agent's instructions, its files, its conversation and its memory. See [Files and allowed folders](./allowed-folders.md).
 
 ### Instruction files
 
