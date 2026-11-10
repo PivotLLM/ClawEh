@@ -102,6 +102,26 @@ file.
 A model that is disabled on the Models page, or no longer there, is marked too
 and is not used.
 
+## Suggested models on OpenRouter
+
+Through one OpenRouter provider you can try models from several vendors for
+each use. The IDs below are from OpenRouter's model list as of November 2026;
+models change often, so check [OpenRouter's list](https://openrouter.ai/models)
+for what is current and what each costs. Add each on the **Models** page with
+your OpenRouter provider and the ID as the model, then tick its use here.
+
+| Use | Model IDs (vendor) | Notes |
+|---|---|---|
+| **Transcription (STT)** | `openai/whisper-large-v3` (OpenAI), `mistralai/voxtral-mini-transcribe` (Mistral), `elevenlabs/scribe-v2` (ElevenLabs), `google/gemini-3.5-transcribe` (Google) | |
+| **Speech (TTS)** | `google/gemini-3.8-flash-tts` (Google), `elevenlabs/eleven-flash-v2.5` (ElevenLabs), `mistralai/voxtral-mini-tts-2603` (Mistral), `hexgrad/kokoro-82m` (Kokoro, open model) | Each model has its own voices: set **Voice** to one the model offers. |
+| **Images** | `google/gemini-3.1-flash-image` (Google), `openai/gpt-5-image-mini` (OpenAI) | **Images through:** **Chat (image output)**. |
+| **Vision** | `google/gemini-3.5-flash-lite` (Google), `anthropic/claude-haiku-5.5` (Anthropic), `qwen/qwen3.8-omni-flash` (Qwen) | |
+| **Text** | `anthropic/claude-haiku-5.5` (Anthropic), `deepseek/deepseek-v4.1-flash` (DeepSeek), `mistralai/mistral-small-2603` (Mistral) | |
+| **Classify** | `google/gemini-3.5-flash-lite` (Google), `deepseek/deepseek-v4.1-flash` (DeepSeek), `mistralai/mistral-small-2603` (Mistral) | Every item costs one call, so a small, fast model is usually enough. |
+
+Ticking two models from different vendors for a use also gives you a
+fallback when one vendor is down.
+
 ## Vision
 
 A model sees images only when its **Vision (tool-result images)** setting is
