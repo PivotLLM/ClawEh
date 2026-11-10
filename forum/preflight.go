@@ -41,6 +41,10 @@ type preflightEnv struct {
 	// ReadAllowed reports whether the launching agent may read an absolute
 	// path; a nil func allows nothing (every file source fails).
 	ReadAllowed func(absPath string) error
+	// OpenFile opens an absolute path through the launching agent's file
+	// sandbox, the one ReadAllowed checks against, without waiting on a
+	// FIFO; a nil func opens nothing (every file source fails).
+	OpenFile func(absPath string) (*os.File, error)
 	// Cards renders the character cards participants name (Host.Cards);
 	// nil fails every participant that names one.
 	Cards Cards
@@ -381,17 +385,24 @@ func (p *preflight) sources() error {
 
 // readSource resolves abs (following symbolic links), checks that the
 // launching agent may read both the named path and its target, and reads
-// the target, which must be a regular file. The target is opened without
-// following a link (a link swapped in after the check fails) and its type
-// is checked on the open file, so what is returned is what was checked.
+// the target, which must be a regular file. The target is opened through
+// the agent's file sandbox (OpenFile: a link swapped in after the check
+// cannot lead outside it), the open file must be the file checked, and its
+// type is checked on the open file, so what is returned is what was checked.
 func (p *preflight) readSource(abs string) ([]byte, error) {
-	target, err := p.readable(abs)
+	target, checked, err := p.readable(abs)
 	if err != nil {
 		return nil, err
 	}
-	f, err := openNoFollow(target) // the path passed ReadAllowed for the launching agent
+	if p.env.OpenFile == nil {
+		return nil, errors.New("is not readable by the launching agent")
+	}
+	f, err := p.env.OpenFile(target)
 	if err != nil {
 		return nil, fmt.Errorf("cannot be read: %w", err)
+	}
+	if info, serr := f.Stat(); serr != nil || !os.SameFile(checked, info) {
+		return nil, errors.Join(errors.New("changed while it was being checked"), f.Close())
 	}
 	data, err := readRegular(f)
 	if closeErr := f.Close(); err == nil && closeErr != nil {
@@ -421,34 +432,35 @@ func readRegular(f *os.File) ([]byte, error) {
 
 // readable resolves abs (following symbolic links) and checks that the
 // launching agent may read both the named path and its target and that the
-// target is a regular file. It returns the resolved path.
-func (p *preflight) readable(abs string) (string, error) {
+// target is a regular file. It returns the resolved path and what it found
+// there.
+func (p *preflight) readable(abs string) (string, os.FileInfo, error) {
 	if p.env.ReadAllowed == nil {
-		return "", errors.New("is not readable by the launching agent")
+		return "", nil, errors.New("is not readable by the launching agent")
 	}
 	if err := p.env.ReadAllowed(abs); err != nil {
-		return "", fmt.Errorf("is not readable by the launching agent: %w", err)
+		return "", nil, fmt.Errorf("is not readable by the launching agent: %w", err)
 	}
 	target, err := filepath.EvalSymlinks(abs)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return "", errors.New("does not exist")
+			return "", nil, errors.New("does not exist")
 		}
-		return "", fmt.Errorf("cannot be resolved: %w", err)
+		return "", nil, fmt.Errorf("cannot be resolved: %w", err)
 	}
 	if target != abs {
 		if terr := p.env.ReadAllowed(target); terr != nil {
-			return "", fmt.Errorf("links to %q, which the launching agent may not read: %w", target, terr)
+			return "", nil, fmt.Errorf("links to %q, which the launching agent may not read: %w", target, terr)
 		}
 	}
-	info, err := os.Stat(target)
+	info, err := os.Lstat(target)
 	if err != nil {
-		return "", fmt.Errorf("cannot be read: %w", err)
+		return "", nil, fmt.Errorf("cannot be read: %w", err)
 	}
 	if !info.Mode().IsRegular() {
-		return "", errors.New("is not a regular file")
+		return "", nil, errors.New("is not a regular file")
 	}
-	return target, nil
+	return target, info, nil
 }
 
 // issueText renders a *ValidationError's issues on one line.

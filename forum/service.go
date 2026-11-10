@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -60,6 +61,9 @@ type LaunchOptions struct {
 	// ReadAllowed reports whether the launching agent may read an absolute
 	// path (source files). nil allows nothing.
 	ReadAllowed func(absPath string) error
+	// OpenFile opens an absolute path through the launching agent's file
+	// sandbox (preflightEnv.OpenFile). nil opens nothing.
+	OpenFile func(absPath string) (*os.File, error)
 }
 
 // controller is what the service uses of a *forumController. openForum returns the

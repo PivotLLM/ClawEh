@@ -24,6 +24,9 @@ type FileReader interface {
 	Resolve(ref string) (string, error)
 	// Allowed reports whether the agent may read an absolute host path.
 	Allowed(abs string) error
+	// Open opens a path the agent may read through the same sandbox that
+	// checks it, without waiting on a FIFO or device.
+	Open(path string) (*os.File, error)
 }
 
 // SendFileTool sends files the agent may read to the chat its turn answers:
@@ -202,10 +205,12 @@ func (t *SendFileTool) openFile(req fileRequest) (*os.File, tools.OutgoingFile, 
 
 // OpenReadable applies the agent's file-reading permission to path, exactly
 // as the file tools do, to the path and to the file it finally names (a
-// symbolic link's target), then opens that file once, without following a
-// link and without blocking, and checks the open file: it must be the file
-// checked, a regular file, and within maxSize bytes. What the caller uses is
-// read from this descriptor, so the path cannot be swapped after the check.
+// symbolic link's target), then opens that file once through the agent's
+// sandbox (reader.Open: a link swapped in cannot lead outside the workspace
+// or allowed folder), without blocking, and checks the open file: it must be
+// the file checked, a regular file, and within maxSize bytes. What the caller
+// uses is read from this descriptor, so the path cannot be swapped after the
+// check.
 // problem is the refusal, naming the path, with verb saying what was
 // attempted ("Can't send …"); the caller closes the file.
 func OpenReadable(reader FileReader, path string, maxSize int64, verb string) (f *os.File, abs string, problem string) {
@@ -231,7 +236,7 @@ func OpenReadable(reader FileReader, path string, maxSize int64, verb string) (f
 	if !checked.Mode().IsRegular() {
 		return nil, "", fmt.Sprintf("Can't %s %q: it is not a regular file.", verb, path)
 	}
-	f, err = openNoFollow(target)
+	f, err = reader.Open(target)
 	if err != nil {
 		return nil, "", cannotRead
 	}

@@ -22,9 +22,3 @@ func tryLockFile(f *os.File) error {
 func unlockFile(f *os.File) error {
 	return syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 }
-
-// openNoFollow opens path read-only, failing when its last element is a
-// symbolic link.
-func openNoFollow(path string) (*os.File, error) {
-	return os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0) //nolint:gosec // callers pass a path they have checked
-}

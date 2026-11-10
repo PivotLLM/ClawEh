@@ -41,6 +41,15 @@ func (h *svcToolHost) ReadAllowed(_, abs string) error {
 	return nil
 }
 
+// OpenFile opens a path inside the workspace, standing in for the agent's
+// file sandbox.
+func (h *svcToolHost) OpenFile(agentID, abs string) (*os.File, error) {
+	if err := h.ReadAllowed(agentID, abs); err != nil {
+		return nil, err
+	}
+	return os.Open(abs) //nolint:gosec // test fixture inside the workspace
+}
+
 // ResolveFile resolves a reference against the workspace; "denied/..." is
 // refused as the file tools would refuse it.
 func (h *svcToolHost) ResolveFile(_, ref string) (string, error) {

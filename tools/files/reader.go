@@ -3,7 +3,6 @@ package files
 import (
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -69,8 +68,29 @@ func (r *Reader) ReadFile(path string) ([]byte, error) { return r.fs().ReadFile(
 // file (and read its mtime) before deciding to read it.
 func (r *Reader) Stat(path string) (os.FileInfo, error) { return r.fs().Stat(path) }
 
-// Open opens path for reading under the same permission rules as ReadFile.
-func (r *Reader) Open(path string) (fs.File, error) { return r.fs().Open(path) }
+// Open opens path for reading through the same sandbox that checks it: a
+// path in the workspace is opened from the workspace's os.Root, one in an
+// allowed folder from that folder's, so a link swapped in after an earlier
+// check (Resolve, Allowed, Stat) cannot lead the open outside them. An
+// absolute path inside the workspace is taken as a workspace path, as
+// Allowed takes it. The open never waits on a FIFO or device. A link inside
+// the sandbox is still followed, so a caller that checked a file first
+// compares the open file with it (os.SameFile). The caller closes the file.
+func (r *Reader) Open(path string) (*os.File, error) {
+	if filepath.IsAbs(path) {
+		path = r.virtualPath(filepath.Clean(path))
+	}
+	f, err := r.fs().Open(path)
+	if err != nil {
+		return nil, err
+	}
+	file, ok := f.(*os.File)
+	if !ok {
+		utils.CloseQuietly(f)
+		return nil, fmt.Errorf("open %q: not a host file", path)
+	}
+	return file, nil
+}
 
 // ReadFileLimit reads at most limit bytes of path and reports whether the file
 // held more. Unlike ReadFile it never materializes the whole file, so an

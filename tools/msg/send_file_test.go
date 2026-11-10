@@ -196,7 +196,7 @@ func TestSendFile_RequiresReadGrant(t *testing.T) {
 	}
 }
 
-// A FIFO is refused without blocking, and the open never follows a link.
+// A FIFO is refused without blocking.
 func TestSendFile_SpecialFiles(t *testing.T) {
 	f := newSendFixture(t, 0)
 	fifo := filepath.Join(f.workspace, "files", "pipe")
@@ -205,21 +205,12 @@ func TestSendFile_SpecialFiles(t *testing.T) {
 	}
 	requireRefusal(t, f.tool.Execute(chatCtx(), filesArg(map[string]any{"path": "files/pipe"})), "it is not a regular file")
 
-	// openNoFollow itself: a FIFO opens without waiting for a writer, and a
-	// link is not followed.
-	pf, err := openNoFollow(fifo)
+	// The reader's open itself: a FIFO opens without waiting for a writer.
+	pf, err := f.tool.reader.Open(fifo)
 	if err != nil {
-		t.Fatalf("openNoFollow(fifo) = %v, want it open without blocking", err)
+		t.Fatalf("Open(fifo) = %v, want it open without blocking", err)
 	}
 	utils.CloseQuietly(pf)
-	link := filepath.Join(f.workspace, "files", "link.md")
-	if err := os.Symlink(filepath.Join(f.workspace, "files", "notes.md"), link); err != nil {
-		t.Fatal(err)
-	}
-	if lf, err := openNoFollow(link); err == nil {
-		utils.CloseQuietly(lf)
-		t.Fatal("openNoFollow followed a symbolic link")
-	}
 }
 
 // Every path is checked with the agent's file-reading permission before

@@ -15,10 +15,19 @@ import (
 
 // swappingReader is the fixture's reader with a hook run when the target is
 // checked (Allowed): the moment between the path being resolved and the
-// file being opened, where a swap would happen.
+// file being opened, where a swap would happen; and one run just before the
+// open itself, after every check.
 type swappingReader struct {
 	FileReader
 	onAllowed func(abs string)
+	onOpen    func(abs string)
+}
+
+func (r swappingReader) Open(path string) (*os.File, error) {
+	if r.onOpen != nil {
+		r.onOpen(path)
+	}
+	return r.FileReader.Open(path)
 }
 
 func (r swappingReader) Allowed(abs string) error {
@@ -86,6 +95,38 @@ func TestSendFile_SwappedAfterCheck(t *testing.T) {
 			requireRefusal(t, r, `Can't send "files/notes.md": `+tt.want)
 			if !strings.Contains(r.ForLLM, "Nothing was sent.") || f.sender.files != nil {
 				t.Fatalf("result %q, sent %v: want nothing sent", r.ForLLM, f.sender.files)
+			}
+		})
+	}
+}
+
+// A file replaced by a link after every check, just before the open, is
+// never sent: a link leading outside the workspace is refused by the
+// sandbox the open goes through, and a link to another file inside it is
+// not the file checked.
+func TestSendFile_LinkSwappedBeforeOpen(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		target func(f *sendFixture) string
+		want   string
+	}{
+		{"outside", func(f *sendFixture) string { return filepath.Join(f.outside, "secret.txt") },
+			"you can't read it, or it does not exist"},
+		{"inside", func(*sendFixture) string { return "chart.png" },
+			"it changed while it was being checked"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newSendFixture(t, 0)
+			f.tool.reader = swappingReader{FileReader: f.tool.reader, onOpen: func(abs string) {
+				if filepath.Base(abs) == "notes.md" {
+					mustDo(t, os.Remove(abs))
+					mustDo(t, os.Symlink(tt.target(f), abs))
+				}
+			}}
+			r := f.tool.Execute(chatCtx(), filesArg(map[string]any{"path": "files/notes.md"}))
+			requireRefusal(t, r, `Can't send "files/notes.md": `+tt.want)
+			if f.sender.files != nil {
+				t.Fatalf("sent %v: want nothing sent", f.sender.files)
 			}
 		})
 	}

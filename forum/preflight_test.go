@@ -312,6 +312,14 @@ func cfgtFileEnv(t *testing.T) (preflightEnv, string, string) {
 		}
 		return errors.New("outside the workspace")
 	}
+	// A stand-in for the agent's sandbox: only paths inside the workspace
+	// open.
+	env.OpenFile = func(p string) (*os.File, error) {
+		if err := env.ReadAllowed(p); err != nil {
+			return nil, err
+		}
+		return os.Open(p) //nolint:gosec // test fixture inside the workspace
+	}
 	return env, ws, outside
 }
 
@@ -363,6 +371,34 @@ func TestPreflightFileSources(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A source replaced by a link to another file after every check, just
+// before the open, is not read: the open file is not the file checked. With
+// no opener at all, nothing is read.
+func TestPreflightSourceSwappedBeforeOpen(t *testing.T) {
+	env, ws, _ := cfgtFileEnv(t)
+	open := env.OpenFile
+	env.OpenFile = func(p string) (*os.File, error) {
+		if filepath.Base(p) == "report.md" {
+			if err := os.Remove(p); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(filepath.Join(ws, "facts.json"), p); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return open(p)
+	}
+	cfg := cfgtExample(t)
+	cfg.Sources["report"] = Source{Decode: FormatText, File: "docs/report.md"}
+	_, err := runPreflight(context.Background(), cfg, env)
+	cfgtWantIssue(t, err, "sources.report.file", "changed while it was being checked")
+
+	env, _, _ = cfgtFileEnv(t)
+	env.OpenFile = nil
+	_, err = runPreflight(context.Background(), cfg, env)
+	cfgtWantIssue(t, err, "sources.report.file", "not readable")
 }
 
 func TestPreflightReadAllowedSeesTheLexicalPath(t *testing.T) {

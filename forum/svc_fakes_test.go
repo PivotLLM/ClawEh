@@ -659,6 +659,12 @@ func (e *svcEnv) opts() LaunchOptions {
 			}
 			return nil
 		},
+		OpenFile: func(abs string) (*os.File, error) {
+			if !strings.HasPrefix(abs, e.workspace+string(filepath.Separator)) {
+				return nil, errors.New("outside the workspace")
+			}
+			return os.Open(abs) //nolint:gosec // test fixture inside the workspace
+		},
 	}
 }
 

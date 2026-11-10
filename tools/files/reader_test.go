@@ -4,12 +4,14 @@
 package files
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 // readerConfig builds a config with the workspace restrictions the reader is
@@ -222,5 +224,83 @@ func TestReaderAllowedThroughSymlinkedWorkspace(t *testing.T) {
 	}
 	if got, err := r.Resolve("files/brief.md"); err != nil || got != filepath.Join(link, "files", "brief.md") {
 		t.Errorf("Resolve = %q, %v", got, err)
+	}
+}
+
+// Open reads what the agent may read (a workspace path, by its relative or
+// absolute name, also through a linked workspace, or a file in an allowed
+// folder) and refuses the rest.
+func TestReaderOpen(t *testing.T) {
+	target := t.TempDir()
+	ws := filepath.Join(t.TempDir(), "ws")
+	if err := os.Symlink(target, ws); err != nil {
+		t.Fatal(err)
+	}
+	folder := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.md")
+	writeFile(t, filepath.Join(target, "files", "brief.md"), "brief")
+	writeFile(t, filepath.Join(target, "secrets", "keys.md"), "nope")
+	writeFile(t, filepath.Join(folder, "doc.md"), "doc")
+	writeFile(t, outside, "host")
+	SetReadScopeSubdirs([]string{"files"})
+	defer SetReadScopeSubdirs(nil)
+	allowFolders(t, ws, folder)
+	r := NewReader(readerConfig(), ws)
+
+	for p, want := range map[string]string{
+		"files/brief.md":                           "brief",
+		filepath.Join(ws, "files", "brief.md"):     "brief",
+		filepath.Join(target, "files", "brief.md"): "brief",
+		filepath.Join(folder, "doc.md"):            "doc",
+	} {
+		f, err := r.Open(p)
+		if err != nil {
+			t.Errorf("Open(%q) = %v", p, err)
+			continue
+		}
+		data, err := io.ReadAll(f)
+		utils.CloseQuietly(f)
+		if err != nil || string(data) != want {
+			t.Errorf("Open(%q) read %q, %v; want %q", p, data, err, want)
+		}
+	}
+	for _, p := range []string{"secrets/keys.md", "../outside.md", outside, filepath.Join(target, "secrets", "keys.md")} {
+		if f, err := r.Open(p); err == nil {
+			utils.CloseQuietly(f)
+			t.Errorf("Open(%q) succeeded, want a refusal", p)
+		}
+	}
+}
+
+// A file checked as readable and then replaced by a link leading out of the
+// workspace or out of an allowed folder cannot be read: the open goes
+// through the same sandbox as the check, not through the host path.
+func TestReaderOpen_LinkSwappedAfterCheck(t *testing.T) {
+	ws := t.TempDir()
+	folder := t.TempDir()
+	secret := filepath.Join(t.TempDir(), "secret.md")
+	writeFile(t, secret, "secret")
+	inWs := filepath.Join(ws, "files", "brief.md")
+	inFolder := filepath.Join(folder, "doc.md")
+	writeFile(t, inWs, "brief")
+	writeFile(t, inFolder, "doc")
+	allowFolders(t, ws, folder)
+	r := NewReader(readerConfig(), ws)
+
+	for _, abs := range []string{inWs, inFolder} {
+		if err := r.Allowed(abs); err != nil {
+			t.Fatalf("Allowed(%q) = %v before the swap", abs, err)
+		}
+		if err := os.Remove(abs); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(secret, abs); err != nil {
+			t.Fatal(err)
+		}
+		if f, err := r.Open(abs); err == nil {
+			data, _ := io.ReadAll(f)
+			utils.CloseQuietly(f)
+			t.Errorf("Open(%q) after the swap read %q, want a refusal", abs, data)
+		}
 	}
 }

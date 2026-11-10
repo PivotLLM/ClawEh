@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"maps"
 	"math"
+	"os"
 	"slices"
 	"strings"
 	"unicode"
@@ -48,6 +49,10 @@ type ToolHost interface {
 	ResolveFile(agentID, ref string) (absPath string, err error)
 	// ReadAllowed reports whether the agent may read an absolute path.
 	ReadAllowed(agentID, absPath string) error
+	// OpenFile opens an absolute path the agent may read through the same
+	// sandbox its file tools read from (so a link swapped in after
+	// ReadAllowed cannot lead outside it), without waiting on a FIFO.
+	OpenFile(agentID, absPath string) (*os.File, error)
 }
 
 // Tools returns the fifteen forum tools over svc. Every handler resolves
@@ -424,7 +429,7 @@ func (t *toolSuite) results(call *toolspec.ToolCall) (*toolspec.Result, error) {
 
 // launchOptions builds LaunchOptions for validate and launch from the call:
 // Origin from the call's agent, channel, chat and session, and
-// ResolveFile and ReadAllowed bound to the agent.
+// ResolveFile, ReadAllowed and OpenFile bound to the agent.
 func (t *toolSuite) launchOptions(call *toolspec.ToolCall, scope Scope) LaunchOptions {
 	return LaunchOptions{
 		Origin: Origin{
@@ -435,6 +440,9 @@ func (t *toolSuite) launchOptions(call *toolspec.ToolCall, scope Scope) LaunchOp
 		},
 		ReadAllowed: func(abs string) error {
 			return t.host.ReadAllowed(scope.AgentID, abs)
+		},
+		OpenFile: func(abs string) (*os.File, error) {
+			return t.host.OpenFile(scope.AgentID, abs)
 		},
 	}
 }

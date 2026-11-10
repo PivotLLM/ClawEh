@@ -626,7 +626,11 @@ production instance directly; test against a dev instance.
   allowed folder plus `<workspace>/maestro` when Maestro is on (no mount: `maestro/` is
   simply part of the workspace then). `files.Reader` uses the same table, so
   `msg_send_file`, cogmem attachments, forum sources and task-model files follow the same
-  rule. `Store.Update` refuses a new non-absolute path ("Alice's allowed folder "x" must
+  rule. They check with `Resolve`/`Allowed` (named path and link target) and then open
+  with `Reader.Open`, through the same `os.Root` sandbox (workspace or allowed folder),
+  non-blocking, and compare the open file with the checked one (`os.SameFile`), so a
+  link swapped in after the check cannot escape; the forum gets this as
+  `ToolHost.OpenFile` / `LaunchOptions.OpenFile`. `Store.Update` refuses a new non-absolute path ("Alice's allowed folder "x" must
   be an absolute path.") and a new note over `config.MaxAllowedFolderNoteChars` (100)
   characters ("Alice's note for "/srv/src" is longer than 100 characters.";
   `newLongFolderNotes`). The retired `mounts` list is migrated at load and on save

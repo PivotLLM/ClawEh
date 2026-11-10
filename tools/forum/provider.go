@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"sync/atomic"
 
@@ -150,6 +151,18 @@ func (h *toolHost) ReadAllowed(agentID, absPath string) error {
 	default:
 		return errors.New("its file permissions do not allow it")
 	}
+}
+
+// OpenFile opens absPath through the agent's file sandbox (files.Reader.Open).
+func (h *toolHost) OpenFile(agentID, absPath string) (*os.File, error) {
+	if err := h.same(agentID); err != nil {
+		return nil, err
+	}
+	f, err := files.NewReader(h.cfg, h.workspace).Open(absPath)
+	if err != nil {
+		return nil, errors.New("the agent may not read it or it does not exist")
+	}
+	return f, nil
 }
 
 // same refuses a question about any agent but the one the host is for.

@@ -10,6 +10,12 @@
   and in the PDF report, and logged as a warning at every start. The
   **Data directory permissions** row reports only paths more open than
   their configured mode.
+- **Files read for an agent are opened inside its workspace or allowed
+  folder.** A forum source file was checked and then opened by its host
+  path, so a folder on that path replaced by a link in between could lead
+  the open outside what the agent may read. Forum sources,
+  `msg_send_file` and task-model files now open the file through the same
+  sandbox that checked it, and refuse it when it is not the file checked.
 
 ### Added
 

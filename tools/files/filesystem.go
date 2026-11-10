@@ -886,7 +886,7 @@ func (h *hostFs) Lstat(path string) (os.FileInfo, error) {
 }
 
 func (h *hostFs) Open(path string) (fs.File, error) {
-	f, err := os.Open(path) //nolint:gosec // hostFs is the unrestricted backend, selected by buildBaseFs only when restrict is false
+	f, err := os.OpenFile(path, readOpenFlags, 0) //nolint:gosec // hostFs is the unrestricted backend, selected by buildBaseFs only when restrict is false
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("failed to open file: file not found: %w", err)
@@ -1162,7 +1162,7 @@ func (r *sandboxFs) isRoot(path string) bool {
 func (r *sandboxFs) Open(path string) (fs.File, error) {
 	var f fs.File
 	err := r.execute(path, func(root *os.Root, relPath string) error {
-		file, err := root.Open(relPath)
+		file, err := root.OpenFile(relPath, readOpenFlags, 0)
 		if err != nil {
 			if os.IsNotExist(err) {
 				return fmt.Errorf("failed to open file: file not found: %w", err)

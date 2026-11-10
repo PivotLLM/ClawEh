@@ -62,6 +62,7 @@ func (s *Service) check(ctx context.Context, scope Scope, raw []byte, opts Launc
 		Ceilings:    s.Ceilings(),
 		ResolveFile: opts.ResolveFile,
 		ReadAllowed: opts.ReadAllowed,
+		OpenFile:    opts.OpenFile,
 		Cards:       s.host.Cards,
 	})
 	if err != nil {

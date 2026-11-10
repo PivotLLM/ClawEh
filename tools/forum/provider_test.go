@@ -19,6 +19,7 @@ import (
 	"github.com/PivotLLM/ClawEh/tools"
 	toolsagents "github.com/PivotLLM/ClawEh/tools/agents"
 	"github.com/PivotLLM/ClawEh/tools/files"
+	"github.com/PivotLLM/ClawEh/utils"
 )
 
 func scopeConfig() *config.Config {
@@ -153,6 +154,32 @@ func TestToolHostFiles(t *testing.T) {
 	if _, err := h.ResolveFile("bob", "files/forum.json"); err == nil {
 		t.Error("the host answered for another agent")
 	}
+
+	// OpenFile reads what ReadAllowed admits, refuses the rest, and goes
+	// through the sandbox: the checked file replaced by a link leading out
+	// of the workspace is not opened.
+	f, err := h.OpenFile("alice", inside)
+	if err != nil {
+		t.Fatalf("OpenFile(inside) = %v", err)
+	}
+	utils.CloseQuietly(f)
+	if f, err := h.OpenFile("alice", outside); err == nil {
+		utils.CloseQuietly(f)
+		t.Error("OpenFile opened a file outside the workspace")
+	}
+	if _, err := h.OpenFile("bob", inside); err == nil {
+		t.Error("the host opened a file for another agent")
+	}
+	if err := os.Remove(inside); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, inside); err != nil {
+		t.Fatal(err)
+	}
+	if f, err := h.OpenFile("alice", inside); err == nil {
+		utils.CloseQuietly(f)
+		t.Error("OpenFile followed a swapped link out of the workspace")
+	}
 }
 
 // nopHost satisfies the forum host interfaces for a service that runs
@@ -232,6 +259,7 @@ func TestSourcesResolveLikeTheFileTools(t *testing.T) {
 	err := svc.Validate(context.Background(), scope, []byte(raw), forumpkg.LaunchOptions{
 		ResolveFile: func(ref string) (string, error) { return h.ResolveFile("alice", ref) },
 		ReadAllowed: func(abs string) error { return h.ReadAllowed("alice", abs) },
+		OpenFile:    func(abs string) (*os.File, error) { return h.OpenFile("alice", abs) },
 	})
 	if err != nil {
 		t.Fatalf("Validate: %v", err)
