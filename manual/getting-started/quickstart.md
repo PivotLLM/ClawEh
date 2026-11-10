@@ -34,9 +34,9 @@ A new agent has no tools and no skills. It can talk, but it cannot read files, s
 
 Changes on the Agents page are saved as you make them.
 
-Some capabilities have their own switch on the same card, each off by default:
+Some capabilities need a separate step on the same card:
 
-- **Allow shell commands (full account access)** lets the agent run commands on this machine.
+- The `shell_exec` box under **Internal tools** lets the agent run commands on this machine. It is off by default, and **Default tools** never ticks it.
 - **Maestro**, **Fusion (REST-API tools)** and **Allow forum** add their tool suites.
 - **Cognitive memory** is on by default; turn it off for an agent that should keep no memory.
 

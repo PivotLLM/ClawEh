@@ -738,16 +738,19 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
     assert(a?.temperature === 0.77, "the earlier edit was clobbered by the Fusion toggle")
   })
 
-  await check(6, "Allow shell commands (full account access) adds and removes the explicit shell_exec entry", async () => {
+  await check(6, "the shell_exec box adds and removes only its own entry, with its warning", async () => {
     if (!created) return "skipped, never created"
     const before = (await config()).agents.list.find((x) => x.id === PROBE)
     const others = (before?.tools ?? []).filter((t) => t !== "shell_exec")
     const { close, page } = await open("/agents")
     await page.getByRole("button", { name: PROBE, exact: true }).click()
     await page.waitForTimeout(400)
-    const box = page.getByRole("switch", { name: "Allow shell commands (full account access)", exact: true }).first()
-    assert((await box.count()) > 0, 'no "Allow shell commands (full account access)" switch on the card')
-    assert(!(await box.isChecked()), '"Allow shell commands (full account access)" already on for a new agent')
+    assert((await page.getByRole("switch", { name: /shell/i }).count()) === 0, "a separate shell switch is still on the card")
+    const box = page.getByRole("checkbox", { name: "shell_exec", exact: true }).first()
+    assert((await box.count()) > 0, "no shell_exec box under Internal tools")
+    assert(!(await box.isChecked()), "shell_exec already ticked on a new agent")
+    const warning = page.getByTestId("shell-warning").first()
+    assert((await warning.getAttribute("title")) === "Full access to this app's account", "the shell_exec row has no warning hover text")
     await box.click()
     await page.waitForTimeout(2000)
     let a = (await config()).agents.list.find((x) => x.id === PROBE)
@@ -762,7 +765,7 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
     a = (await config()).agents.list.find((x) => x.id === PROBE)
     assert(!(a?.tools ?? []).includes("shell_exec"), `tools = ${JSON.stringify(a?.tools)}; shell_exec should be gone`)
     assert(JSON.stringify(a?.tools ?? []) === JSON.stringify(others), `tools = ${JSON.stringify(a?.tools)}; expected ${JSON.stringify(others)}`)
-    assert(a?.temperature === 0.77, "the earlier edit was clobbered by the shell toggle")
+    assert(a?.temperature === 0.77, "the earlier edit was clobbered by the shell box")
   })
 
   await check(7, "returning to the Agents page through the sidebar shows the agents", async () => {
@@ -1170,67 +1173,78 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
   const CODE = "e2e-code"
   const CODING = [
     "file_list", "file_glob", "file_read_lines", "file_search_lines", "file_edit_lines",
-    "file_insert_lines", "file_delete_lines", "file_edit", "file_write", "shell_exec",
+    "file_insert_lines", "file_delete_lines", "file_edit", "file_write", "shell_exec", "agent_spawn",
   ]
-  const CODING_LABEL = "Allow coding tools (includes shell commands, full account access)"
-  const SHELL_LABEL = "Allow shell commands (full account access)"
   let codeCreated = false
+  // codeTools is e2e-code's saved tools list.
+  const codeTools = async () => (await config()).agents.list.find((x) => x.id === CODE)?.tools ?? []
+  // setCodeTools writes e2e-code's tools list through the API.
+  const setCodeTools = async (tools) => {
+    const c = await config()
+    const list = (c.agents.list ?? []).map((a) => (a.id === CODE ? { ...a, tools } : a))
+    const r = await api("/api/config", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agents: { list } }),
+    })
+    assert(r.status === 200, `setting ${CODE}'s tools = ${r.status}`)
+  }
   // onCodeCard opens /agents with e2e-code selected, runs act, waits for the
-  // save and returns what act returned with the coding box's and the shell
-  // switch's states and the saved tools list.
+  // save and returns the saved tools list.
   const onCodeCard = async (act) => {
     const { close, page } = await open("/agents")
     await page.getByRole("button", { name: CODE, exact: true }).click()
     await page.waitForTimeout(400)
-    const box = page.getByRole("checkbox", { name: CODING_LABEL, exact: true })
-    const shell = page.getByRole("switch", { name: SHELL_LABEL, exact: true }).first()
-    await act(page, box, shell)
+    await act(page)
     await page.waitForTimeout(2000)
-    const state = await box.getAttribute("data-state")
-    const shellOn = await shell.isChecked()
     await close()
-    const tools = (await config()).agents.list.find((x) => x.id === CODE)?.tools ?? []
-    return { state, shellOn, tools }
+    return codeTools()
   }
+  const clickButton = (name) => (page) => page.getByRole("button", { name, exact: true }).first().click()
+  const counts = (tools) => tools.reduce((m, t) => m.set(t, (m.get(t) ?? 0) + 1), new Map())
 
-  await check(17, "Allow coding tools: ticking it grants all ten tools and saves them", async () => {
+  await check(17, "Coding tools grants the eleven tools and saves them", async () => {
     await addAgent({ id: CODE, name: CODE, tools: ["time_now"] })
     codeCreated = true
-    const { state, shellOn, tools } = await onCodeCard((page, box) => box.click())
-    assert(state === "checked", `box state = ${state}`)
-    assert(shellOn, "the shell switch is off although shell_exec was granted")
+    const tools = await onCodeCard(clickButton("Coding tools"))
     for (const t of CODING) assert(tools.includes(t), `tools = ${JSON.stringify(tools)}; ${t} missing`)
     assert(tools.includes("time_now"), `tools = ${JSON.stringify(tools)}; time_now was dropped`)
+    assert(tools.length === CODING.length + 1, `tools = ${JSON.stringify(tools)}; expected time_now and the eleven`)
     return `${CODE}: ${tools.length} tools`
   })
 
-  await check(18, "Allow coding tools: unticking one tool leaves the box indeterminate", async () => {
+  await check(18, "Coding tools only adds: nothing set is removed or repeated", async () => {
     if (!codeCreated) return "skipped, never created"
-    const { state, tools } = await onCodeCard((page) =>
-      page.getByRole("checkbox", { name: "file_glob", exact: true }).click(),
-    )
-    assert(!tools.includes("file_glob"), `tools = ${JSON.stringify(tools)}; file_glob should be gone`)
-    assert(state === "indeterminate", `box state = ${state}`)
+    await setCodeTools(["time_now", "web_fetch", "file_*", "agent_spawn"])
+    const tools = await onCodeCard(clickButton("Coding tools"))
+    const want = ["time_now", "web_fetch", "file_*", "agent_spawn", "shell_exec"]
+    assert(JSON.stringify(tools) === JSON.stringify(want), `tools = ${JSON.stringify(tools)}, want ${JSON.stringify(want)}`)
+    const again = await onCodeCard(clickButton("Coding tools"))
+    assert(JSON.stringify(again) === JSON.stringify(want), `a second click changed tools to ${JSON.stringify(again)}`)
+    for (const [t, n] of counts(again)) assert(n === 1, `${t} is listed ${n} times`)
   })
 
-  await check(19, "Allow coding tools and Allow shell commands stay in step", async () => {
+  await check(19, "the shell_exec box can be unticked and ticked like any tool and persists", async () => {
     if (!codeCreated) return "skipped, never created"
-    let r = await onCodeCard((page, box, shell) => shell.click())
-    assert(!r.tools.includes("shell_exec"), `tools = ${JSON.stringify(r.tools)}; shell_exec should be gone`)
-    assert(r.state === "indeterminate", `box state after the shell switch = ${r.state}`)
-    r = await onCodeCard((page, box) => box.click())
-    assert(r.state === "checked", `box state after ticking = ${r.state}`)
-    assert(r.shellOn, "ticking the box did not turn the shell switch on")
-    for (const t of CODING) assert(r.tools.includes(t), `tools = ${JSON.stringify(r.tools)}; ${t} missing`)
+    let tools = await onCodeCard((page) => page.getByRole("checkbox", { name: "shell_exec", exact: true }).first().click())
+    assert(!tools.includes("shell_exec"), `tools = ${JSON.stringify(tools)}; shell_exec should be gone`)
+    assert(tools.includes("file_*") && tools.includes("web_fetch"), `tools = ${JSON.stringify(tools)}; other entries changed`)
+    // After a reload the box shows the saved state, and ticking it saves it.
+    tools = await onCodeCard(async (page) => {
+      const box = page.getByRole("checkbox", { name: "shell_exec", exact: true }).first()
+      assert(!(await box.isChecked()), "shell_exec box ticked after it was saved off")
+      await box.click()
+    })
+    assert(tools.includes("shell_exec"), `tools = ${JSON.stringify(tools)}; shell_exec missing after ticking`)
   })
 
-  await check(20, "Allow coding tools: unticking it removes all ten and keeps the rest", async () => {
+  await check(20, "Default tools does not add shell_exec", async () => {
     try {
       if (!codeCreated) return "skipped, never created"
-      const { state, shellOn, tools } = await onCodeCard((page, box) => box.click())
-      assert(state === "unchecked", `box state = ${state}`)
-      assert(!shellOn, "the shell switch is still on")
-      assert(JSON.stringify(tools) === JSON.stringify(["time_now"]), `tools = ${JSON.stringify(tools)}, want ["time_now"]`)
+      await setCodeTools(["time_now"])
+      const tools = await onCodeCard(clickButton("Default tools"))
+      assert(tools.length > 0, "Default tools saved an empty list")
+      assert(!tools.includes("shell_exec"), `tools = ${JSON.stringify(tools)}; Default tools added shell_exec`)
     } finally {
       if (codeCreated) await removeAgent(CODE)
     }

@@ -18,21 +18,14 @@ import {
   MAX_FOLDER_NOTE_CHARS,
   MESSAGE_TOOL,
   type MaestroRunnerEdits,
-  SHELL_TOOL,
   SPAWN_TOOL,
   type SkillInfo,
   TASK_GRANT_KINDS,
   type TaskGrantKind,
   type TaskModelGrant,
-  codingToolsState,
-  deniedCodingTools,
   internalToolsSummary,
   settingsCardClass,
-  shellAllowed,
-  shellDenied,
   toolGranted,
-  withCodingTools,
-  withShellAllowed,
 } from "@/components/agents/agent-model"
 import { DenyToolsEditor } from "@/components/agents/deny-tools-editor"
 import { MaestroSettingsSection } from "@/components/agents/maestro-settings"
@@ -237,14 +230,7 @@ export function AgentCard({
   status,
 }: AgentCardProps) {
   const { t } = useTranslation()
-  // The shell entry has its own box; the count is of the other tools.
   const toolsSummary = internalToolsSummary(tools)
-  const shellOn = shellAllowed(tools)
-  const codingOn = codingToolsState(tools)
-  // The per-tool names the tool boxes list, which a "*" entry stands for.
-  const catalogTools = availableTools.tools
-    .filter((t) => !t.suite && t.name !== SHELL_TOOL)
-    .map((t) => t.name)
   // Local edits for explicit cron chat ids (peerless channels), keyed by the
   // binding's index in the full bindings array.
   const [deliverEdits, setDeliverEdits] = useState<Record<number, string>>({})
@@ -473,6 +459,7 @@ export function AgentCard({
                   selected={tools}
                   catalog={availableTools}
                   onChange={onToolsChange}
+                  denyTools={denyTools}
                 />
               </div>
             )}
@@ -494,51 +481,6 @@ export function AgentCard({
                 onChange={onAllowAgentsChange}
               />
             )}
-
-            <label className="flex cursor-pointer items-center gap-2 select-none">
-              <Checkbox
-                checked={codingOn}
-                onCheckedChange={() =>
-                  onToolsChange(
-                    withCodingTools(tools, codingOn !== true, catalogTools),
-                  )
-                }
-                aria-label={t("agents.allowCodingTools")}
-              />
-              <span className="text-foreground text-xs font-semibold">
-                {t("agents.allowCodingTools")}
-              </span>
-            </label>
-            {deniedCodingTools(tools, denyTools).length > 0 && (
-              <p className="text-xs font-medium text-amber-400">
-                {t("agents.allowCodingToolsDenied", {
-                  tools: deniedCodingTools(tools, denyTools).join(", "),
-                })}
-              </p>
-            )}
-
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-foreground text-xs font-semibold">
-                  {t("agents.allowShell")}
-                </p>
-                <Switch
-                  checked={shellOn}
-                  onCheckedChange={(v) =>
-                    onToolsChange(withShellAllowed(tools, v))
-                  }
-                  aria-label={t("agents.allowShell")}
-                />
-              </div>
-              <p className="text-muted-foreground text-xs">
-                {t("agents.allowShellHint")}
-              </p>
-              {shellOn && shellDenied(denyTools) && (
-                <p className="text-xs font-medium text-amber-400">
-                  {t("agents.allowShellDenied")}
-                </p>
-              )}
-            </div>
 
             {onDenyToolsChange !== undefined && (
               <div className="space-y-1.5">

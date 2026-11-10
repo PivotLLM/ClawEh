@@ -66,7 +66,7 @@ func shellAccess(cfg *config.Config) (string, bool) {
 	if len(with) == 0 {
 		return "No enabled agent is allowed shell commands", false
 	}
-	return "Allow shell commands: " + strings.Join(with, ", "), true
+	return "Shell commands allowed: " + strings.Join(with, ", "), true
 }
 
 func hostOf(raw string) string {

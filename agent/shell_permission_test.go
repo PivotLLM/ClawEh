@@ -91,7 +91,7 @@ func (m *shellModel) checkOffered(t *testing.T, what string, allowed bool) {
 }
 
 // shellConfig is messagingConfig with shell_exec named in Alice's tools
-// ("Allow shell commands") and Bob on "*" alone, which does not include it.
+// (its shell_exec box) and Bob on "*" alone, which does not include it.
 // No install-wide setting is involved. Helper may target everyone and has
 // agent_message.
 func shellConfig(t *testing.T) *config.Config {

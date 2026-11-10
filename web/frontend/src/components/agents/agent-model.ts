@@ -251,8 +251,8 @@ export function toggleAccessEntry(entries: string[], name: string): string[] {
 }
 
 // SHELL_TOOL is the one tool granted only by name: an agent runs shell
-// commands only when its tools list names shell_exec ("Allow shell commands");
-// a "*" or prefix entry never includes it.
+// commands only when its tools list names shell_exec (its box in the tool
+// list); a "*" or prefix entry never includes it.
 export const SHELL_TOOL = "shell_exec"
 
 const isShellEntry = (e: string) => norm(e) === SHELL_TOOL
@@ -262,14 +262,14 @@ export function shellAllowed(tools: string[]): boolean {
   return tools.some(isShellEntry)
 }
 
-// shellDenied reports whether deny_tools blocks shell_exec, under the backend's
-// rule: an exact entry (case-insensitive) or a prefix entry ending in "*".
-export function shellDenied(denyTools: string[]): boolean {
+// toolDenied reports whether deny_tools blocks the tool name, under the
+// backend's rule: an exact entry (case-insensitive) or a prefix entry ending
+// in "*".
+export function toolDenied(denyTools: string[], name: string): boolean {
+  const n = name.toLowerCase()
   return denyTools.some((raw) => {
     const d = norm(raw)
-    return d.endsWith("*")
-      ? SHELL_TOOL.startsWith(d.slice(0, -1))
-      : d === SHELL_TOOL
+    return d.endsWith("*") ? n.startsWith(d.slice(0, -1)) : d === n
   })
 }
 
@@ -280,7 +280,8 @@ export function withShellAllowed(tools: string[], allowed: boolean): string[] {
   return allowed ? [...rest, SHELL_TOOL] : rest
 }
 
-// CODING_TOOLS are the tools "Allow coding tools" grants and removes together.
+// CODING_TOOLS are the tools the "Coding tools" button adds to an agent's
+// tools list.
 export const CODING_TOOLS = [
   "file_list",
   "file_glob",
@@ -292,6 +293,7 @@ export const CODING_TOOLS = [
   "file_edit",
   "file_write",
   SHELL_TOOL,
+  "agent_spawn",
 ]
 
 // codingToolInList reports whether the tools list grants name: shell_exec only
@@ -302,63 +304,12 @@ function codingToolInList(tools: string[], name: string): boolean {
   return tools.some((e) => toolPatternMatches(e.trim(), name))
 }
 
-// grantsCodingTool reports whether a "*" or prefix entry grants a coding tool
-// other than shell_exec (which only its own entry grants).
-const grantsCodingTool = (entry: string) =>
-  entry.trim().endsWith("*") &&
-  CODING_TOOLS.some(
-    (name) => name !== SHELL_TOOL && toolPatternMatches(entry.trim(), name),
-  )
-
-// codingToolsState is the "Allow coding tools" box: checked when every coding
-// tool is in the list, unchecked when none is, indeterminate otherwise.
-export function codingToolsState(tools: string[]): boolean | "indeterminate" {
-  const n = CODING_TOOLS.filter((name) => codingToolInList(tools, name)).length
-  if (n === CODING_TOOLS.length) return true
-  return n === 0 ? false : "indeterminate"
-}
-
-// deniedCodingTools lists the coding tools the tools list grants but
-// deny_tools blocks, under the backend's deny rule (an exact entry in any case,
-// or a prefix entry ending in "*").
-export function deniedCodingTools(
-  tools: string[],
-  denyTools: string[],
-): string[] {
-  return CODING_TOOLS.filter(
-    (name) =>
-      codingToolInList(tools, name) &&
-      denyTools.some((raw) => {
-        const d = norm(raw)
-        return d.endsWith("*") ? name.startsWith(d.slice(0, -1)) : d === name
-      }),
-  )
-}
-
-// withCodingTools adds every coding tool the list lacks (allowed) or removes
-// all of them (not allowed). Before removing, a "*" or prefix entry that grants
-// a coding tool is replaced by the catalogTools it matches (the per-tool names
-// the page lists, as the tool boxes do), so the coding tools are really taken
-// away rather than left granted through the pattern.
-export function withCodingTools(
-  tools: string[],
-  allowed: boolean,
-  catalogTools: string[],
-): string[] {
-  if (allowed) {
-    const missing = CODING_TOOLS.filter(
-      (name) => !codingToolInList(tools, name),
-    )
-    return [...tools, ...missing]
-  }
-  const patterns = tools.filter(grantsCodingTool)
-  const rest = tools.filter((e) => !grantsCodingTool(e))
-  const expanded = catalogTools.filter(
-    (n) =>
-      patterns.some((p) => toolPatternMatches(p.trim(), n)) &&
-      !rest.some((e) => norm(e) === n),
-  )
-  return [...rest, ...expanded].filter((e) => !CODING_TOOLS.includes(norm(e)))
+// withCodingTools adds every coding tool the list does not already grant
+// (by name, "*" or a prefix entry; shell_exec only by name) and never removes
+// anything.
+export function withCodingTools(tools: string[]): string[] {
+  const missing = CODING_TOOLS.filter((name) => !codingToolInList(tools, name))
+  return [...tools, ...missing]
 }
 
 // MESSAGE_TOOL is the tool an agent messages other agents with; whom it may
@@ -391,13 +342,8 @@ export function toolGranted(
   denyTools: string[],
   name: string,
 ): boolean {
-  const n = name.toLowerCase()
-  const denied = denyTools.some((raw) => {
-    const d = norm(raw)
-    return d.endsWith("*") ? n.startsWith(d.slice(0, -1)) : d === n
-  })
-  if (denied) return false
-  if (n === SHELL_TOOL) return shellAllowed(tools)
+  if (toolDenied(denyTools, name)) return false
+  if (name.toLowerCase() === SHELL_TOOL) return shellAllowed(tools)
   return tools.some((e) => toolPatternMatches(e, name))
 }
 
@@ -452,14 +398,12 @@ export function withAllAgents(allow: string[], on: boolean): string[] {
   return on ? [ALL_AGENTS] : allow.filter((e) => e !== ALL_AGENTS)
 }
 
-// internalToolsSummary is the label of an agent's internal tools, leaving out
-// shell_exec, which has its own switch. An agent has only the tools its list
-// names, so an empty list is "No tools".
-export function internalToolsSummary(tools: string[]): {
+// internalToolsSummary is the label of an agent's internal tools. An agent
+// has only the tools its list names, so an empty list is "No tools".
+export function internalToolsSummary(list: string[]): {
   text: string
   none: boolean
 } {
-  const list = withShellAllowed(tools, false)
   if (list.length === 0) return { text: "No tools", none: true }
   return {
     text: `${list.includes("*") ? "all" : list.length} granted`,

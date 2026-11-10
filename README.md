@@ -34,7 +34,7 @@ Use cloud APIs (Anthropic, OpenAI, Google, x.ai and others), [OpenRouter](manual
 
 ### Coding harness tools
 
-Agents on API models get the tools a modern coding harness provides: `file_glob` to find files by name, `file_search_lines` to search code (regular expressions, file filters, context lines, `.gitignore` respected), line-based reading and editing, and `shell_exec` for git, builds and tests. **Allow coding tools** on the Agents page grants the whole set. [Allowed folders](manual/agents/allowed-folders.md) give an agent's file tools a source tree outside its workspace by its real path, read-only when the file permissions say so. See [Tools and skills](manual/agents/tools-and-skills.md).
+Agents on API models get the tools a modern coding harness provides: `file_glob` to find files by name, `file_search_lines` to search code (regular expressions, file filters, context lines, `.gitignore` respected), line-based reading and editing, and `shell_exec` for git, builds and tests. The **Coding tools** button on the Agents page adds the whole set. [Allowed folders](manual/agents/allowed-folders.md) give an agent's file tools a source tree outside its workspace by its real path, read-only when the file permissions say so. See [Tools and skills](manual/agents/tools-and-skills.md).
 
 ### Maestro workflow orchestration
 

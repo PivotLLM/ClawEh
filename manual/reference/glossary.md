@@ -68,7 +68,7 @@ This page explains the terms used in ClawEh and this manual.
 
 **Service token** — A long-lived credential that lets an external MCP client use an agent's tools. Managed with `claw token`. See [Service tokens](../mcp.md#service-tokens).
 
-**Shell commands** — The `shell_exec` tool, which runs commands on the machine. Granted per agent with **Allow shell commands (full account access)**; off by default. See [Shell commands](../agents/tools-and-skills.md#shell-commands).
+**Shell commands** — The `shell_exec` tool, which runs commands on the machine. Granted per agent by ticking `shell_exec` under **Internal tools** (or with **Coding tools**); off by default. See [Shell commands](../agents/tools-and-skills.md#shell-commands).
 
 **Skill** — A packaged set of instructions an agent can follow for a kind of task. An agent uses only the skills its list includes. See [Grant skills](../agents/tools-and-skills.md#grant-skills).
 

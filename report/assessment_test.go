@@ -473,7 +473,7 @@ func TestAssessment_ShellDelegation(t *testing.T) {
 	cfg, env := fixtureConfig(t)
 	cfg.Agents.List[0].Tools = []string{"file_read"} // Alice has no shell_exec
 	r := assessmentRow(t, collectAssessment(t.Context(), cfg, env), "Shell access")
-	if !strings.Contains(r[2], "Allow shell commands: Bob;") || strings.Contains(r[2], "allow_agents") {
+	if !strings.Contains(r[2], "Shell commands allowed: Bob;") || strings.Contains(r[2], "allow_agents") {
 		t.Errorf("no delegation: shell row = %v", r)
 	}
 	if !strings.Contains(r[2], "Allow CLI to bypass restrictions") {
@@ -498,25 +498,25 @@ func TestAssessment_ShellDelegation(t *testing.T) {
 }
 
 // TestAssessment_ShellExplicitOnly: the Shell access row lists only the agents
-// whose tools name shell_exec ("Allow shell commands"); a "*" list does not
+// whose tools name shell_exec (its shell_exec box); a "*" list does not
 // count, and deny_tools removes an agent.
 func TestAssessment_ShellExplicitOnly(t *testing.T) {
 	cfg, env := fixtureConfig(t)
 	// alice has no tools key (the "*" default), bob names shell_exec.
 	r := assessmentRow(t, collectAssessment(t.Context(), cfg, env), "Shell access")
-	if !strings.Contains(r[2], "Allow shell commands: Bob;") {
+	if !strings.Contains(r[2], "Shell commands allowed: Bob;") {
 		t.Errorf("default: shell row = %v", r)
 	}
 
 	cfg.Agents.List[0].Tools = []string{"*"}
 	r = assessmentRow(t, collectAssessment(t.Context(), cfg, env), "Shell access")
-	if !strings.Contains(r[2], "Allow shell commands: Bob;") {
+	if !strings.Contains(r[2], "Shell commands allowed: Bob;") {
 		t.Errorf(`alice with "*": shell row = %v`, r)
 	}
 
 	cfg.Agents.List[0].Tools = []string{"*", "shell_exec"}
 	r = assessmentRow(t, collectAssessment(t.Context(), cfg, env), "Shell access")
-	if !strings.Contains(r[2], "Allow shell commands: Alice, Bob;") {
+	if !strings.Contains(r[2], "Shell commands allowed: Alice, Bob;") {
 		t.Errorf("alice names shell_exec: shell row = %v", r)
 	}
 

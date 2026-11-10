@@ -71,7 +71,7 @@ See [Tools and skills](../agents/tools-and-skills.md).
 
 ### Shell commands are a per-agent switch
 
-`tools.exec.allow_remote` and the install-wide shell setting are gone. Turn on **Allow shell commands (full account access)** on the card of each agent that should run shell commands. It is off by default. See [Tools and skills](../agents/tools-and-skills.md#shell-commands).
+`tools.exec.allow_remote` and the install-wide shell setting are gone. Tick `shell_exec` under **Internal tools** on the card of each agent that should run shell commands. It is off by default. See [Tools and skills](../agents/tools-and-skills.md#shell-commands).
 
 ### CLI providers no longer bypass their permission prompts
 
@@ -109,7 +109,7 @@ An agent whose tools list is `"*"` also gets the new `file_glob` tool, which fin
 
 ### Shell commands are not limited by path
 
-`shell_exec` no longer refuses a command for the paths in it or for its working folder. It runs with the full access of the account ClawEh runs as; the deny patterns still apply. Check that each agent with **Allow shell commands (full account access)** should have it.
+`shell_exec` no longer refuses a command for the paths in it or for its working folder. It runs with the full access of the account ClawEh runs as; the deny patterns still apply. Check that each agent with `shell_exec` ticked should have it.
 
 ## After any upgrade
 

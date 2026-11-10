@@ -286,20 +286,23 @@ production instance directly; test against a dev instance.
   same rule: only the `skills` list (glob patterns, `"*"` = every skill; the
   Agents page's "All skills" writes `["*"]`), absent or empty = none.
 - **Shell permission**: whether an agent may run `shell_exec` is one per-agent
-  switch, off by default: `shell_exec` named in its own `tools` list (WebUI "Allow
-  shell commands (full account access)") and not in `deny_tools` (`AgentConfig.IsToolAllowed`,
+  setting, off by default: `shell_exec` named in its own `tools` list (WebUI: its box
+  under Internal tools, with a warning icon, "Full access to this app's account") and
+  not in `deny_tools` (`AgentConfig.IsToolAllowed`,
   `config.ShellExecTool`). A `"*"` or prefix entry never includes it. Clones inherit it. There is no channel rule: it applies on every channel and to
   everything acting as the agent (clones, asks, forum turns, MCP session and service
   tokens, cron watch probes). Fresh temporary and human agents have no tools. It is
   an ordinary tool: an agent without the grant never has it registered, so it is
   never offered to the model and every path (in-loop, MCP host, watch probes) finds
   it missing like any other tool the agent lacks; nothing refuses it by name at call
-  time (`agent/shell_permission_test.go`). The Agents page's tri-state "Allow coding tools
-  (includes shell commands, full account access)" adds or removes the ten tools of
-  `CODING_TOOLS` (`agent-model.ts`, frontend only: `file_list`, `file_glob`,
-  `file_read_lines`, `file_search_lines`, `file_edit_lines`, `file_insert_lines`,
-  `file_delete_lines`, `file_edit`, `file_write`, `shell_exec`) in the `tools` list
-  (`withCodingTools` expands `"*"` before removing); there is no backend concept.
+  time (`agent/shell_permission_test.go`). The Agents page's **Coding tools** button
+  (beside **Default tools**) only adds the eleven tools of `CODING_TOOLS`
+  (`agent-model.ts`, frontend only: `file_list`, `file_glob`, `file_read_lines`,
+  `file_search_lines`, `file_edit_lines`, `file_insert_lines`, `file_delete_lines`,
+  `file_edit`, `file_write`, `shell_exec`, `agent_spawn`) that the `tools` list does
+  not already grant (`withCodingTools`; `"*"`/prefix entries count, except for
+  `shell_exec`); there is no backend concept. **Default tools** never adds
+  `shell_exec` and leaves its box as it was.
 - **Human agents** (`config/human.go`, `providers/human.go`, `agent/human.go`; `manual/agents/human-agents.md`): an agent whose model (matched by `model_name`) is on a provider with protocol `human` represents a person. It takes work only from asks: turns on `constants.AgentMessageChannel` with `reply_required`; the reply goes back to the asker through `runTurn`'s ask path; `runHumanTurn` drops anything else (a person writing to it is told "Bob only answers questions from agents."; device agent lists leave it out), and cron (`tools/schedule`) and `HandleExternalMessage` (`ErrHumanAgent`) refuse it at the source. An ask posts the latest user message to the agent's one default-binding chat (`CronTarget`) and returns the person's next text there (`askHuman`: one request per agent at a time, the timeout runs from posting and never outlasts the asker's deadline (`askRegistry.wait`), a request whose asker stops waiting is withdrawn in the chat and an answer that reaches no asker is acknowledged (`humanAnswerUnused`), while it waits the asker has lent its slot and the asked turn holds none (`turnSlot`), `/cancel` → `tools.OutcomePersonCancelled`, a request the channel could not post ends at once with `tools.OutcomePersonUnreachable` and a line from the channel's reason (`humanUnreachableError`: "Bob's chat is not set up." / "is unavailable." / "Bob's device is offline." / "Bob's chat can't be reached." / "Couldn't reach Bob's chat."), shutdown → cancelled and withdrawn, never replayed); nothing else of the turn runs, so no model sees the conversation (no tools at all, no cogmem, empty summarization chain, no vision or transcription). The person's chat is handled before any session: `Run` → `dispatchInbound` takes text answers in arrival order (`takeHumanAnswer`, the only place an answer is taken; it clears typing/placeholder via `channels.Manager.DismissInbound` in the background), `processSessionMessage` → `handleHumanChat` does the rest (only `/` is a command there; "Nothing is waiting for your answer.", "That request has already timed out.", "That request was withdrawn.", "Please answer with text.", "Bob is not running." for a set-aside agent, whose chat is known from config). `config.HumanProblems` is the rule set (only that model; exactly one binding, its default, naming one chat no other agent is bound to; never the default agent; a human model never a default/summarization/task/sub-agent model and its name never another model's): `Store.Update` refuses new violations except a missing chat, `runtimeConfig` and `claw agent` set violators aside (`PruneHumanProblems`), `GET /api/agents/human` feeds the Agents card notes and the System/Models page notes. The default agent (routing and agentreg) skips human agents; agentreg refuses cloning one or a temporary agent on a human model (`agentreg.ErrHuman`).
 - **Character cards** (`ccv3/`, design in `private/ccv3.md`; `manual/agents/character-cards.md`):
   Character Card V3 documents in one library, `<CLAW_HOME>/cards/<id>.json`
@@ -946,7 +949,7 @@ exported; it exits 2 with a hint otherwise.
   throwaway agent whose May message it ticks, in F14 one whose
   classifiers switch it toggles and in F15 one whose Images task-model
   grant it toggles, in F16 one whose allowed-folder note it sets and in F17–F20 one
-  (`e2e-code`) whose coding tools it grants and removes, G edits three config fields and, in G8, one task
+  (`e2e-code`) whose tools it sets with the Coding tools and Default tools buttons and the `shell_exec` box, G edits three config fields and, in G8, one task
   model's Images settings on the Task models page, N
   creates a memory domain and curates inside it, S5 creates a throwaway agent
   and toggles one of its tools, T imports a card and creates a throwaway agent

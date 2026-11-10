@@ -6,8 +6,6 @@ import {
   agentsPayload,
   applyMaestroEdits,
   cliBypassWarnings,
-  codingToolsState,
-  deniedCodingTools,
   fusionAccessView,
   internalToolsSummary,
   maestroEditsFromAgent,
@@ -19,11 +17,11 @@ import {
   parseAgent,
   parseAgentsConfig,
   shellAllowed,
-  shellDenied,
   skillsSummary,
   toggleAccessEntry,
   toggleAllowAgent,
   toggleClassifiers,
+  toolDenied,
   toolGranted,
   withAllAgents,
   withCodingTools,
@@ -656,7 +654,7 @@ describe("agentsPayload", () => {
     })
   })
 
-  it("Allow shell commands adds and removes only the explicit shell_exec entry", () => {
+  it("the shell_exec box adds and removes only the explicit shell_exec entry", () => {
     // As the card applies it: the tools list goes through withShellAllowed
     // and the rest of the agent is the loaded entry.
     const save = (
@@ -735,7 +733,7 @@ describe("agentsPayload", () => {
     expect(out[1]).not.toHaveProperty("skills")
   })
 
-  it("Allow shell commands on an agent with no tools grants only the shell", () => {
+  it("ticking shell_exec on an agent with no tools grants only the shell", () => {
     expect(withShellAllowed([], true)).toEqual(["shell_exec"])
     expect(withShellAllowed(["shell_exec"], false)).toEqual([])
   })
@@ -753,9 +751,10 @@ describe("agentsPayload", () => {
       none: false,
     })
     expect(internalToolsSummary([])).toEqual({ text: "No tools", none: true })
+    // shell_exec is a tool like any other in the count.
     expect(internalToolsSummary(["shell_exec"])).toEqual({
-      text: "No tools",
-      none: true,
+      text: "1 granted",
+      none: false,
     })
     expect(internalToolsSummary(["*"])).toEqual({
       text: "all granted",
@@ -779,14 +778,16 @@ describe("agentsPayload", () => {
     expect(withShellAllowed(["shell_*"], false)).toEqual(["shell_*"])
   })
 
-  it("shellDenied follows the deny_tools matching rule", () => {
-    expect(shellDenied(["shell_exec"])).toBe(true)
-    expect(shellDenied(["SHELL_EXEC"])).toBe(true)
-    expect(shellDenied(["shell_*"])).toBe(true)
-    expect(shellDenied(["*"])).toBe(true)
-    expect(shellDenied(["shell"])).toBe(false)
-    expect(shellDenied(["file_*"])).toBe(false)
-    expect(shellDenied([])).toBe(false)
+  it("toolDenied follows the deny_tools matching rule", () => {
+    const denied = (deny: string[]) => toolDenied(deny, "shell_exec")
+    expect(denied(["shell_exec"])).toBe(true)
+    expect(denied(["SHELL_EXEC"])).toBe(true)
+    expect(denied(["shell_*"])).toBe(true)
+    expect(denied(["*"])).toBe(true)
+    expect(denied(["shell"])).toBe(false)
+    expect(denied(["file_*"])).toBe(false)
+    expect(denied([])).toBe(false)
+    expect(toolDenied(["file_e*"], "file_edit")).toBe(true)
   })
 
   it("reads and writes an allowed folder's note, trimmed, absent when blank", () => {
@@ -953,22 +954,8 @@ describe("toolGranted", () => {
   )
 })
 
-describe("Allow coding tools", () => {
-  const catalog = [
-    "file_list",
-    "file_glob",
-    "file_read_lines",
-    "file_search_lines",
-    "file_edit_lines",
-    "file_insert_lines",
-    "file_delete_lines",
-    "file_edit",
-    "file_write",
-    "time_now",
-    "web_fetch",
-  ]
-
-  it("is the ten tools", () => {
+describe("Coding tools", () => {
+  it("is the eleven tools", () => {
     expect(CODING_TOOLS).toEqual([
       "file_list",
       "file_glob",
@@ -980,96 +967,36 @@ describe("Allow coding tools", () => {
       "file_edit",
       "file_write",
       "shell_exec",
+      "agent_spawn",
     ])
   })
 
-  it("is checked when all are in the list, unchecked when none, indeterminate otherwise", () => {
-    expect(codingToolsState([])).toBe(false)
-    expect(codingToolsState(["time_now"])).toBe(false)
-    expect(codingToolsState([...CODING_TOOLS])).toBe(true)
-    expect(codingToolsState(CODING_TOOLS.slice(1))).toBe("indeterminate")
-    expect(codingToolsState(["shell_exec"])).toBe("indeterminate")
-    // "*" grants every tool but the shell, which only its own entry grants.
-    expect(codingToolsState(["*"])).toBe("indeterminate")
-    expect(codingToolsState(["*", "Shell_Exec"])).toBe(true)
-    // Entries match in any case.
-    expect(codingToolsState(CODING_TOOLS.map((n) => n.toUpperCase()))).toBe(
-      true,
-    )
+  it("adds all eleven to an empty list", () => {
+    expect(withCodingTools([])).toEqual(CODING_TOOLS)
   })
 
-  it("ticking adds only the missing ones and keeps the rest", () => {
-    expect(withCodingTools(["time_now", "file_list"], true, catalog)).toEqual([
+  it("only adds: what is granted stays, and nothing is repeated", () => {
+    expect(withCodingTools(["time_now", "file_list"])).toEqual([
       "time_now",
       "file_list",
-      "file_glob",
-      "file_read_lines",
-      "file_search_lines",
-      "file_edit_lines",
-      "file_insert_lines",
-      "file_delete_lines",
+      ...CODING_TOOLS.filter((n) => n !== "file_list"),
+    ])
+    const once = withCodingTools(["web_fetch"])
+    expect(withCodingTools(once)).toEqual(once)
+    // Entries match in any case.
+    expect(withCodingTools(["FILE_EDIT", "Shell_Exec"])).not.toContain(
       "file_edit",
-      "file_write",
+    )
+  })
+
+  it('counts "*" and prefix entries, except for shell_exec', () => {
+    // "*" grants every tool but the shell, which only its own entry grants.
+    expect(withCodingTools(["*"])).toEqual(["*", "shell_exec"])
+    expect(withCodingTools(["*", "shell_exec"])).toEqual(["*", "shell_exec"])
+    expect(withCodingTools(["file_*"])).toEqual([
+      "file_*",
       "shell_exec",
+      "agent_spawn",
     ])
-    expect(withCodingTools(["*"], true, catalog)).toEqual(["*", "shell_exec"])
-    const all = withCodingTools([], true, catalog)
-    expect(codingToolsState(all)).toBe(true)
-  })
-
-  it("unticking removes all of them, in any case, and keeps the rest", () => {
-    expect(
-      withCodingTools(
-        ["time_now", ...CODING_TOOLS, "FILE_EDIT"],
-        false,
-        catalog,
-      ),
-    ).toEqual(["time_now"])
-    expect(withCodingTools(["file_glob", "web_fetch"], false, catalog)).toEqual(
-      ["web_fetch"],
-    )
-  })
-
-  it('unticking with "*" expands it so the tools are really removed', () => {
-    const out = withCodingTools(["*", "shell_exec"], false, catalog)
-    expect(out).toEqual(["time_now", "web_fetch"])
-    expect(codingToolsState(out)).toBe(false)
-  })
-
-  it("counts and removes tools granted through a prefix entry", () => {
-    expect(codingToolsState(["file_*", "shell_exec"])).toBe(true)
-    expect(codingToolsState(["file_*"])).toBe("indeterminate")
-    // A prefix that grants no coding tool is kept as it is.
-    const out = withCodingTools(
-      ["file_*", "web_*", "shell_exec"],
-      false,
-      catalog,
-    )
-    expect(out).toEqual(["web_*"])
-    expect(codingToolsState(out)).toBe(false)
-  })
-
-  it("names the granted coding tools that Denied tools blocks", () => {
-    expect(deniedCodingTools([...CODING_TOOLS], [])).toEqual([])
-    expect(
-      deniedCodingTools(
-        [...CODING_TOOLS],
-        ["FILE_EDIT", "shell_*", "web_fetch"],
-      ),
-    ).toEqual(["file_edit", "shell_exec"])
-    // A denied tool the list does not grant is not mentioned.
-    expect(deniedCodingTools(["file_list"], ["file_edit"])).toEqual([])
-    expect(deniedCodingTools(["file_*"], ["file_e*"])).toEqual([
-      "file_edit_lines",
-      "file_edit",
-    ])
-  })
-
-  it("leaves shell_exec in step with the shell switch", () => {
-    const on = withCodingTools([], true, catalog)
-    expect(shellAllowed(on)).toBe(true)
-    // Turning the shell off alone leaves the group partly granted.
-    expect(codingToolsState(withShellAllowed(on, false))).toBe("indeterminate")
-    expect(shellAllowed(withCodingTools(on, false, catalog))).toBe(false)
   })
 })

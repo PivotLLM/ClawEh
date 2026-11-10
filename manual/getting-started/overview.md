@@ -15,7 +15,7 @@ Everything runs in one program, `claw`. It serves the agents, the WebUI and its 
 ## Main ideas
 
 - **One conversation per agent.** Everything that reaches an agent joins its one conversation, whatever the channel. If you want a separate conversation, create a separate agent.
-- **Nothing is granted by default.** A new agent has no tools and no skills. You grant them on the **Agents** page ([Tools and skills](../agents/tools-and-skills.md)). Shell commands are a separate switch, **Allow shell commands (full account access)**, off by default.
+- **Nothing is granted by default.** A new agent has no tools and no skills. You grant them on the **Agents** page ([Tools and skills](../agents/tools-and-skills.md)). Shell commands (`shell_exec`) are off by default and granted only by ticking that tool.
 - **Memory that persists.** Each agent can keep a cognitive memory that is updated in the background from its conversation and recalled when relevant ([Conversation and memory](../agents/memory.md)).
 - **Fallback between models.** An agent lists its models in order. When one fails, ClawEh tries the next and pauses the failing one for a while ([Providers, models and fallback](../providers/concepts.md)).
 - **One configuration file.** All settings live in `config.json` in the data directory. The WebUI edits the same file, and ClawEh reloads it when it changes ([Configuration file](../reference/configuration.md)).

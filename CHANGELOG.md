@@ -34,7 +34,7 @@
   whose name starts with a dot (`.git`), and reaches only what the other
   file-reading tools reach (the workspace read scope and the allowed
   folders). It is not in **Default tools**; grant it per agent, or with
-  **Allow coding tools**. A pattern longer than 512 characters or with more
+  the **Coding tools** button. A pattern longer than 512 characters or with more
   than 10 `{…}` groups is refused.
 - **`file_search_lines` takes `include`, `context` and `output`, and skips
   what `.gitignore` ignores.** `include` is a glob on file paths (one
@@ -59,15 +59,15 @@
   `/opt/audio/in (read-only): inbound audio notes`, on one line (line breaks
   and other control characters become spaces) and cut to 100 characters. On
   the Agents page it is the **Note** box on each folder's row.
-- **Allow coding tools on the Agents page.** **Allow coding tools (includes
-  shell commands, full account access)** adds `file_list`, `file_glob`,
+- **A Coding tools button on the Agents page.** Beside **Default tools**
+  under Internal tools, **Coding tools** adds `file_list`, `file_glob`,
   `file_read_lines`, `file_search_lines`, `file_edit_lines`,
-  `file_insert_lines`, `file_delete_lines`, `file_edit`, `file_write` and
-  `shell_exec` to the agent's `tools` list together, or removes them all. It
-  is ticked when all are granted and shows a mixed state when some are. It
-  only edits the `tools` list; the tool boxes and **Allow shell commands**
-  stay and follow it. When **Denied tools** blocks some of them, the box
-  says which ("Ignored for file_edit: blocked by Denied tools.").
+  `file_insert_lines`, `file_delete_lines`, `file_edit`, `file_write`,
+  `shell_exec` and `agent_spawn` to the agent's `tools` list. It only adds:
+  nothing is removed or unticked, and a tool already granted (also through
+  `"*"` or an entry such as `file_*`) is not added twice. A ticked tool that
+  **Denied tools** blocks says "Ignored: blocked by Denied tools." on its
+  row.
 - **Slack shows a "Thinking..." message and progress updates on long
   turns, on by default.** The app posts the message where the reply will go,
   edits it with progress on long turns, replaces it with the reply and
@@ -308,8 +308,12 @@
   the default). The deny patterns, allow patterns, custom allow patterns,
   timeouts and output handling are unchanged, and
   `agents.defaults.restrict_to_workspace` now applies to the file tools only.
-  The Agents page switch reads **Allow shell commands (full account
-  access)**. To keep an agent away from files, do not give it `shell_exec`.
+  On the Agents page `shell_exec` is an ordinary box under Internal tools,
+  off by default, with a warning icon whose hover text is "Full access to
+  this app's account"; the separate shell switch is gone, **Default tools**
+  never adds it, and Check Up's Shell access row reads "Shell commands
+  allowed: <agents>". To keep an agent away from files, do not give it
+  `shell_exec`.
 - **BREAKING: the data directory is set to exactly the configured modes at
   every start.** Before, the startup check only removed group and other
   access and only touched folders and secret files. Now every folder and

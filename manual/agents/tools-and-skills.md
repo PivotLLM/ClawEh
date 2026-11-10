@@ -19,13 +19,13 @@ The **Tools** box on the agent's card has these parts:
 1. **MCP access**: one checkbox per configured [MCP server](../mcp.md). A checked server grants all of its tools. Nothing checked means no MCP tools.
 2. **Fusion services**: one checkbox per [Fusion service](../mcpfusion.md). A checked service grants its tools when the agent's **Fusion (REST-API tools)** switch is on. Nothing checked means no Fusion tools, even with the switch on.
 3. **Internal tools**: the built-in tools.
-   - **Default tools** writes the standard set into the list: everyday tools such as the file tools, web search and fetch, sending messages, the time and scheduling. It leaves out tools few agents need, such as `agent_spawn`, `agent_message`, `session_clear` and the byte-level file tools. You can then tick or untick single tools.
+   - **Default tools** writes the standard set into the list: everyday tools such as the file tools, web search and fetch, sending messages, the time and scheduling. It leaves out tools few agents need, such as `agent_spawn`, `agent_message`, `session_clear` and the byte-level file tools, and never adds `shell_exec` (a ticked `shell_exec` stays ticked). You can then tick or untick single tools.
+   - **Coding tools** adds the coding set: see [Coding tools](#coding-tools).
    - **Clear** empties the list.
-   - Each checkbox grants one tool. Hover a tool for its description.
+   - Each checkbox grants one tool. Hover a tool for its description. `shell_exec` has a warning icon: see [Shell commands](#shell-commands).
+   - A ticked tool that **Denied tools** blocks says "Ignored: blocked by Denied tools." on its row.
 4. **May message**: the other agents this agent may message with `agent_message`, start as sub-agents or invite to forums. See [Messages between agents](./messaging.md#who-may-message-whom).
-5. **Allow coding tools (includes shell commands, full account access)**: see [Coding tools](#coding-tools).
-6. **Allow shell commands (full account access)**: see [Shell commands](#shell-commands).
-7. **Denied tools**: see [Deny a tool](#deny-a-tool).
+5. **Denied tools**: see [Deny a tool](#deny-a-tool).
 
 ### Grant tools in config.json
 
@@ -44,7 +44,7 @@ The same lists can be written by hand. Entries are tool names; a trailing `*` ma
 
 ## Coding tools
 
-**Allow coding tools (includes shell commands, full account access)** grants the tools an agent needs to work on code, together:
+The **Coding tools** button beside **Default tools** adds the tools an agent needs to work on code:
 
 | Tool | Use it to |
 |---|---|
@@ -55,10 +55,9 @@ The same lists can be written by hand. Entries are tool names; a trailing `*` ma
 | `file_edit`, `file_edit_lines`, `file_insert_lines`, `file_delete_lines` | Change text |
 | `file_write` | Create a file or replace a whole file |
 | `shell_exec` | Run any command-line program: git, builds, tests and Unix tools such as grep, sed and jq (see [Shell commands](#shell-commands)) |
+| `agent_spawn` | Hand work to a sub-agent |
 
-- Ticking the box adds every one the agent lacks to its tools list; unticking it removes them all. Nothing else changes, and there is no separate setting: the box only edits the list.
-- The box is ticked when all ten are granted and shows a mixed state when only some are. The single tool boxes and **Allow shell commands** stay and follow it.
-- When **Denied tools** blocks some of them, the box says which, for example "Ignored for file_edit: blocked by Denied tools."
+- The button only adds: every one the agent does not already have is ticked, and nothing is unticked or removed. A tool already granted, also through `"*"` or an entry such as `file_*`, is not added twice. Untick single tools afterwards to take them away.
 - `file_glob` is not in **Default tools**. It returns matching paths newest first (at most 200) and skips folders whose name starts with a dot. A pattern may be up to 512 characters with up to 10 `{…}` groups.
 - Without a `path`, `file_glob` and `file_search_lines` search every workspace folder the agent may read (`files/`, `skills/`, `maestro/` when Maestro is on, `tasks/` and the other always-readable folders), but not its allowed folders; give an allowed folder's path to search it.
 - `file_search_lines` takes `include` (a file pattern such as `*.go`), `context` (up to 10 lines around each match; a result then shows at most 2,000 lines) and `output` (`lines`, `files` or `count`), and skips what `.gitignore` ignores: the files in the searched folder and below, and in a repository (a folder holding `.git`) those of the parent folders up to its root, as far up as the agent may read. A folder the agent names is searched even when a parent `.gitignore` ignores it. A `.gitignore` that is a link, not a regular file, or over 64 KiB is not read.
@@ -66,16 +65,16 @@ The same lists can be written by hand. Entries are tool names; a trailing `*` ma
 
 ## Shell commands
 
-**Allow shell commands (full account access)** lets the agent run commands on this machine with the `shell_exec` tool. It is off by default.
+The `shell_exec` box under **Internal tools** lets the agent run commands on this machine. It is off by default, and its warning icon's hover text is "Full access to this app's account".
 
-- It is the only way to grant `shell_exec`: `"*"` and `file_*`-style entries never include it.
+- Ticking it, or **Coding tools**, is the only way to grant `shell_exec`: **Default tools**, `"*"` and `file_*`-style entries never include it.
 - It applies everywhere the agent acts: every chat, its sub-agents and clones, questions from other agents, forum turns and its MCP tokens.
 - Shell commands run with the full access of the account ClawEh runs as. They are **not** confined to the agent's folder or its allowed folders, even when file tools are, and **Restrict to workspace** does not apply to them. The deny patterns still block dangerous commands.
 - `working_dir` may be any existing folder; the default is the agent's workspace.
-- If `shell_exec` is also in **Denied tools**, the card shows "Ignored: blocked by Denied tools." and the agent cannot run commands.
+- If `shell_exec` is also in **Denied tools**, its row shows "Ignored: blocked by Denied tools." and the agent cannot run commands.
 - An agent allowed to message or spawn another agent that has shell commands can have that agent run them. **Check Up** lists both under **Shell access**.
 
-In `config.json` the switch is `shell_exec` in the agent's `tools` list.
+In `config.json` it is `shell_exec` in the agent's `tools` list.
 
 ## Deny a tool
 

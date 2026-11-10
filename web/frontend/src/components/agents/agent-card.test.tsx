@@ -332,7 +332,7 @@ describe("AgentCard for a person", () => {
 
   // An agent has only the tools its list names: an empty list is labelled
   // "No tools", and "Default tools" writes the standard set into the list,
-  // keeping the shell switch's setting.
+  // leaving shell_exec as it was.
   const catalog = {
     tools: [
       { name: "file_read", description: "" },
@@ -369,95 +369,122 @@ describe("AgentCard for a person", () => {
     ])
   })
 
-  describe("Allow coding tools", () => {
+  describe("Coding tools and shell_exec", () => {
+    const coding = [
+      "file_list",
+      "file_glob",
+      "file_read_lines",
+      "file_search_lines",
+      "file_edit_lines",
+      "file_insert_lines",
+      "file_delete_lines",
+      "file_edit",
+      "file_write",
+      "shell_exec",
+      "agent_spawn",
+    ]
     const codingCatalog = {
-      tools: [
-        "file_list",
-        "file_glob",
-        "file_read_lines",
-        "file_search_lines",
-        "file_edit_lines",
-        "file_insert_lines",
-        "file_delete_lines",
-        "file_edit",
-        "file_write",
-        "shell_exec",
-        "time_now",
-      ].map((name) => ({ name, description: "" })),
-      default_tools: [],
+      tools: [...coding, "time_now", "web_fetch"].map((name) => ({
+        name,
+        description: "",
+      })),
+      default_tools: ["time_now", "web_fetch"],
     }
-    const box = () =>
-      screen.getByRole("checkbox", {
-        name: "Allow coding tools (includes shell commands, full account access)",
-      })
+    const codingButton = () =>
+      screen.getByRole("button", { name: "Coding tools" })
+    const shellBox = () => screen.getByRole("checkbox", { name: "shell_exec" })
 
-    it("is unchecked with none, checked with all, mixed with some", () => {
-      renderCard({ availableTools: codingCatalog, tools: ["time_now"] })
-      expect(box().getAttribute("aria-checked")).toBe("false")
-      cleanup()
-      renderCard({
-        availableTools: codingCatalog,
-        tools: codingCatalog.tools.map((t) => t.name),
-      })
-      expect(box().getAttribute("aria-checked")).toBe("true")
-      cleanup()
-      renderCard({ availableTools: codingCatalog, tools: ["file_glob"] })
-      expect(box().getAttribute("aria-checked")).toBe("mixed")
-    })
-
-    it("says which coding tools Denied tools blocks", () => {
-      renderCard({
-        availableTools: codingCatalog,
-        tools: ["file_glob", "file_edit"],
-        denyTools: ["file_edit"],
-        onDenyToolsChange: () => {},
-      })
-      expect(
-        screen.getByText("Ignored for file_edit: blocked by Denied tools."),
-      ).toBeTruthy()
-      cleanup()
-      renderCard({ availableTools: codingCatalog, tools: ["file_glob"] })
-      expect(screen.queryByText(/blocked by Denied tools/)).toBeNull()
-    })
-
-    it("ticking adds every missing coding tool; unticking from checked removes them all", () => {
+    it("the button adds all eleven and keeps what is granted", () => {
       const onToolsChange = vi.fn()
       renderCard({
         availableTools: codingCatalog,
         tools: ["time_now", "file_glob"],
         onToolsChange,
       })
-      fireEvent.click(box())
-      const granted = onToolsChange.mock.lastCall?.[0] as string[]
-      expect(granted).toEqual([
+      fireEvent.click(codingButton())
+      expect(onToolsChange).toHaveBeenLastCalledWith([
         "time_now",
         "file_glob",
-        "file_list",
-        "file_read_lines",
-        "file_search_lines",
-        "file_edit_lines",
-        "file_insert_lines",
-        "file_delete_lines",
-        "file_edit",
-        "file_write",
-        "shell_exec",
+        ...coding.filter((n) => n !== "file_glob"),
       ])
+    })
+
+    it("the button adds nothing already granted and removes nothing", () => {
+      const onToolsChange = vi.fn()
+      renderCard({
+        availableTools: codingCatalog,
+        tools: coding,
+        onToolsChange,
+      })
+      fireEvent.click(codingButton())
+      expect(onToolsChange).toHaveBeenLastCalledWith(coding)
+      cleanup()
+      // "*" and a prefix grant the others; only the shell is added by name.
+      renderCard({ availableTools: codingCatalog, tools: ["*"], onToolsChange })
+      fireEvent.click(codingButton())
+      expect(onToolsChange).toHaveBeenLastCalledWith(["*", "shell_exec"])
       cleanup()
       renderCard({
         availableTools: codingCatalog,
-        tools: granted,
+        tools: ["file_*", "agent_spawn"],
         onToolsChange,
       })
-      // The shell switch shows the same grant.
+      fireEvent.click(codingButton())
+      expect(onToolsChange).toHaveBeenLastCalledWith([
+        "file_*",
+        "agent_spawn",
+        "shell_exec",
+      ])
+    })
+
+    it("shell_exec is a row of its own, off by default, with a warning", () => {
+      const onToolsChange = vi.fn()
+      renderCard({ availableTools: codingCatalog, tools: ["*"], onToolsChange })
+      // "*" does not grant the shell.
+      expect(shellBox().getAttribute("aria-checked")).toBe("false")
+      const warning = screen.getByTestId("shell-warning")
+      expect(warning.getAttribute("title")).toBe(
+        "Full access to this app's account",
+      )
+      expect(screen.getByTestId("tool-row-shell_exec").contains(warning)).toBe(
+        true,
+      )
+      fireEvent.click(shellBox())
+      expect(onToolsChange).toHaveBeenLastCalledWith(["*", "shell_exec"])
+      cleanup()
+      renderCard({
+        availableTools: codingCatalog,
+        tools: ["web_fetch", "shell_exec"],
+        onToolsChange,
+      })
+      expect(shellBox().getAttribute("aria-checked")).toBe("true")
+      fireEvent.click(shellBox())
+      expect(onToolsChange).toHaveBeenLastCalledWith(["web_fetch"])
+    })
+
+    it("Default tools does not add shell_exec", () => {
+      const onToolsChange = vi.fn()
+      renderCard({ availableTools: codingCatalog, tools: [], onToolsChange })
+      fireEvent.click(screen.getByRole("button", { name: "Default tools" }))
+      expect(onToolsChange).toHaveBeenLastCalledWith(["time_now", "web_fetch"])
+    })
+
+    it("marks a ticked tool that Denied tools blocks on its row", () => {
+      renderCard({
+        availableTools: codingCatalog,
+        tools: ["shell_exec", "file_edit", "file_glob"],
+        denyTools: ["shell_*", "file_edit"],
+        onDenyToolsChange: () => {},
+      })
+      for (const name of ["shell_exec", "file_edit"]) {
+        expect(screen.getByTestId(`tool-row-${name}`).textContent).toContain(
+          "Ignored: blocked by Denied tools.",
+        )
+      }
       expect(
-        screen
-          .getByRole("switch", {
-            name: "Allow shell commands (full account access)",
-          })
-          .getAttribute("aria-checked"),
-      ).toBe("true")
-      fireEvent.click(box())
-      expect(onToolsChange).toHaveBeenLastCalledWith(["time_now"])
+        screen.getByTestId("tool-row-file_glob").textContent,
+      ).not.toContain("blocked")
+      expect(screen.queryByRole("switch", { name: /shell/i })).toBeNull()
     })
   })
 
