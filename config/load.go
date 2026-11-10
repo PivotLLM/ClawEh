@@ -319,6 +319,10 @@ func SeedDefaultConfig(path string, cfg *Config) error {
 }
 
 func writeConfig(path string, cfg *Config) error {
+	// Every save comes through here: a field the provider's protocol does not
+	// use (a CLI's base_url, an HTTP provider's command) is not written. A
+	// load leaves the file's providers as they are.
+	cfg.dropOtherProtocolFields()
 	// Secret references go back in place of the values they resolved to, so a
 	// save never copies an env var or key file into config.json.
 	compact, err := MarshalWithSecretRefs(cfg)

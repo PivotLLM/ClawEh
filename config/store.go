@@ -130,9 +130,6 @@ func (s *Store) Update(fn func(cfg *Config) error) error {
 	// A config submitted with the retired mounts list (PUT /api/config) is
 	// migrated as a load would migrate it.
 	next.migrateLegacyMounts()
-	// A field the provider's protocol does not use (a CLI's base_url, an
-	// HTTP provider's command) is dropped.
-	next.dropOtherProtocolFields()
 	// An agent whose classifiers switch is on with no model gets its first
 	// model (classifiers.go), before the model checks below see it.
 	refusals = append(refusals, completeClassifierModels(s.cur, next)...)

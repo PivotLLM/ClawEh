@@ -4,6 +4,7 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -89,6 +90,51 @@ func TestStore_CurrentUpdateReload(t *testing.T) {
 	}
 }
 
+// writeRawConfig writes cfg to path as it is, without the normalisation a
+// save applies: a file an older release or a hand edit left.
+func writeRawConfig(path string, cfg *Config) error {
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o600)
+}
+
+// SaveConfig itself (the path CLI commands such as `claw model` take, not
+// only Store.Update) drops the fields a provider's protocol does not use.
+func TestSaveConfig_DropsOtherProtocolFields(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	cfg := DefaultConfig()
+	cfg.Providers = []Provider{
+		{Name: "Claude CLI", Protocol: "claude-cli", BaseURL: "https://api.openai.com/v1", Command: "/usr/local/bin/claude"},
+		{Name: "Bob's API", Protocol: "openai-chat", BaseURL: "https://api.example.com/v1", Command: "/usr/bin/stray", BypassRestrictions: true},
+	}
+	if err := writeRawConfig(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Providers[0].BaseURL == "" || loaded.Providers[1].Command == "" {
+		t.Fatal("a load must leave the file's providers as they are")
+	}
+	if err = SaveConfig(path, loaded); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli, api := saved.Providers[0], saved.Providers[1]
+	if cli.BaseURL != "" || cli.Command != "/usr/local/bin/claude" {
+		t.Errorf("CLI provider saved as base_url %q, command %q", cli.BaseURL, cli.Command)
+	}
+	if api.Command != "" || api.BypassRestrictions || api.BaseURL != "https://api.example.com/v1" {
+		t.Errorf("HTTP provider saved as command %q, bypass %v, base_url %q", api.Command, api.BypassRestrictions, api.BaseURL)
+	}
+}
+
 // A CLI provider never uses base_url, so a save drops one left in the file
 // (by an unrelated change too) or left over from a protocol switch; an HTTP
 // provider keeps its own.
@@ -102,7 +148,7 @@ func TestStore_UpdateDropsCLIBaseURL(t *testing.T) {
 		Provider{Name: "Claude CLI", Protocol: "claude-cli", BaseURL: "https://api.openai.com/v1"},
 		Provider{Name: "Bob's API", Protocol: "openai-chat", BaseURL: "https://api.example.com/v1", APIKey: "sk-bob-0123456789"},
 	)
-	if err = SaveConfig(s.Path(), cfg); err != nil {
+	if err = writeRawConfig(s.Path(), cfg); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = s.Reload(); err != nil {
@@ -147,7 +193,7 @@ func TestStore_UpdateDropsCLIFieldsFromOtherProtocols(t *testing.T) {
 		Provider{Name: "Claude CLI", Protocol: "claude-cli", Command: "/usr/local/bin/claude", BypassRestrictions: true},
 		Provider{Name: "Codex CLI", Protocol: "codex-cli", Command: "/usr/local/bin/codex", BypassRestrictions: true},
 	)
-	if err = SaveConfig(s.Path(), cfg); err != nil {
+	if err = writeRawConfig(s.Path(), cfg); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = s.Reload(); err != nil {
