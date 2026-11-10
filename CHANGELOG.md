@@ -404,6 +404,17 @@
 
 ### Fixed
 
+- **A link in the workspace no longer reads what the agent may not
+  read.** With the workspace read folders set (the default: `files/`,
+  `skills/` and the always-readable folders), a link such as
+  `files/x -> ../sessions/...` or `files/a -> ../AGENTS.md` let every
+  reading file tool (read, list, search, glob, count, view image, copy)
+  read its target. The target is now checked too, and such a read is
+  refused: "access denied: <path> resolves outside the folders the agent
+  can read". A link to a folder the agent may read, such as `skills/`,
+  still works. Writes already followed this rule; agents allowed to read
+  the whole workspace are unaffected.
+
 - **The Providers page's add and edit forms start with a protocol the
   server accepts.** They started with `openai`, which is not a protocol,
   so saving without picking one was refused as an unknown protocol. They

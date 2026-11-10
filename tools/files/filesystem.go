@@ -1269,7 +1269,11 @@ func newReadScopedFs(inner fileSystem, workspace string, subdirs []string, patte
 	return &readScopedFs{inner: inner, workspace: workspace, readRoots: roots, subdirNames: subdirs, patterns: patterns}
 }
 
-func (r *readScopedFs) readAllowed(path string) error {
+// readAllowed refuses a read of path outside the read roots: the path as
+// given, and then with the links in it resolved, so a link such as
+// files/x -> ../sessions/y does not reach a folder the agent may not read.
+// With parentOnly (Lstat), the last component is not followed.
+func (r *readScopedFs) readAllowed(path string, parentOnly bool) error {
 	for _, p := range r.patterns {
 		if p.MatchString(path) {
 			return nil
@@ -1285,47 +1289,110 @@ func (r *readScopedFs) readAllowed(path string) error {
 		}
 		absPath = a
 	}
+	if !r.inReadRoot(absPath) {
+		return tools.Refusal(fmt.Errorf("read denied: the agent can only read %s/", strings.Join(r.subdirNames, "/, ")))
+	}
+	return r.resolvedInReadRoot(path, absPath, parentOnly)
+}
+
+// inReadRoot reports whether absPath is a read root or lies inside one.
+func (r *readScopedFs) inReadRoot(absPath string) bool {
 	for _, root := range r.readRoots {
 		if absPath == root || isWithinWorkspace(absPath, root) {
+			return true
+		}
+	}
+	return false
+}
+
+// resolvedInReadRoot refuses a read of path when absPath, with the links in
+// the workspace resolved (all but the last with parentOnly), lands in the
+// workspace outside every read root. A link leading out of the workspace is
+// left to the sandbox below, which refuses it; one to a host path matching
+// an allow-read pattern is allowed.
+func (r *readScopedFs) resolvedInReadRoot(path, absPath string, parentOnly bool) error {
+	absWorkspace, err := filepath.Abs(r.workspace)
+	if err != nil {
+		return fmt.Errorf("failed to resolve workspace: %w", err)
+	}
+	rel, err := filepath.Rel(absWorkspace, absPath)
+	if err != nil || !filepath.IsLocal(rel) {
+		return nil // not a workspace path: nothing of the workspace to resolve
+	}
+	last := ""
+	if parentOnly {
+		rel, last = filepath.Dir(rel), filepath.Base(rel)
+	}
+	root, err := os.OpenRoot(absWorkspace)
+	if err != nil {
+		return fmt.Errorf("failed to open workspace: %w", err)
+	}
+	defer utils.CloseQuietly(root)
+	resolved, ok, err := resolveInWorkspace(root, rel)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return nil // leaves the workspace: the sandbox refuses it
+	}
+	target := filepath.Join(absWorkspace, resolved, last)
+	if r.inReadRoot(target) {
+		return nil
+	}
+	for _, rr := range r.readRoots {
+		// A read root that is itself a link (files -> elsewhere/files) is
+		// compared by where it leads.
+		if rootRel, rerr := filepath.Rel(absWorkspace, rr); rerr == nil && filepath.IsLocal(rootRel) {
+			if res, rok, rerr := resolveInWorkspace(root, rootRel); rerr == nil && rok {
+				resRoot := filepath.Join(absWorkspace, res)
+				if target == resRoot || isWithinWorkspace(target, resRoot) {
+					return nil
+				}
+			}
+		}
+	}
+	for _, p := range r.patterns {
+		if p.MatchString(target) {
 			return nil
 		}
 	}
-	return tools.Refusal(fmt.Errorf("read denied: the agent can only read %s/", strings.Join(r.subdirNames, "/, ")))
+	return tools.Refusal(fmt.Errorf("access denied: %s resolves outside the folders the agent can read (%s/)",
+		path, strings.Join(r.subdirNames, "/, ")))
 }
 
 // CheckWrite asks the layer below: reads are this layer's only concern.
 func (r *readScopedFs) CheckWrite(path string) error { return checkWrite(r.inner, path) }
 
 func (r *readScopedFs) ReadFile(path string) ([]byte, error) {
-	if err := r.readAllowed(path); err != nil {
+	if err := r.readAllowed(path, false); err != nil {
 		return nil, err
 	}
 	return r.inner.ReadFile(path)
 }
 
 func (r *readScopedFs) ReadDir(path string) ([]os.DirEntry, error) {
-	if err := r.readAllowed(path); err != nil {
+	if err := r.readAllowed(path, false); err != nil {
 		return nil, err
 	}
 	return r.inner.ReadDir(path)
 }
 
 func (r *readScopedFs) Open(path string) (fs.File, error) {
-	if err := r.readAllowed(path); err != nil {
+	if err := r.readAllowed(path, false); err != nil {
 		return nil, err
 	}
 	return r.inner.Open(path)
 }
 
 func (r *readScopedFs) Stat(path string) (os.FileInfo, error) {
-	if err := r.readAllowed(path); err != nil {
+	if err := r.readAllowed(path, false); err != nil {
 		return nil, err
 	}
 	return r.inner.Stat(path)
 }
 
 func (r *readScopedFs) Lstat(path string) (os.FileInfo, error) {
-	if err := r.readAllowed(path); err != nil {
+	if err := r.readAllowed(path, true); err != nil {
 		return nil, err
 	}
 	return r.inner.Lstat(path)

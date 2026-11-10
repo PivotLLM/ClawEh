@@ -47,7 +47,7 @@ ClawEh does not decide write access. The agent may read and write wherever the a
 
 The agent's prompt lists each allowed folder by its path, marked "(read-only)" when the account cannot write it and followed by its note, for example `/opt/audio/in (read-only): inbound audio notes`. The same list names the workspace folders the file tools reach, by absolute path. With **Maestro** on, the folders are also in Maestro's reference library (see [Maestro](../maestro.md#what-maestro-can-read)).
 
-Paths are checked after following symbolic links: a link inside an allowed folder that leads outside the workspace and every allowed folder is refused.
+Paths are checked after following symbolic links: a link inside an allowed folder that leads outside the workspace and every allowed folder is refused, and so is a link in `files/` to a part of the workspace the agent may not read, such as `sessions/` or `AGENTS.md`.
 
 In `config.json`:
 

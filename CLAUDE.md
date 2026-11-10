@@ -621,7 +621,10 @@ production instance directly; test against a dev instance.
   that resolves (links followed) inside an allowed folder from that folder's `os.Root`
   sandbox, past the workspace read/write scopes; a path that names an allowed folder but
   leads out of every one is refused when the agent is confined; relative paths keep
-  resolving from the workspace. `agentFolders` (tools/files) lists the folders the provider
+  resolving from the workspace. The read scope (`readScopedFs`) and the write scope
+  (`writeScopedFs`) check a workspace path both as given and with its links resolved
+  (`resolveInWorkspace`), so files/x -> ../sessions/... is refused ("access denied:
+  <path> resolves outside the folders the agent can read"). `agentFolders` (tools/files) lists the folders the provider
   registers per workspace (`SetAllowedFoldersForWorkspace`): each existing absolute
   allowed folder plus `<workspace>/maestro` when Maestro is on (no mount: `maestro/` is
   simply part of the workspace then). `files.Reader` uses the same table, so

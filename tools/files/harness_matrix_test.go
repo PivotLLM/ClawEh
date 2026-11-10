@@ -47,6 +47,19 @@ func newHarnessFixture(t *testing.T) harnessFixture {
 			t.Fatal(err)
 		}
 	}
+	// Links from files/ to places inside the workspace: sessions/ and the
+	// workspace's own AGENTS.md are outside the read scope, skills/ is in it.
+	mustWrite(t, filepath.Join(f.ws, "sessions", "doc.txt"), harnessDoc)
+	for link, target := range map[string]string{
+		"sess.txt":  "../sessions/doc.txt",
+		"sess":      "../sessions",
+		"agents.md": "../AGENTS.md",
+		"skill.md":  "../skills/s/SKILL.md",
+	} {
+		if err := os.Symlink(target, filepath.Join(f.ws, "files", link)); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := os.Chmod(f.ro, 0o500); err != nil {
 		t.Fatal(err)
 	}
@@ -190,6 +203,28 @@ func TestCodingTools_PermissionMatrix(t *testing.T) {
 			refusal: func(harnessFixture) string { return "write denied" },
 		},
 		{
+			name: "link from files/ to sessions/",
+			path: func(harnessFixture) string { return "files/sess.txt" },
+			file: func(f harnessFixture) string { return filepath.Join(f.ws, "sessions", "doc.txt") },
+		},
+		{
+			name: "folder link from files/ to sessions/",
+			path: func(harnessFixture) string { return "files/sess/doc.txt" },
+			file: func(f harnessFixture) string { return filepath.Join(f.ws, "sessions", "doc.txt") },
+		},
+		{
+			name: "link from files/ to AGENTS.md",
+			path: func(harnessFixture) string { return "files/agents.md" },
+			file: func(f harnessFixture) string { return filepath.Join(f.ws, "AGENTS.md") },
+		},
+		{
+			name:    "link from files/ to skills/",
+			path:    func(harnessFixture) string { return "files/skill.md" },
+			file:    func(f harnessFixture) string { return filepath.Join(f.ws, "skills", "s", "SKILL.md") },
+			read:    true,
+			refusal: func(harnessFixture) string { return "write denied" },
+		},
+		{
 			name: "workspace root",
 			path: func(harnessFixture) string { return "AGENTS.md" },
 			file: func(f harnessFixture) string { return filepath.Join(f.ws, "AGENTS.md") },
@@ -317,6 +352,92 @@ func TestCodingTools_WorkspaceLinkOutReadRefusal(t *testing.T) {
 		if strings.Contains(tc.res.ForLLM, "escapes from parent") || strings.Contains(tc.res.ForLLM, "L2") {
 			t.Errorf("%s: %q", tc.name, tc.res.ForLLM)
 		}
+	}
+}
+
+// A link in files/ to a place inside the workspace that the agent may not
+// read (sessions/, the workspace's AGENTS.md) is refused by every reading
+// tool, by its resolved target and in plain words; a link to skills/, which
+// the agent may read, still works.
+func TestCodingTools_LinkOutOfReadScope(t *testing.T) {
+	ctx := context.Background()
+	type call struct {
+		name string
+		run  func(f harnessFixture, path string) *tools.ToolResult
+	}
+	file := func(path string) map[string]any { return map[string]any{"path": path} }
+	fileCalls := []call{
+		{"file_read_bytes", func(f harnessFixture, p string) *tools.ToolResult {
+			return NewReadFileTool(f.ws, true, MaxReadFileSize).Execute(ctx, file(p))
+		}},
+		{"file_read_lines", func(f harnessFixture, p string) *tools.ToolResult {
+			return NewReadLinesTool(f.ws, true, MaxReadFileSize).Execute(ctx, file(p))
+		}},
+		{"file_search_lines", func(f harnessFixture, p string) *tools.ToolResult {
+			return NewSearchLinesTool(f.ws, true).Execute(ctx, map[string]any{"query": "L", "path": p})
+		}},
+		{"file_search_bytes", func(f harnessFixture, p string) *tools.ToolResult {
+			return NewSearchBytesTool(f.ws, true).Execute(ctx, map[string]any{"query": "L", "path": p})
+		}},
+		{"file_count", func(f harnessFixture, p string) *tools.ToolResult {
+			return NewCountFileTool(f.ws, true).Execute(ctx, file(p))
+		}},
+		{"file_view_image", func(f harnessFixture, p string) *tools.ToolResult {
+			return NewViewImageTool(f.ws, true).Execute(ctx, file(p))
+		}},
+		{"file_copy source", func(f harnessFixture, p string) *tools.ToolResult {
+			return NewCopyFileToolScoped(f.ws, true, "files").Execute(ctx,
+				map[string]any{"source_path": p, "destination_path": "files/copied.txt"})
+		}},
+	}
+	dirCalls := []call{
+		{"file_list", func(f harnessFixture, p string) *tools.ToolResult {
+			return NewListDirTool(f.ws, true).Execute(ctx, file(p))
+		}},
+		{"file_glob", func(f harnessFixture, p string) *tools.ToolResult {
+			return NewGlobTool(f.ws, true).Execute(ctx, map[string]any{"pattern": "**", "path": p})
+		}},
+		{"file_move source", func(f harnessFixture, p string) *tools.ToolResult {
+			return NewMoveFileToolScoped(f.ws, true, "files").Execute(ctx,
+				map[string]any{"source_path": p + "/doc.txt", "destination_path": "files/moved.txt"})
+		}},
+	}
+	refused := func(t *testing.T, f harnessFixture, name, path string, res *tools.ToolResult) {
+		t.Helper()
+		if !res.IsError || !tools.IsExpectedRefusal(res.Err) {
+			t.Errorf("%s %s: want a refusal, got %v %q", name, path, res.IsError, res.ForLLM)
+		}
+		if strings.Contains(res.ForLLM, "L2") || strings.Contains(res.ForLLM, "doc.txt\n") {
+			t.Errorf("%s %s: the refusal shows what is behind the link: %q", name, path, res.ForLLM)
+		}
+		for _, p := range []string{filepath.Join(f.ws, "files", "copied.txt"), filepath.Join(f.ws, "files", "moved.txt")} {
+			if _, err := os.Lstat(p); err == nil {
+				t.Errorf("%s %s: %s was written", name, path, p)
+			}
+		}
+		if got := readBack(t, filepath.Join(f.ws, "sessions", "doc.txt")); got != harnessDoc {
+			t.Errorf("%s %s: sessions/doc.txt changed", name, path)
+		}
+	}
+	for _, c := range fileCalls {
+		for _, p := range []string{"files/sess.txt", "files/agents.md", "files/sess/doc.txt"} {
+			f := newHarnessFixture(t)
+			res := c.run(f, p)
+			refused(t, f, c.name, p, res)
+			if c.name != "file_copy source" && !strings.Contains(res.ForLLM, "resolves outside the folders the agent can read") {
+				t.Errorf("%s %s: refusal %q does not say the link leads outside", c.name, p, res.ForLLM)
+			}
+		}
+	}
+	for _, c := range dirCalls {
+		f := newHarnessFixture(t)
+		refused(t, f, c.name, "files/sess", c.run(f, "files/sess"))
+	}
+
+	// skills/ may be read, through a link as directly.
+	f := newHarnessFixture(t)
+	if res := NewReadLinesTool(f.ws, true, MaxReadFileSize).Execute(ctx, file("files/skill.md")); res.IsError || !strings.Contains(res.ForLLM, "L2") {
+		t.Errorf("read through a link to skills/: %v %q", res.IsError, res.ForLLM)
 	}
 }
 
