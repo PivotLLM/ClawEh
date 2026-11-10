@@ -7,6 +7,8 @@ package folderwatch
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"sort"
@@ -16,27 +18,34 @@ import (
 
 	"github.com/tenebris-tech/alerter"
 
+	"github.com/PivotLLM/ClawEh/agentreg"
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/config"
-	"github.com/PivotLLM/ClawEh/fileutil"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/internal/perms"
 	"github.com/PivotLLM/ClawEh/logger"
 )
 
-// markerFile records the set of file paths the watcher has already seen in a
-// folder (one per line, relative to the folder, after markerHeader). A file present now but absent from the set is "new"; an
-// edited/appended file is not (its path is already recorded). Persisting it on
-// disk makes detection restart-safe and is rewritten only on baseline and when a
-// new file fires, so the scan adds almost no churn. Same name the file tools hide
-// from agents.
-const markerFile = global.FolderMarkerFile
+// A marker records the set of file paths the watcher has already seen in one
+// allowed folder for one agent: markerHeader, the folder's path, then one path
+// per line relative to the folder. A file present now but absent from the set
+// is "new"; an edited or appended file is not (its path is already recorded).
+// It lives in the agent's own state, <workspace>/state/folderwatch/, never in
+// the watched folder: two agents watching one folder each keep their own, and
+// a read-only folder needs no write. It is rewritten only on baseline and when
+// a new file fires, so the scan adds almost no churn.
+const markerHeader = "# claw seen files v1"
 
-// markerHeader is the first line of a marker. A marker without it was written
-// for a mount (entries prefixed with the mount's name) and is read as missing,
-// so the first scan after the upgrade records the folder instead of reporting
-// every file in it.
-const markerHeader = "# claw allowed folder v1"
+// markerDir is the folder under an agent's workspace holding its markers.
+var markerDir = filepath.Join("state", "folderwatch")
+
+// markerPath is the marker of folder (cleaned, absolute) for the agent
+// agentID whose workspace is workspace. The name hashes the agent ID with the
+// folder, so agents sharing a workspace still keep one marker each.
+func markerPath(workspace, agentID, folder string) string {
+	sum := sha256.Sum256([]byte(agentID + "\x00" + folder))
+	return filepath.Join(workspace, markerDir, hex.EncodeToString(sum[:16])+".txt")
+}
 
 // Watcher periodically scans every notify-enabled allowed folder across all
 // agents.
@@ -114,15 +123,15 @@ func (w *Watcher) tick() {
 			if info, serr := os.Stat(path); serr != nil || !info.IsDir() {
 				continue
 			}
-			w.scanFolder(cfg, agent, path)
+			w.scanFolder(cfg, agent, path, markerPath(agentreg.ConfigWorkspace(agent, cfg.BaseDir()), agent.ID, path))
 		}
 	}
 }
 
-// scanFolder detects new files in one folder via the .claw watermark and
-// notifies the owning agent for each.
-func (w *Watcher) scanFolder(cfg *config.Config, agent *config.AgentConfig, folder string) {
-	for _, file := range w.detectNewFiles(agent.DisplayName(), folder) {
+// scanFolder detects new files in one folder via the agent's marker for it
+// and notifies the owning agent for each.
+func (w *Watcher) scanFolder(cfg *config.Config, agent *config.AgentConfig, folder, marker string) {
+	for _, file := range w.detectNewFiles(agent.ID, agent.DisplayName(), folder, marker) {
 		logger.InfoCF("folderwatch", "new file detected in allowed folder", map[string]any{
 			"agent_id": agent.ID,
 			"folder":   folder,
@@ -133,18 +142,19 @@ func (w *Watcher) scanFolder(cfg *config.Config, agent *config.AgentConfig, fold
 }
 
 // detectNewFiles returns the absolute paths of files in folder that are *new*
-// — present now but not in the set recorded in the .claw marker — then records
-// the current set so they are not re-reported. A missing marker (or one
-// written before allowed folders, see markerHeader) baselines: records the
-// current files, reports nothing. agent names the owner in an alert.
+// — present now but not in the set recorded in marker — then records the
+// current set so they are not re-reported. A missing or unreadable marker
+// baselines: records the current files, reports nothing. This is also the
+// first scan after an upgrade from a version that kept the marker in the
+// folder; that old file is neither read nor removed. agentID and agentName
+// name the owner in an alert.
 //
 // "New" is by path, not mtime: appending to or editing an already-seen file does
-// NOT fire — only a file whose path we haven't seen before. The seen-set lives in
-// .claw on disk, so detection survives restarts (a file added while claw was
+// NOT fire — only a file whose path we haven't seen before. The seen-set lives
+// on disk, so detection survives restarts (a file added while claw was
 // stopped is new on the next scan; an edited one is not).
-func (w *Watcher) detectNewFiles(agent, folder string) []string {
-	marker := filepath.Join(folder, markerFile)
-	seen, hadMarker := readSeen(marker)
+func (w *Watcher) detectNewFiles(agentID, agentName, folder, marker string) []string {
+	seen, hadMarker := readSeen(marker, folder)
 
 	current := make([]string, 0, len(seen))
 	walkErr := filepath.WalkDir(folder, func(p string, d os.DirEntry, werr error) error {
@@ -158,7 +168,7 @@ func (w *Watcher) detectNewFiles(agent, folder string) []string {
 			}
 			return nil
 		}
-		if name == markerFile || strings.HasPrefix(name, ".") {
+		if strings.HasPrefix(name, ".") {
 			return nil
 		}
 		if rel, rerr := filepath.Rel(folder, p); rerr == nil {
@@ -172,7 +182,7 @@ func (w *Watcher) detectNewFiles(agent, folder string) []string {
 
 	if !hadMarker {
 		// Baseline: record what's already there, fire nothing.
-		w.writeSeen(agent, folder, marker, current)
+		w.writeSeen(agentID, agentName, folder, marker, current)
 		return nil
 	}
 
@@ -184,25 +194,25 @@ func (w *Watcher) detectNewFiles(agent, folder string) []string {
 	}
 	if len(newFiles) > 0 {
 		// Advance the recorded set to what's present now (also prunes deletions).
-		w.writeSeen(agent, folder, marker, current)
+		w.writeSeen(agentID, agentName, folder, marker, current)
 	}
 	return newFiles
 }
 
 // readSeen loads the recorded set of folder-relative file paths from the
-// marker. The bool is false when the marker does not exist yet, or predates
-// allowed folders (baseline needed).
-func readSeen(marker string) (map[string]bool, bool) {
-	data, err := os.ReadFile(marker) //nolint:gosec // marker file under the configured allowed folder
+// marker. The bool is false when the marker does not exist yet or is not a
+// marker for folder (baseline needed).
+func readSeen(marker, folder string) (map[string]bool, bool) {
+	data, err := os.ReadFile(marker) //nolint:gosec // marker under the agent's own state folder
 	if err != nil {
 		return nil, false
 	}
-	header, body, _ := strings.Cut(string(data), "\n")
-	if strings.TrimSpace(header) != markerHeader {
+	lines := strings.Split(string(data), "\n")
+	if len(lines) < 2 || strings.TrimSpace(lines[0]) != markerHeader || lines[1] != folder {
 		return nil, false
 	}
 	set := make(map[string]bool)
-	for line := range strings.SplitSeq(body, "\n") {
+	for _, line := range lines[2:] {
 		if line = strings.TrimSpace(line); line != "" {
 			set[line] = true
 		}
@@ -210,17 +220,19 @@ func readSeen(marker string) (map[string]bool, bool) {
 	return set, true
 }
 
-// writeSeen persists the set of folder-relative file paths to the marker.
-func (w *Watcher) writeSeen(agent, folder, marker string, paths []string) {
+// writeSeen persists the set of folder-relative file paths to the marker,
+// with the modes of the area it lies in (the agents area for a workspace),
+// creating its folder as needed.
+func (w *Watcher) writeSeen(agentID, agentName, folder, marker string, paths []string) {
 	sort.Strings(paths)
-	body := markerHeader + "\n" + strings.Join(paths, "\n") + "\n"
-	if err := fileutil.WriteFileExact(marker, []byte(body), perms.CurrentPolicy().ModesFor(marker).File); err != nil {
-		logger.WarnCF("folderwatch", "Failed to write seen-files marker", map[string]any{"agent": agent, "path": marker, "error": err.Error()})
+	body := markerHeader + "\n" + folder + "\n" + strings.Join(paths, "\n") + "\n"
+	if err := perms.CurrentPolicy().WriteFile(marker, []byte(body)); err != nil {
+		logger.WarnCF("folderwatch", "Failed to save the file list of an allowed folder", map[string]any{"agent": agentName, "folder": folder, "path": marker, "error": err.Error()})
 		w.alerter.Send(alerter.Alert{
-			Title:       "Allowed folder marker not written",
-			Description: agent + "'s allowed folder " + folder + ": the same files may be reported again",
+			Title:       "Allowed folder file list not saved",
+			Description: agentName + "'s allowed folder " + folder + ": the same files may be reported again",
 			Details:     err.Error(),
-			EventID:     "allowed-folder:" + folder,
+			EventID:     "allowed-folder:" + agentID + ":" + folder,
 		})
 	}
 }

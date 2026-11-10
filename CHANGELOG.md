@@ -398,6 +398,20 @@
 
 ### Fixed
 
+- **New-file notices work for read-only folders and for every agent
+  watching a folder.** The list of files already seen is now kept per agent
+  in the agent's workspace (`state/folderwatch/`), not in a `.claw` file
+  inside the watched folder. Before, two agents with **Notify on new files**
+  on the same folder shared one list, so only one of them was told about
+  each new file, and a folder ClawEh could not write was re-read every 10
+  seconds without notices while the alert "Allowed folder marker not
+  written" kept repeating. The first check after the upgrade records what
+  each folder holds and announces nothing. Old `.claw` files are left in
+  the folders and are no longer used; delete them if you like. The alert
+  is now "Allowed folder file list not saved" and is raised only when the
+  agent's workspace cannot hold the list; it names the agent and the
+  folder.
+
 - **A classifier run cut short by a shutdown says so.** Its last run was
   sometimes recorded as "the classifier was stopped", as if the classifier
   had been changed or deleted; it is now always "the service stopped".

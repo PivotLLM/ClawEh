@@ -131,7 +131,7 @@ Everything claw keeps is in one data directory, `~/.claw` unless `CLAW_HOME` nam
 | `agents/<id>/skills/` | You | Skills for this agent only. |
 | `agents/<id>/sessions/` | claw | The agent's conversation history. |
 | `agents/<id>/cogmem/` | claw | The agent's cognitive memory. |
-| `agents/<id>/state/` | claw | The agent's own state, such as interrupted turns and its message tokens. |
+| `agents/<id>/state/` | claw | The agent's own state, such as interrupted turns, its message tokens and the files it has seen in its watched allowed folders. |
 | `agents/<id>/tmp/`, `tasks/` | claw | Scratch space and background task records for the agent. |
 | `agents/<id>/forums/` | claw | The agent's forums, which it can read but not change. |
 | `agents/<id>/maestro/` | claw | The agent's Maestro projects and playbooks. |

@@ -58,12 +58,13 @@ const DefaultConfigReloadIntervalSeconds = 5
 
 // FolderNotifyIntervalSeconds is how often notify-enabled allowed folders are
 // polled for newly-appeared files. Kept deliberately low-churn (a directory
-// scan); new files are detected via a .claw marker watermark.
+// scan); new files are detected against the list of files already seen, kept
+// in the agent's state.
 const FolderNotifyIntervalSeconds = 10
 
-// FolderMarkerFile is the per-folder watermark file used by the notify
-// watcher. It is claw-internal: hidden from agent file listings and never
-// notified on.
+// FolderMarkerFile is the watermark file versions before 0.6.4 kept in each
+// watched folder. The watcher no longer reads or writes it, and it is left in
+// place; it stays hidden from agent file listings.
 const FolderMarkerFile = ".claw"
 
 // MinConfigReloadIntervalSeconds is the floor applied to any configured value

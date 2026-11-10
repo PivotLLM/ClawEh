@@ -31,20 +31,21 @@ func (r *alertRecorder) Urgent(string, string, ...string)    {}
 func (r *alertRecorder) Emergency(string, string, ...string) {}
 func (r *alertRecorder) Close(context.Context) error         { return nil }
 
-// TestDetectNewFiles_AlertsWhenMarkerNotWritten: a folder whose marker cannot
-// be written raises one low alert keyed by the folder path, naming the agent
-// and the folder; a writable folder raises none.
-func TestDetectNewFiles_AlertsWhenMarkerNotWritten(t *testing.T) {
+// TestDetectNewFiles_AlertsWhenMarkerNotSaved: when the agent's own state
+// cannot hold the marker, one alert keyed by the agent and the folder is
+// raised, naming both; a writable state raises none.
+func TestDetectNewFiles_AlertsWhenMarkerNotSaved(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("running as root, permission denial tests don't apply")
 	}
 	rec := &alertRecorder{}
 	w := New(func() *config.Config { return nil }, nil, time.Hour, rec)
+	folder := t.TempDir()
 
 	ok := t.TempDir()
-	w.detectNewFiles("Alice", ok)
+	w.detectNewFiles("alice", "Alice", folder, markerPath(ok, "alice", folder))
 	if len(rec.alerts) != 0 {
-		t.Fatalf("writable folder must not alert, got %+v", rec.alerts)
+		t.Fatalf("a writable state must not alert, got %+v", rec.alerts)
 	}
 
 	ro := filepath.Join(t.TempDir(), "ro")
@@ -56,10 +57,10 @@ func TestDetectNewFiles_AlertsWhenMarkerNotWritten(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	w.detectNewFiles("Alice", ro)
-	if len(rec.alerts) != 1 || rec.alerts[0].Priority != alerter.Normal || rec.alerts[0].EventID != "allowed-folder:"+ro ||
-		rec.alerts[0].Title != "Allowed folder marker not written" ||
-		rec.alerts[0].Description != "Alice's allowed folder "+ro+": the same files may be reported again" {
-		t.Fatalf("marker write failure must alert low once for the folder, got %+v", rec.alerts)
+	w.detectNewFiles("alice", "Alice", folder, markerPath(ro, "alice", folder))
+	if len(rec.alerts) != 1 || rec.alerts[0].Priority != alerter.Normal || rec.alerts[0].EventID != "allowed-folder:alice:"+folder ||
+		rec.alerts[0].Title != "Allowed folder file list not saved" ||
+		rec.alerts[0].Description != "Alice's allowed folder "+folder+": the same files may be reported again" {
+		t.Fatalf("a marker save failure must alert once for the agent and folder, got %+v", rec.alerts)
 	}
 }

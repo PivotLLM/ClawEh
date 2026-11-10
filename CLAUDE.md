@@ -648,8 +648,14 @@ production instance directly; test against a dev instance.
   entries, `reference.BuiltinNames(maestro.EmbeddedReference)`, count as taken; part of
   `runnerSpec`, so a change rebuilds an idle runner). Maestro (0.5.9+) serves them through
   `os.Root`, so a link leading out of a folder is not listed or read.
-  New-file notices: `folderwatch` (notify on; `.claw` marker with a header line, a
-  headerless pre-0.6.4 marker baselines).
+  New-file notices: `folderwatch` (notify on). The seen-files marker is per agent and
+  folder, in the agent's workspace: `<ws>/state/folderwatch/<hash>.txt` (`markerPath`:
+  sha256 of agent ID + folder; header line, the folder, then relative paths), written
+  with the agents area's modes (`perms.Policy.WriteFile`); not in the backup. No
+  marker (or one for another folder) baselines silently, which covers the upgrade from
+  the old in-folder `.claw` marker; that file is never read, migrated or removed, and
+  the file tools still hide it (`global.FolderMarkerFile`). A failed save is the alert
+  "Allowed folder file list not saved" (`allowed-folder:<agent id>:<path>`).
 - **File search tools** (`tools/files/search.go`, `glob.go`): `file_glob` (doublestar
   patterns relative to `path`, files only, newest first, `maxGlobResults` 200, dot-folders
   skipped, not a default tool) and `file_search_lines` (line mode only: `include`

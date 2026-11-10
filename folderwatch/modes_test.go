@@ -12,8 +12,9 @@ import (
 	"github.com/PivotLLM/ClawEh/internal/perms"
 )
 
-// The seen-files marker takes exactly the file mode of the area it lies in
-// (here an agent's workspace), even under a umask that would narrow it.
+// The seen-files marker, kept in the agent's workspace, and the folders made
+// for it take exactly the agents area's modes, even under a umask that would
+// narrow them.
 func TestWriteSeen_ConfiguredMode(t *testing.T) {
 	old := syscall.Umask(0o077)
 	defer syscall.Umask(old)
@@ -24,13 +25,24 @@ func TestWriteSeen_ConfiguredMode(t *testing.T) {
 	perms.SetPolicy(perms.PolicyFor(cfg))
 	t.Cleanup(func() { perms.SetPolicy(perms.Policy{}) })
 
-	folder := filepath.Join(home, "agents", "alice", "inbox")
-	if err := os.MkdirAll(folder, 0o750); err != nil {
+	ws := filepath.Join(home, "agents", "alice")
+	if err := os.MkdirAll(ws, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	marker := filepath.Join(folder, markerFile)
+	folder := t.TempDir()
+	marker := markerPath(ws, "alice", folder)
 	w := New(func() *config.Config { return cfg }, nil, 0, nil)
-	w.writeSeen("Alice", folder, marker, []string{"a.txt"})
+	w.writeSeen("alice", "Alice", folder, marker, []string{"a.txt"})
+
+	for _, dir := range []string{filepath.Join(ws, "state"), filepath.Join(ws, markerDir)} {
+		fi, err := os.Stat(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := fi.Mode().Perm(); got != 0o750 {
+			t.Errorf("%s = %04o, want 0750", dir, got)
+		}
+	}
 	fi, err := os.Stat(marker)
 	if err != nil {
 		t.Fatal(err)

@@ -123,7 +123,7 @@ See [Channels](../channels/index.md#when-a-message-cannot-be-delivered) for whic
 | Message-token store unreadable | An agent's message-token file is damaged. |
 | Message-token store not written | A message-token change, such as a revocation, could not be saved. |
 | Named message-token store unreadable | The named message-token file could not be loaded. |
-| Allowed folder marker not written | A watched allowed folder's record of seen files could not be saved. |
+| Allowed folder file list not saved | An agent's list of the files already seen in a watched allowed folder could not be saved, so the same files may be reported again. |
 | Cron store unreadable | The scheduled jobs file could not be read; no jobs run. Fix it before anything saves over it. |
 | Cron store not saved | A scheduled job's state could not be saved. |
 | Scheduled job failed | A [scheduled job](../agents/scheduling.md) did not run. |
