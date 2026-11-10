@@ -1,6 +1,6 @@
 import * as React from "react"
 import { Checkbox as CheckboxPrimitive } from "radix-ui"
-import { IconCheck } from "@tabler/icons-react"
+import { IconCheck, IconMinus } from "@tabler/icons-react"
 
 import { cn } from "@/lib/utils"
 
@@ -16,13 +16,19 @@ function Checkbox({
         "focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50",
         "disabled:cursor-not-allowed disabled:opacity-50",
         "data-[state=checked]:bg-primary data-[state=checked]:border-primary data-[state=checked]:text-primary-foreground",
+        "data-[state=indeterminate]:bg-primary data-[state=indeterminate]:border-primary data-[state=indeterminate]:text-primary-foreground",
+        "dark:data-[state=indeterminate]:bg-primary dark:data-[state=indeterminate]:border-primary dark:data-[state=indeterminate]:text-primary-foreground",
         "dark:bg-input/30 dark:border-input dark:data-[state=checked]:bg-primary dark:data-[state=checked]:border-primary dark:data-[state=checked]:text-primary-foreground",
         className,
       )}
       {...props}
     >
       <CheckboxPrimitive.Indicator className="flex items-center justify-center text-current">
-        <IconCheck className="size-3" strokeWidth={3} />
+        {props.checked === "indeterminate" ? (
+          <IconMinus className="size-3" strokeWidth={3} />
+        ) : (
+          <IconCheck className="size-3" strokeWidth={3} />
+        )}
       </CheckboxPrimitive.Indicator>
     </CheckboxPrimitive.Root>
   )

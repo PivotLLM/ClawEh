@@ -15,18 +15,22 @@ import {
   type AgentBindingView,
   type AllowedFolderEntry,
   type CLIBypassWarning,
+  MAX_FOLDER_NOTE_CHARS,
   MESSAGE_TOOL,
   type MaestroRunnerEdits,
+  SHELL_TOOL,
   SPAWN_TOOL,
   type SkillInfo,
   TASK_GRANT_KINDS,
   type TaskGrantKind,
   type TaskModelGrant,
+  codingToolsState,
   internalToolsSummary,
   settingsCardClass,
   shellAllowed,
   shellDenied,
   toolGranted,
+  withCodingTools,
   withShellAllowed,
 } from "@/components/agents/agent-model"
 import { DenyToolsEditor } from "@/components/agents/deny-tools-editor"
@@ -235,6 +239,11 @@ export function AgentCard({
   // The shell entry has its own box; the count is of the other tools.
   const toolsSummary = internalToolsSummary(tools)
   const shellOn = shellAllowed(tools)
+  const codingOn = codingToolsState(tools)
+  // The per-tool names the tool boxes list, which a "*" entry stands for.
+  const catalogTools = availableTools.tools
+    .filter((t) => !t.suite && t.name !== SHELL_TOOL)
+    .map((t) => t.name)
   // Local edits for explicit cron chat ids (peerless channels), keyed by the
   // binding's index in the full bindings array.
   const [deliverEdits, setDeliverEdits] = useState<Record<number, string>>({})
@@ -485,6 +494,21 @@ export function AgentCard({
               />
             )}
 
+            <label className="flex cursor-pointer items-center gap-2 select-none">
+              <Checkbox
+                checked={codingOn}
+                onCheckedChange={() =>
+                  onToolsChange(
+                    withCodingTools(tools, codingOn !== true, catalogTools),
+                  )
+                }
+                aria-label={t("agents.allowCodingTools")}
+              />
+              <span className="text-foreground text-xs font-semibold">
+                {t("agents.allowCodingTools")}
+              </span>
+            </label>
+
             <div className="space-y-1.5">
               <div className="flex items-center justify-between gap-2">
                 <p className="text-foreground text-xs font-semibold">
@@ -573,6 +597,14 @@ export function AgentCard({
                       <IconTrash className="size-3.5" />
                     </Button>
                   </div>
+                  <Input
+                    value={f.note ?? ""}
+                    onChange={(e) => set({ note: e.target.value })}
+                    maxLength={MAX_FOLDER_NOTE_CHARS}
+                    placeholder={t("agents.allowedFolderNote")}
+                    aria-label={t("agents.allowedFolderNote")}
+                    className="h-7 text-xs"
+                  />
                   {(() => {
                     const ignored = ignoredFolders.find(
                       (g) => g.path === f.path,

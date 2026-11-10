@@ -134,6 +134,27 @@ describe("AgentCard allowed folders", () => {
     expect(screen.queryByText(/write/i, { selector: "label" })).toBeNull()
   })
 
+  it("shows each folder's note and writes an edited one", () => {
+    const onChange = vi.fn()
+    renderCard({
+      allowedFolders: [
+        { path: "/opt/audio/in", note: "inbound audio notes" },
+        { path: "/srv/src" },
+      ],
+      onAllowedFoldersChange: onChange,
+    })
+    const notes = screen.getAllByRole("textbox", {
+      name: "Note",
+    }) as HTMLInputElement[]
+    expect(notes.map((n) => n.value)).toEqual(["inbound audio notes", ""])
+    expect(notes[0].maxLength).toBe(100)
+    fireEvent.change(notes[1], { target: { value: "sources" } })
+    expect(onChange).toHaveBeenLastCalledWith([
+      { path: "/opt/audio/in", note: "inbound audio notes" },
+      { path: "/srv/src", note: "sources" },
+    ])
+  })
+
   it("adds an empty row and removes a row", () => {
     const onChange = vi.fn()
     renderCard({ onAllowedFoldersChange: onChange })
@@ -343,6 +364,83 @@ describe("AgentCard for a person", () => {
       "msg_send",
       "shell_exec",
     ])
+  })
+
+  describe("Allow coding tools", () => {
+    const codingCatalog = {
+      tools: [
+        "file_list",
+        "file_glob",
+        "file_read_lines",
+        "file_search_lines",
+        "file_edit_lines",
+        "file_insert_lines",
+        "file_delete_lines",
+        "file_edit",
+        "file_write",
+        "shell_exec",
+        "time_now",
+      ].map((name) => ({ name, description: "" })),
+      default_tools: [],
+    }
+    const box = () =>
+      screen.getByRole("checkbox", {
+        name: "Allow coding tools (includes shell commands, full account access)",
+      })
+
+    it("is unchecked with none, checked with all, mixed with some", () => {
+      renderCard({ availableTools: codingCatalog, tools: ["time_now"] })
+      expect(box().getAttribute("aria-checked")).toBe("false")
+      cleanup()
+      renderCard({
+        availableTools: codingCatalog,
+        tools: codingCatalog.tools.map((t) => t.name),
+      })
+      expect(box().getAttribute("aria-checked")).toBe("true")
+      cleanup()
+      renderCard({ availableTools: codingCatalog, tools: ["file_glob"] })
+      expect(box().getAttribute("aria-checked")).toBe("mixed")
+    })
+
+    it("ticking adds every missing coding tool; unticking from checked removes them all", () => {
+      const onToolsChange = vi.fn()
+      renderCard({
+        availableTools: codingCatalog,
+        tools: ["time_now", "file_glob"],
+        onToolsChange,
+      })
+      fireEvent.click(box())
+      const granted = onToolsChange.mock.lastCall?.[0] as string[]
+      expect(granted).toEqual([
+        "time_now",
+        "file_glob",
+        "file_list",
+        "file_read_lines",
+        "file_search_lines",
+        "file_edit_lines",
+        "file_insert_lines",
+        "file_delete_lines",
+        "file_edit",
+        "file_write",
+        "shell_exec",
+      ])
+      cleanup()
+      renderCard({
+        availableTools: codingCatalog,
+        tools: granted,
+        onToolsChange,
+      })
+      // The shell switch shows the same grant.
+      expect(
+        screen
+          .getByRole("switch", {
+            name: "Allow shell commands (full account access)",
+          })
+          .getAttribute("aria-checked"),
+      ).toBe("true")
+      fireEvent.click(box())
+      expect(onToolsChange).toHaveBeenLastCalledWith(["time_now"])
+    })
   })
 
   it("asks before deleting an agent", () => {

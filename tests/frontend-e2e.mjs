@@ -1114,6 +1114,126 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
       })
     }
   })
+
+  // removeAgent drops a throwaway agent through the API.
+  const removeAgent = async (id) => {
+    const c = await config()
+    c.agents.list = (c.agents.list ?? []).filter((a) => a.id !== id)
+    await api("/api/config", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agents: { list: c.agents.list } }),
+    })
+  }
+  // addAgent creates a throwaway agent through the API.
+  const addAgent = async (agent) => {
+    const before = await config()
+    const r = await api("/api/config", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agents: { list: [...(before.agents.list ?? []), agent] } }),
+    })
+    assert(r.status === 200, `creating ${agent.id} = ${r.status}`)
+  }
+
+  await check(16, "an allowed folder's note is saved and shown after a reload", async () => {
+    const ID = "e2e-note"
+    const NOTE = "inbound audio notes"
+    await addAgent({ id: ID, name: ID, tools: [], allowed_folders: [{ path: "/tmp" }] })
+    try {
+      let { close, page } = await open("/agents")
+      await page.getByRole("button", { name: ID, exact: true }).click()
+      await page.waitForTimeout(400)
+      await page.getByRole("textbox", { name: "Note", exact: true }).first().fill(NOTE)
+      await page.waitForTimeout(2000)
+      await close()
+      const a = (await config()).agents.list.find((x) => x.id === ID)
+      assert(
+        JSON.stringify(a?.allowed_folders) === JSON.stringify([{ path: "/tmp", note: NOTE }]),
+        `allowed_folders = ${JSON.stringify(a?.allowed_folders)}`,
+      )
+      ;({ close, page } = await open("/agents"))
+      await page.getByRole("button", { name: ID, exact: true }).click()
+      await page.waitForTimeout(400)
+      const shown = await page.getByRole("textbox", { name: "Note", exact: true }).first().inputValue()
+      await close()
+      assert(shown === NOTE, `note after reload = ${JSON.stringify(shown)}`)
+      return `${ID}: note saved and shown`
+    } finally {
+      await removeAgent(ID)
+    }
+  })
+
+  // F17-F20 share one throwaway agent, e2e-code, removed after F20 whatever
+  // the outcome.
+  const CODE = "e2e-code"
+  const CODING = [
+    "file_list", "file_glob", "file_read_lines", "file_search_lines", "file_edit_lines",
+    "file_insert_lines", "file_delete_lines", "file_edit", "file_write", "shell_exec",
+  ]
+  const CODING_LABEL = "Allow coding tools (includes shell commands, full account access)"
+  const SHELL_LABEL = "Allow shell commands (full account access)"
+  let codeCreated = false
+  // onCodeCard opens /agents with e2e-code selected, runs act, waits for the
+  // save and returns what act returned with the coding box's and the shell
+  // switch's states and the saved tools list.
+  const onCodeCard = async (act) => {
+    const { close, page } = await open("/agents")
+    await page.getByRole("button", { name: CODE, exact: true }).click()
+    await page.waitForTimeout(400)
+    const box = page.getByRole("checkbox", { name: CODING_LABEL, exact: true })
+    const shell = page.getByRole("switch", { name: SHELL_LABEL, exact: true }).first()
+    await act(page, box, shell)
+    await page.waitForTimeout(2000)
+    const state = await box.getAttribute("data-state")
+    const shellOn = await shell.isChecked()
+    await close()
+    const tools = (await config()).agents.list.find((x) => x.id === CODE)?.tools ?? []
+    return { state, shellOn, tools }
+  }
+
+  await check(17, "Allow coding tools: ticking it grants all ten tools and saves them", async () => {
+    await addAgent({ id: CODE, name: CODE, tools: ["time_now"] })
+    codeCreated = true
+    const { state, shellOn, tools } = await onCodeCard((page, box) => box.click())
+    assert(state === "checked", `box state = ${state}`)
+    assert(shellOn, "the shell switch is off although shell_exec was granted")
+    for (const t of CODING) assert(tools.includes(t), `tools = ${JSON.stringify(tools)}; ${t} missing`)
+    assert(tools.includes("time_now"), `tools = ${JSON.stringify(tools)}; time_now was dropped`)
+    return `${CODE}: ${tools.length} tools`
+  })
+
+  await check(18, "Allow coding tools: unticking one tool leaves the box indeterminate", async () => {
+    if (!codeCreated) return "skipped, never created"
+    const { state, tools } = await onCodeCard((page) =>
+      page.getByRole("checkbox", { name: "file_glob", exact: true }).click(),
+    )
+    assert(!tools.includes("file_glob"), `tools = ${JSON.stringify(tools)}; file_glob should be gone`)
+    assert(state === "indeterminate", `box state = ${state}`)
+  })
+
+  await check(19, "Allow coding tools and Allow shell commands stay in step", async () => {
+    if (!codeCreated) return "skipped, never created"
+    let r = await onCodeCard((page, box, shell) => shell.click())
+    assert(!r.tools.includes("shell_exec"), `tools = ${JSON.stringify(r.tools)}; shell_exec should be gone`)
+    assert(r.state === "indeterminate", `box state after the shell switch = ${r.state}`)
+    r = await onCodeCard((page, box) => box.click())
+    assert(r.state === "checked", `box state after ticking = ${r.state}`)
+    assert(r.shellOn, "ticking the box did not turn the shell switch on")
+    for (const t of CODING) assert(r.tools.includes(t), `tools = ${JSON.stringify(r.tools)}; ${t} missing`)
+  })
+
+  await check(20, "Allow coding tools: unticking it removes all ten and keeps the rest", async () => {
+    try {
+      if (!codeCreated) return "skipped, never created"
+      const { state, shellOn, tools } = await onCodeCard((page, box) => box.click())
+      assert(state === "unchecked", `box state = ${state}`)
+      assert(!shellOn, "the shell switch is still on")
+      assert(JSON.stringify(tools) === JSON.stringify(["time_now"]), `tools = ${JSON.stringify(tools)}, want ["time_now"]`)
+    } finally {
+      if (codeCreated) await removeAgent(CODE)
+    }
+  })
 }
 
 // G. System page (the old Config page minus the listeners, which are group R)

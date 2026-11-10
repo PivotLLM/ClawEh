@@ -65,7 +65,14 @@ export interface AgentEntry {
 export interface AllowedFolderEntry {
   path: string
   notify?: boolean
+  /** Shown to the agent after the folder in its prompt; at most
+   *  MAX_FOLDER_NOTE_CHARS characters. */
+  note?: string
 }
+
+// MAX_FOLDER_NOTE_CHARS is config.MaxAllowedFolderNoteChars: the longest note
+// an allowed folder may carry.
+export const MAX_FOLDER_NOTE_CHARS = 100
 
 export interface AgentsConfig {
   defaults: {
@@ -273,6 +280,70 @@ export function withShellAllowed(tools: string[], allowed: boolean): string[] {
   return allowed ? [...rest, SHELL_TOOL] : rest
 }
 
+// CODING_TOOLS are the tools "Allow coding tools" grants and removes together.
+export const CODING_TOOLS = [
+  "file_list",
+  "file_glob",
+  "file_read_lines",
+  "file_search_lines",
+  "file_edit_lines",
+  "file_insert_lines",
+  "file_delete_lines",
+  "file_edit",
+  "file_write",
+  SHELL_TOOL,
+]
+
+// codingToolInList reports whether the tools list grants name: shell_exec only
+// by its own entry, any other tool by its entry, "*" or a prefix entry such as
+// "file_*" (toolPatternMatches).
+function codingToolInList(tools: string[], name: string): boolean {
+  if (name === SHELL_TOOL) return shellAllowed(tools)
+  return tools.some((e) => toolPatternMatches(e.trim(), name))
+}
+
+// grantsCodingTool reports whether a "*" or prefix entry grants a coding tool
+// other than shell_exec (which only its own entry grants).
+const grantsCodingTool = (entry: string) =>
+  entry.trim().endsWith("*") &&
+  CODING_TOOLS.some(
+    (name) => name !== SHELL_TOOL && toolPatternMatches(entry.trim(), name),
+  )
+
+// codingToolsState is the "Allow coding tools" box: checked when every coding
+// tool is in the list, unchecked when none is, indeterminate otherwise.
+export function codingToolsState(tools: string[]): boolean | "indeterminate" {
+  const n = CODING_TOOLS.filter((name) => codingToolInList(tools, name)).length
+  if (n === CODING_TOOLS.length) return true
+  return n === 0 ? false : "indeterminate"
+}
+
+// withCodingTools adds every coding tool the list lacks (allowed) or removes
+// all of them (not allowed). Before removing, a "*" or prefix entry that grants
+// a coding tool is replaced by the catalogTools it matches (the per-tool names
+// the page lists, as the tool boxes do), so the coding tools are really taken
+// away rather than left granted through the pattern.
+export function withCodingTools(
+  tools: string[],
+  allowed: boolean,
+  catalogTools: string[],
+): string[] {
+  if (allowed) {
+    const missing = CODING_TOOLS.filter(
+      (name) => !codingToolInList(tools, name),
+    )
+    return [...tools, ...missing]
+  }
+  const patterns = tools.filter(grantsCodingTool)
+  const rest = tools.filter((e) => !grantsCodingTool(e))
+  const expanded = catalogTools.filter(
+    (n) =>
+      patterns.some((p) => toolPatternMatches(p.trim(), n)) &&
+      !rest.some((e) => norm(e) === n),
+  )
+  return [...rest, ...expanded].filter((e) => !CODING_TOOLS.includes(norm(e)))
+}
+
 // MESSAGE_TOOL is the tool an agent messages other agents with; whom it may
 // message is subagents.allow_agents ("May message" on the Agents page).
 export const MESSAGE_TOOL = "agent_message"
@@ -455,6 +526,7 @@ export function parseAgent(value: unknown): AgentEntry {
       return {
         path: asString(fr.path),
         notify: fr.notify === true,
+        ...(asString(fr.note) ? { note: asString(fr.note) } : {}),
       }
     }),
   }
@@ -850,6 +922,7 @@ export function agentPayload(a: AgentEntry): Record<string, unknown> {
       .map((f) => ({
         path: f.path.trim(),
         ...(f.notify ? { notify: true } : {}),
+        ...(f.note?.trim() ? { note: f.note.trim() } : {}),
       })),
   }
 }

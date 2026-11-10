@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest"
 
 import toolGrantCases from "../../../../../config/testdata/tool_grant_cases.json"
 import {
+  CODING_TOOLS,
   agentsPayload,
   applyMaestroEdits,
   cliBypassWarnings,
+  codingToolsState,
   fusionAccessView,
   internalToolsSummary,
   maestroEditsFromAgent,
@@ -23,6 +25,7 @@ import {
   toggleClassifiers,
   toolGranted,
   withAllAgents,
+  withCodingTools,
   withShellAllowed,
 } from "./agent-model"
 
@@ -785,6 +788,36 @@ describe("agentsPayload", () => {
     expect(shellDenied([])).toBe(false)
   })
 
+  it("reads and writes an allowed folder's note, trimmed, absent when blank", () => {
+    const a = parseAgent({
+      id: "alice",
+      allowed_folders: [
+        { path: "/opt/audio/in", note: "inbound audio notes" },
+        { path: "/srv/src", note: "" },
+      ],
+    })
+    expect(a.allowed_folders).toEqual([
+      { path: "/opt/audio/in", notify: false, note: "inbound audio notes" },
+      { path: "/srv/src", notify: false },
+    ])
+    const out = agentsPayload({
+      defaults: {},
+      list: [
+        {
+          ...a,
+          allowed_folders: [
+            { path: "/opt/audio/in", note: "  inbound audio notes  " },
+            { path: "/srv/src", note: "   " },
+          ],
+        },
+      ],
+    }) as { agents: { list: Record<string, unknown>[] } }
+    expect(out.agents.list[0].allowed_folders).toEqual([
+      { path: "/opt/audio/in", note: "inbound audio notes" },
+      { path: "/srv/src" },
+    ])
+  })
+
   it("reads and writes allowed folders, dropping blank rows", () => {
     const a = parseAgent({
       id: "alice",
@@ -917,4 +950,109 @@ describe("toolGranted", () => {
       expect(toolGranted(tools, deny_tools, tool)).toBe(allowed)
     },
   )
+})
+
+describe("Allow coding tools", () => {
+  const catalog = [
+    "file_list",
+    "file_glob",
+    "file_read_lines",
+    "file_search_lines",
+    "file_edit_lines",
+    "file_insert_lines",
+    "file_delete_lines",
+    "file_edit",
+    "file_write",
+    "time_now",
+    "web_fetch",
+  ]
+
+  it("is the ten tools", () => {
+    expect(CODING_TOOLS).toEqual([
+      "file_list",
+      "file_glob",
+      "file_read_lines",
+      "file_search_lines",
+      "file_edit_lines",
+      "file_insert_lines",
+      "file_delete_lines",
+      "file_edit",
+      "file_write",
+      "shell_exec",
+    ])
+  })
+
+  it("is checked when all are in the list, unchecked when none, indeterminate otherwise", () => {
+    expect(codingToolsState([])).toBe(false)
+    expect(codingToolsState(["time_now"])).toBe(false)
+    expect(codingToolsState([...CODING_TOOLS])).toBe(true)
+    expect(codingToolsState(CODING_TOOLS.slice(1))).toBe("indeterminate")
+    expect(codingToolsState(["shell_exec"])).toBe("indeterminate")
+    // "*" grants every tool but the shell, which only its own entry grants.
+    expect(codingToolsState(["*"])).toBe("indeterminate")
+    expect(codingToolsState(["*", "Shell_Exec"])).toBe(true)
+    // Entries match in any case.
+    expect(codingToolsState(CODING_TOOLS.map((n) => n.toUpperCase()))).toBe(
+      true,
+    )
+  })
+
+  it("ticking adds only the missing ones and keeps the rest", () => {
+    expect(withCodingTools(["time_now", "file_list"], true, catalog)).toEqual([
+      "time_now",
+      "file_list",
+      "file_glob",
+      "file_read_lines",
+      "file_search_lines",
+      "file_edit_lines",
+      "file_insert_lines",
+      "file_delete_lines",
+      "file_edit",
+      "file_write",
+      "shell_exec",
+    ])
+    expect(withCodingTools(["*"], true, catalog)).toEqual(["*", "shell_exec"])
+    const all = withCodingTools([], true, catalog)
+    expect(codingToolsState(all)).toBe(true)
+  })
+
+  it("unticking removes all of them, in any case, and keeps the rest", () => {
+    expect(
+      withCodingTools(
+        ["time_now", ...CODING_TOOLS, "FILE_EDIT"],
+        false,
+        catalog,
+      ),
+    ).toEqual(["time_now"])
+    expect(withCodingTools(["file_glob", "web_fetch"], false, catalog)).toEqual(
+      ["web_fetch"],
+    )
+  })
+
+  it('unticking with "*" expands it so the tools are really removed', () => {
+    const out = withCodingTools(["*", "shell_exec"], false, catalog)
+    expect(out).toEqual(["time_now", "web_fetch"])
+    expect(codingToolsState(out)).toBe(false)
+  })
+
+  it("counts and removes tools granted through a prefix entry", () => {
+    expect(codingToolsState(["file_*", "shell_exec"])).toBe(true)
+    expect(codingToolsState(["file_*"])).toBe("indeterminate")
+    // A prefix that grants no coding tool is kept as it is.
+    const out = withCodingTools(
+      ["file_*", "web_*", "shell_exec"],
+      false,
+      catalog,
+    )
+    expect(out).toEqual(["web_*"])
+    expect(codingToolsState(out)).toBe(false)
+  })
+
+  it("leaves shell_exec in step with the shell switch", () => {
+    const on = withCodingTools([], true, catalog)
+    expect(shellAllowed(on)).toBe(true)
+    // Turning the shell off alone leaves the group partly granted.
+    expect(codingToolsState(withShellAllowed(on, false))).toBe("indeterminate")
+    expect(shellAllowed(withCodingTools(on, false, catalog))).toBe(false)
+  })
 })

@@ -3,7 +3,7 @@
 Regression coverage for the ClawEh web interface. Every step below has an ID, a
 process, and an expected result, so it can be followed by hand — and every one is
 also automated in `tests/frontend-e2e.mjs`, which prints the same IDs. There are
-170 checks in all; the runner prints the same tally at the end.
+175 checks in all; the runner prints the same tally at the end.
 
 ```
 export CLAW_E2E_USER=<admin>  CLAW_E2E_PASSWORD=<password>
@@ -112,7 +112,7 @@ attaches on its own. No token is fetched or sent by the page.
 
 ## F. Agents — autosave and list realignment
 
-Creates an agent called `e2e-probe` and deletes it at the end; F11, F12 and F14 each create a second one (`e2e-msg`, `e2e-wrk`, `e2e-cls`) through the API and remove it again.
+Creates an agent called `e2e-probe` and deletes it at the end; F11, F12, F14, F15 and F16 each create a second one (`e2e-msg`, `e2e-wrk`, `e2e-cls`, `e2e-tm`, `e2e-note`) through the API and remove it again, and F17–F20 share one (`e2e-code`) that F17 creates and F20 removes whatever the outcome.
 
 | ID | Process | Expected |
 |---|---|---|
@@ -131,6 +131,11 @@ Creates an agent called `e2e-probe` and deletes it at the end; F11, F12 and F14 
 | F13 | With `e2e-probe` selected, click the trash button in the card header, then Delete in the confirmation dialog | The agent is gone from `GET /api/config` |
 | F14 | Create a throwaway agent `e2e-cls` through the API with `models` set to one enabled model (not a person's); select it on `/agents` and turn on **Allow classifiers**, wait ~2s; turn it off, wait ~2s; remove `e2e-cls` through the API | After turning it on, `classifiers` is `{enabled: true, model: <the first model ticked Classify in task_models.models>}` and a **Classifier model** selector is shown; after turning it off, `classifiers` is absent, the selector is gone and `models` is unchanged. Skipped when there is no enabled model or no model is ticked Classify |
 | F15 | Create a throwaway agent `e2e-tm` through the API with `models` set to one enabled model (not a person's); select it on `/agents` and tick **Images** under **Allow task models**, wait ~2s; untick it, wait ~2s; remove `e2e-tm` through the API | After ticking, the box is checked and the agent's `task_models` is `{image: true}`; after unticking, the box is unchecked and `task_models` is absent. Skipped when there is no enabled model |
+| F16 | Create a throwaway agent `e2e-note` through the API with `allowed_folders: [{path: "/tmp"}]`; select it on `/agents`, type `inbound audio notes` into the folder's **Note** box, wait ~2s; reload `/agents` and select it again; remove `e2e-note` through the API | `allowed_folders` is exactly `[{path: "/tmp", note: "inbound audio notes"}]`, and after the reload the **Note** box shows the note |
+| F17 | Create a throwaway agent `e2e-code` through the API with `tools: ["time_now"]`; select it on `/agents` and tick **Allow coding tools (includes shell commands, full account access)** under Tools, wait ~2s | The box is checked, the **Allow shell commands (full account access)** switch is on, and `tools` holds `time_now` plus all ten coding tools: `file_list`, `file_glob`, `file_read_lines`, `file_search_lines`, `file_edit_lines`, `file_insert_lines`, `file_delete_lines`, `file_edit`, `file_write`, `shell_exec` |
+| F18 | With `e2e-code` selected, untick the `file_glob` box under Internal tools, wait ~2s | `tools` no longer has `file_glob` and the coding tools box is indeterminate (some, not all, granted) |
+| F19 | With `e2e-code` selected, turn off **Allow shell commands (full account access)**, wait ~2s; then tick the coding tools box, wait ~2s | After the switch, `tools` has no `shell_exec` and the box is still indeterminate; after the tick, the box is checked, the shell switch is on and all ten coding tools are in `tools`: the box and the switch edit the same list |
+| F20 | With `e2e-code` selected, untick the coding tools box, wait ~2s; remove `e2e-code` through the API | The box is unchecked, the shell switch is off and `tools` is exactly `["time_now"]`: every coding tool is removed and nothing else |
 
 ## G. System page
 
