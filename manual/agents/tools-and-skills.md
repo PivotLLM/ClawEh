@@ -23,8 +23,9 @@ The **Tools** box on the agent's card has these parts:
    - **Clear** empties the list.
    - Each checkbox grants one tool. Hover a tool for its description.
 4. **May message**: the other agents this agent may message with `agent_message`, start as sub-agents or invite to forums. See [Messages between agents](./messaging.md#who-may-message-whom).
-5. **Allow shell commands (full account access)**: see [Shell commands](#shell-commands).
-6. **Denied tools**: see [Deny a tool](#deny-a-tool).
+5. **Allow coding tools (includes shell commands, full account access)**: see [Coding tools](#coding-tools).
+6. **Allow shell commands (full account access)**: see [Shell commands](#shell-commands).
+7. **Denied tools**: see [Deny a tool](#deny-a-tool).
 
 ### Grant tools in config.json
 
@@ -40,6 +41,26 @@ The same lists can be written by hand. Entries are tool names; a trailing `*` ma
 ```
 
 `mcp_tools` names MCP servers or Fusion services (or a group within one, such as `microsoft365_calendar`): an entry grants every tool whose name starts with it.
+
+## Coding tools
+
+**Allow coding tools (includes shell commands, full account access)** grants the tools an agent needs to work on code, together:
+
+| Tool | Use it to |
+|---|---|
+| `file_list` | See what is in a folder |
+| `file_glob` | Find files by name pattern, such as `**/*.go` |
+| `file_search_lines` | Find text in files |
+| `file_read_lines` | Read the lines found |
+| `file_edit`, `file_edit_lines`, `file_insert_lines`, `file_delete_lines` | Change text |
+| `file_write` | Create a file or replace a whole file |
+| `shell_exec` | Run git, builds, tests and other programs (see [Shell commands](#shell-commands)) |
+
+- Ticking the box adds every one the agent lacks to its tools list; unticking it removes them all. Nothing else changes, and there is no separate setting: the box only edits the list.
+- The box is ticked when all ten are granted and shows a mixed state when only some are. The single tool boxes and **Allow shell commands** stay and follow it.
+- `file_glob` is not in **Default tools**. It returns matching paths newest first (at most 200) and skips folders whose name starts with a dot.
+- `file_search_lines` takes `include` (a file pattern such as `*.go`), `context` (up to 10 lines around each match) and `output` (`lines`, `files` or `count`), and skips what the `.gitignore` files in the searched folder ignore.
+- Both reach only what the other file tools reach: see [Files and allowed folders](./allowed-folders.md).
 
 ## Shell commands
 

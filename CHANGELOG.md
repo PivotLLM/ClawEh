@@ -13,6 +13,37 @@
 
 ### Added
 
+- **`file_glob` finds files by name pattern.** A new file tool: `pattern`
+  (`*` within one folder, `**` across folders, `?`, `{a,b}`) and an optional
+  `path`, the folder to search under (relative to the workspace or
+  absolute; default the workspace). It returns the matching file paths
+  newest first, at most 200 with a note when there are more, skips folders
+  whose name starts with a dot (`.git`), and reaches only what the other
+  file-reading tools reach (the workspace read scope and the allowed
+  folders). It is not in **Default tools**; grant it per agent, or with
+  **Allow coding tools**.
+- **`file_search_lines` takes `include`, `context` and `output`, and skips
+  what `.gitignore` ignores.** `include` is a glob on file paths (one
+  without `/` matches the file name in any folder, so `*.go` finds Go files
+  everywhere); `context` shows that many lines before and after each match
+  (0 to 10); `output` is `lines` (the default, as before), `files` (only the
+  paths of the files that match) or `count` (matching lines per file). The
+  `.gitignore` files in the searched folder and below are applied as git
+  applies them (nested files, `!` patterns); one above the searched folder is
+  not read. `file_search_bytes` is unchanged.
+- **A note per allowed folder.** `agents.list[].allowed_folders[].note`, at
+  most 100 characters (a save with a longer one is refused, naming the agent
+  and the folder), is shown to the agent after the folder in its prompt:
+  `/opt/audio/in (read-only): inbound audio notes`. On the Agents page it is
+  the **Note** box on each folder's row.
+- **Allow coding tools on the Agents page.** **Allow coding tools (includes
+  shell commands, full account access)** adds `file_list`, `file_glob`,
+  `file_read_lines`, `file_search_lines`, `file_edit_lines`,
+  `file_insert_lines`, `file_delete_lines`, `file_edit`, `file_write` and
+  `shell_exec` to the agent's `tools` list together, or removes them all. It
+  is ticked when all are granted and shows a mixed state when some are. It
+  only edits the `tools` list; the tool boxes and **Allow shell commands**
+  stay and follow it.
 - **Slack shows a "Thinking..." message and progress updates on long
   turns, on by default.** The app posts the message where the reply will go,
   edits it with progress on long turns, replaces it with the reply and
@@ -203,8 +234,8 @@
   attachments, task-model files and forum sources, which may now be an
   absolute path in an allowed folder. Maestro no longer gets an automatic
   mount: with Maestro on, `maestro/` is part of the workspace the file tools
-  read and write, and Maestro's reference library no longer lists the
-  agent's other folders (Maestro's file import can still read them). The
+  read and write, and Maestro's reference library lists the allowed folders
+  by name (see below). The
   new-file notice now names the agent and the folder; the first scan after
   the upgrade only records what each folder holds. The reserved folder names
   for mounts are gone, and with them `GET /api/agents/mounts/ignored`, the
@@ -214,6 +245,31 @@
   "Ignored" on its row and listed on Check Up (**Allowed folder**), and the
   migration log warns for each formerly read-only mount the agent can now
   write.
+- **The agent's prompt describes its workspace plainly.** "Your working
+  area is <workspace>/files" is replaced by: the workspace is the agent's
+  folder, relative paths start there, and work is written under `files/`.
+  The prompt lists every folder the file tools can reach, by absolute path:
+  `<workspace>/files` (read/write), `<workspace>/skills` (read-only),
+  `<workspace>/maestro` with Maestro on, and each allowed folder, marked
+  read-only when the account cannot write it and followed by its note. What
+  the tools can reach is unchanged.
+- **Maestro's reference library lists the allowed folders.** Each allowed
+  folder that exists is in the library under its last path component as one
+  word (letters, digits, `_` and `-`; any other run of characters becomes
+  `-`), with `-2`, `-3`, … added in config order when two folders share a
+  name: `/srv/src` is `src/…`, `/opt/audio/in` is `in/…`. Maestro reads them
+  only.
+- **BREAKING: an agent whose `tools` list has `"*"` also gets the new
+  `file_glob`.** To keep it from such an agent, add `file_glob` to its
+  `deny_tools`.
+- **The file tools and `shell_exec` say when to use them.** The
+  descriptions of `file_list`, `file_read_lines`, `file_search_lines`,
+  `file_edit_lines`, `file_insert_lines`, `file_delete_lines`, `file_edit`,
+  `file_write` and `shell_exec` now open with what each is for (find files
+  by name, find text, read the lines found, change text; `shell_exec` for
+  git, builds, tests and other programs, not for finding or reading files),
+  so smaller models pick the right one. Names, arguments and behaviour are
+  unchanged.
 - **BREAKING: `shell_exec` no longer refuses commands by path.** The checks
   for `..`, for absolute paths outside the working folder and for a
   `working_dir` outside the workspace are gone: a command runs with the full

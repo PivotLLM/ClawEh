@@ -294,7 +294,12 @@ production instance directly; test against a dev instance.
   an ordinary tool: an agent without the grant never has it registered, so it is
   never offered to the model and every path (in-loop, MCP host, watch probes) finds
   it missing like any other tool the agent lacks; nothing refuses it by name at call
-  time (`agent/shell_permission_test.go`).
+  time (`agent/shell_permission_test.go`). The Agents page's tri-state "Allow coding tools
+  (includes shell commands, full account access)" adds or removes the ten tools of
+  `CODING_TOOLS` (`agent-model.ts`, frontend only: `file_list`, `file_glob`,
+  `file_read_lines`, `file_search_lines`, `file_edit_lines`, `file_insert_lines`,
+  `file_delete_lines`, `file_edit`, `file_write`, `shell_exec`) in the `tools` list
+  (`withCodingTools` expands `"*"` before removing); there is no backend concept.
 - **Human agents** (`config/human.go`, `providers/human.go`, `agent/human.go`; `manual/agents/human-agents.md`): an agent whose model (matched by `model_name`) is on a provider with protocol `human` represents a person. It takes work only from asks: turns on `constants.AgentMessageChannel` with `reply_required`; the reply goes back to the asker through `runTurn`'s ask path; `runHumanTurn` drops anything else (a person writing to it is told "Bob only answers questions from agents."; device agent lists leave it out), and cron (`tools/schedule`) and `HandleExternalMessage` (`ErrHumanAgent`) refuse it at the source. An ask posts the latest user message to the agent's one default-binding chat (`CronTarget`) and returns the person's next text there (`askHuman`: one request per agent at a time, the timeout runs from posting and never outlasts the asker's deadline (`askRegistry.wait`), a request whose asker stops waiting is withdrawn in the chat and an answer that reaches no asker is acknowledged (`humanAnswerUnused`), while it waits the asker has lent its slot and the asked turn holds none (`turnSlot`), `/cancel` → `tools.OutcomePersonCancelled`, a request the channel could not post ends at once with `tools.OutcomePersonUnreachable` and a line from the channel's reason (`humanUnreachableError`: "Bob's chat is not set up." / "is unavailable." / "Bob's device is offline." / "Bob's chat can't be reached." / "Couldn't reach Bob's chat."), shutdown → cancelled and withdrawn, never replayed); nothing else of the turn runs, so no model sees the conversation (no tools at all, no cogmem, empty summarization chain, no vision or transcription). The person's chat is handled before any session: `Run` → `dispatchInbound` takes text answers in arrival order (`takeHumanAnswer`, the only place an answer is taken; it clears typing/placeholder via `channels.Manager.DismissInbound` in the background), `processSessionMessage` → `handleHumanChat` does the rest (only `/` is a command there; "Nothing is waiting for your answer.", "That request has already timed out.", "That request was withdrawn.", "Please answer with text.", "Bob is not running." for a set-aside agent, whose chat is known from config). `config.HumanProblems` is the rule set (only that model; exactly one binding, its default, naming one chat no other agent is bound to; never the default agent; a human model never a default/summarization/task/sub-agent model and its name never another model's): `Store.Update` refuses new violations except a missing chat, `runtimeConfig` and `claw agent` set violators aside (`PruneHumanProblems`), `GET /api/agents/human` feeds the Agents card notes and the System/Models page notes. The default agent (routing and agentreg) skips human agents; agentreg refuses cloning one or a temporary agent on a human model (`agentreg.ErrHuman`).
 - **Character cards** (`ccv3/`, design in `private/ccv3.md`; `manual/agents/character-cards.md`):
   Character Card V3 documents in one library, `<CLAW_HOME>/cards/<id>.json`
@@ -607,7 +612,7 @@ production instance directly; test against a dev instance.
   `Refusal() bool` method, which packages that do not import `tools` use, such as the forum)
   is an expected refusal (`tools.IsExpectedRefusal`) and logs at WARN "Tool call refused",
   not ERROR.
-- **Allowed folders** (`agents.list[].allowed_folders`: `{path, notify}`,
+- **Allowed folders** (`agents.list[].allowed_folders`: `{path, notify, note}`,
   `config/allowed_folders.go`, `tools/files/allowed.go`): real host folders an agent's
   file tools use by their absolute path besides the workspace. There is no name and no
   writable flag: ClawEh attempts reads and writes inside a folder and the folder's file
@@ -622,17 +627,35 @@ production instance directly; test against a dev instance.
   simply part of the workspace then). `files.Reader` uses the same table, so
   `msg_send_file`, cogmem attachments, forum sources and task-model files follow the same
   rule. `Store.Update` refuses a new non-absolute path ("Alice's allowed folder "x" must
-  be an absolute path."). The retired `mounts` list is migrated at load and on save
+  be an absolute path.") and a new note over `config.MaxAllowedFolderNoteChars` (100)
+  characters ("Alice's note for "/srv/src" is longer than 100 characters.";
+  `newLongFolderNotes`). The retired `mounts` list is migrated at load and on save
   (`migrateLegacyMounts`: path and notify kept, one WARN per entry, and a second WARN
   for a non-writable mount whose folder is writable). A folder the tools skip (not
   absolute, not an existing directory: `Config.IgnoredAllowedFolders`) is marked on its
   Agents page row (`GET /api/agents/allowed-folders/ignored`) and is a Check Up row
   "Allowed folder (<agent>)". A path inside the workspace always follows the
   workspace scopes, even when an allowed folder holds the workspace; only a folder
-  inside the workspace (maestro/) is served by its own sandbox there. The prompt lists each
-  folder by its path, "(read-only)" when `fileutil.Writable` (access(2) W_OK) says no.
+  inside the workspace (maestro/) is served by its own sandbox there. The prompt's Workspace
+  section (`ContextBuilder.getIdentity`, `accessibleFolders`) says the workspace is
+  `<ws>`, relative paths start there and work goes under files/, then lists by absolute
+  path `<ws>/files`, `<ws>/skills`, `<ws>/maestro` (Maestro on) and each allowed folder
+  (`AgentConfig.CleanAllowedFolders`), "(read-only)" when `fileutil.Writable` (access(2)
+  W_OK) says no, then ": <note>". With Maestro on, each existing allowed folder is also a
+  Maestro reference directory (`referenceDirsFromAllowedFolders`, tools/maestro/host.go:
+  last path component reduced to `[A-Za-z0-9_-]`, clashes `-2`, `-3`… in config order,
+  names given before missing folders are skipped; part of `runnerSpec`, so a change
+  rebuilds an idle runner).
   New-file notices: `folderwatch` (notify on; `.claw` marker with a header line, a
   headerless pre-0.6.4 marker baselines).
+- **File search tools** (`tools/files/search.go`, `glob.go`): `file_glob` (doublestar
+  patterns relative to `path`, files only, newest first, `maxGlobResults` 200, dot-folders
+  skipped, not a default tool) and `file_search_lines` (line mode only: `include`
+  doublestar glob, a pattern without `/` matching the base name; `context` capped at
+  `maxSearchContextLines` 10; `output` lines/files/count; `.gitignore` files in the
+  searched tree via go-git's `plumbing/format/gitignore`, `walkLines`) read through
+  `buildFs` like the other reading tools. `file_search_bytes` keeps its own `walk` and
+  has none of these.
 - **Shell guard** (`tools/shell`): `shell_exec` refuses commands only by the deny
   patterns, the allow patterns and the custom allow patterns; it does not look at the
   paths a command names, and `working_dir` may be any directory (relative to the
@@ -874,14 +897,15 @@ The suite logs in first (the WebUI and `/api/*` require the admin account), so
 the dev instance needs one (`claw admin`) and the two variables must be
 exported; it exits 2 with a hint otherwise.
 
-- **The plan is `docs/webui-test-plan.md`** — 170 numbered checks, each with a
+- **The plan is `docs/webui-test-plan.md`** — 175 numbered checks, each with a
   process and an expected result, followable by hand. `tests/frontend-e2e.mjs`
   executes it and prints the same step IDs. Keep the two in step: a step added
   to one belongs in the other.
 - **Dev only.** Groups F, G, N, S, T and U write (F creates an agent and, in F11, a
   throwaway agent whose May message it ticks, in F14 one whose
   classifiers switch it toggles and in F15 one whose Images task-model
-  grant it toggles, G edits three config fields and, in G8, one task
+  grant it toggles, in F16 one whose allowed-folder note it sets and in F17–F20 one
+  (`e2e-code`) whose coding tools it grants and removes, G edits three config fields and, in G8, one task
   model's Images settings on the Task models page, N
   creates a memory domain and curates inside it, S5 creates a throwaway agent
   and toggles one of its tools, T imports a card and creates a throwaway agent

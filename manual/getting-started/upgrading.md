@@ -103,6 +103,10 @@ An enabled device listener on a network address now needs a token and approval o
 
 An agent's mounts become [allowed folders](../agents/allowed-folders.md) at load, with the same path and notify setting. The agent now uses the folder's real path, such as `/srv/src/notes.md`, instead of `notes/...`; tell it so in its instructions if they name the old path. Write access now follows file permissions: where a mount was read-only, make the folder read-only for the account ClawEh runs as.
 
+### Agents granted every tool get file_glob
+
+An agent whose tools list is `"*"` also gets the new `file_glob` tool, which finds files by name. To keep it from such an agent, add `file_glob` to its **Denied tools**.
+
 ### Shell commands are not limited by path
 
 `shell_exec` no longer refuses a command for the paths in it or for its working folder. It runs with the full access of the account ClawEh runs as; the deny patterns still apply. Check that each agent with **Allow shell commands (full account access)** should have it.
