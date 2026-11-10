@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -164,15 +165,19 @@ func newTaskHostEnv(t *testing.T) *taskHostEnv {
 		ID: "alice", Name: "Alice", Default: true, Tools: []string{"file_read_bytes", "agent_spawn"},
 		TaskModels: &config.AgentTaskModels{Text: true, Image: true, TTS: true, STT: true},
 	}, {ID: "bob", Name: "Bob"}}
-	cfg.TaskModels.Models = []config.TaskModel{
-		{Model: "chat-a", Text: true, Image: true},
-		{Model: "chat-b", Text: true},
-		{Model: "imgapi", Image: true, ImageAPI: config.ImageAPIImages},
-		{Model: "tts-1", TTS: true, TTSDefaults: &config.TTSDefaults{Voice: "alloy", Format: "mp3"}},
-		{Model: "gemini-tts", TTS: true},
-		{Model: "whisper", STT: true},
-		{Model: "eleven", TTS: true, STT: true, TTSDefaults: &config.TTSDefaults{Voice: "v1", Format: "pcm_16000"}},
-		{Model: "claude", Image: true, ImageAPI: config.ImageAPIImages},
+	cfg.TaskModels = config.TaskModelsConfig{
+		TextModels: []config.TaskModelRef{{Model: "chat-a"}, {Model: "chat-b"}},
+		ImageModels: []config.ImageTaskModel{
+			{Model: "chat-a"},
+			{Model: "imgapi", ImageAPI: config.ImageAPIImages},
+			{Model: "claude", ImageAPI: config.ImageAPIImages},
+		},
+		TTSModels: []config.TTSTaskModel{
+			{Model: "tts-1", TTSDefaults: &config.TTSDefaults{Voice: "alloy", Format: "mp3"}},
+			{Model: "gemini-tts"},
+			{Model: "eleven", TTSDefaults: &config.TTSDefaults{Voice: "v1", Format: "pcm_16000"}},
+		},
+		STTModels: []config.TaskModelRef{{Model: "whisper"}, {Model: "eleven"}},
 	}
 	al := mustNewAgentLoop(t, cfg, bus.NewMessageBus(), &mockProvider{}, providers.NewProviderDispatcher(cfg), OwnsDataDir())
 	store := media.NewFileMediaStore()
@@ -344,6 +349,49 @@ func TestTaskModelHost_FallbackNamedAndCooldown(t *testing.T) {
 	}
 	if len(e.vendor.calls()) != before+1 {
 		t.Error("a model in cooldown was called")
+	}
+}
+
+// Each kind falls back in its own list's order: the same models in another
+// order in Generate images are tried in that order, and a model's settings
+// come from the entry in the kind's list.
+func TestTaskModelHost_FallbackOrderIsPerList(t *testing.T) {
+	e := newTaskHostEnv(t)
+	e.cfg.TaskModels.TextModels = []config.TaskModelRef{{Model: "chat-a"}, {Model: "chat-b"}}
+	e.cfg.TaskModels.ImageModels = []config.ImageTaskModel{{Model: "chat-b"}, {Model: "chat-a"}}
+	e.vendor.fail["chat-a-wire"] = http.StatusBadRequest
+	e.vendor.fail["chat-b-wire"] = http.StatusBadRequest
+	text, _ := e.run(t, "alice", toolsagents.TaskModelRequest{Kind: "text", Prompt: "hi"})
+	image, _ := e.run(t, "alice", toolsagents.TaskModelRequest{Kind: "image", Prompt: "a cat"})
+	attempts := func(res *toolsagents.TaskModelResult) []string {
+		var out []string
+		for _, a := range res.Attempts {
+			out = append(out, a.Model)
+		}
+		return out
+	}
+	if got := attempts(text); !slices.Equal(got, []string{"chat-a", "chat-b"}) {
+		t.Errorf("text attempts = %v, want the Generate text order", got)
+	}
+	if got := attempts(image); !slices.Equal(got, []string{"chat-b", "chat-a"}) {
+		t.Errorf("image attempts = %v, want the Generate images order", got)
+	}
+
+	// imgapi uses the images endpoint through its Generate images entry; the
+	// same model in Generate text is an ordinary chat call.
+	e.cfg.TaskModels.TextModels = []config.TaskModelRef{{Model: "imgapi"}}
+	e.cfg.TaskModels.ImageModels = []config.ImageTaskModel{{Model: "imgapi", ImageAPI: config.ImageAPIImages}}
+	if _, err := e.run(t, "alice", toolsagents.TaskModelRequest{Kind: "text", Prompt: "hi"}); err != nil {
+		t.Fatal(err)
+	}
+	if paths := e.vendor.calls(); !strings.HasSuffix(paths[len(paths)-1], "/chat/completions") {
+		t.Errorf("text call went to %s", paths[len(paths)-1])
+	}
+	if _, err := e.run(t, "alice", toolsagents.TaskModelRequest{Kind: "image", Prompt: "a cat"}); err != nil {
+		t.Fatal(err)
+	}
+	if paths := e.vendor.calls(); !strings.HasSuffix(paths[len(paths)-1], "/images/generations") {
+		t.Errorf("image call went to %s", paths[len(paths)-1])
 	}
 }
 
@@ -562,14 +610,14 @@ func TestTaskModelHost_TextInputs(t *testing.T) {
 }
 
 // The refusals: no grant (naming the agent and the kind), a model not
-// ticked for the kind, no model ticked, a file the agent can't read, a
+// in the kind's list, an empty list, a file the agent can't read, a
 // symbolic link out of the workspace, an agent without a file-reading tool.
 func TestTaskModelHost_Refusals(t *testing.T) {
 	e := newTaskHostEnv(t)
 	if got := e.check(t, "bob", toolsagents.TaskModelRequest{Kind: "image", Prompt: "x"}); got != "Bob is not allowed to use task models for images." {
 		t.Errorf("no grant = %q", got)
 	}
-	if got := e.check(t, "alice", toolsagents.TaskModelRequest{Kind: "text", Model: "tts-1", Prompt: "x"}); got != "Model tts-1 is not a task model for text; tick it on the Task models page." {
+	if got := e.check(t, "alice", toolsagents.TaskModelRequest{Kind: "text", Model: "tts-1", Prompt: "x"}); got != "Model tts-1 is not in Generate text; add it on the Task models page." {
 		t.Errorf("wrong model = %q", got)
 	}
 	if got := e.check(t, "alice", toolsagents.TaskModelRequest{Kind: "stt", Files: []string{"../outside.ogg"}}); !strings.HasPrefix(got, `Can't use "../outside.ogg": you can't read it`) {
@@ -598,9 +646,9 @@ func TestTaskModelHost_Refusals(t *testing.T) {
 	if got := e.check(t, "alice", toolsagents.TaskModelRequest{Kind: "stt", Files: []string{"files/clip.ogg"}}); got != "You can only use files you're allowed to read." {
 		t.Errorf("no read tool = %q", got)
 	}
-	e.cfg.TaskModels.Models = nil
-	if got := e.check(t, "alice", toolsagents.TaskModelRequest{Kind: "text", Prompt: "x"}); got != "No model is ticked for text on the Task models page." {
-		t.Errorf("none ticked = %q", got)
+	e.cfg.TaskModels.TextModels = nil
+	if got := e.check(t, "alice", toolsagents.TaskModelRequest{Kind: "text", Prompt: "x"}); got != "No model in Generate text; add one on the Task models page." {
+		t.Errorf("empty list = %q", got)
 	}
 }
 
@@ -809,9 +857,9 @@ func TestReadAtMost(t *testing.T) {
 func TestTaskModelHost_NoImagesFallsBack(t *testing.T) {
 	e := newTaskHostEnv(t)
 	e.cfg.Models = append(e.cfg.Models, config.ModelConfig{ModelName: "empty", Model: "empty-image", Provider: "p", Enabled: true})
-	e.cfg.TaskModels.Models = []config.TaskModel{
-		{Model: "empty", Image: true, ImageAPI: config.ImageAPIImages},
-		{Model: "imgapi", Image: true, ImageAPI: config.ImageAPIImages},
+	e.cfg.TaskModels.ImageModels = []config.ImageTaskModel{
+		{Model: "empty", ImageAPI: config.ImageAPIImages},
+		{Model: "imgapi", ImageAPI: config.ImageAPIImages},
 	}
 	res, err := e.run(t, "alice", toolsagents.TaskModelRequest{Kind: "image", Prompt: "a cat"})
 	if err != nil || res.Model != "imgapi" || len(res.Attempts) != 1 || res.Attempts[0].Model != "empty" || len(res.Paths) != 1 {
@@ -875,7 +923,7 @@ func TestTaskModelHost_CLIIsolated(t *testing.T) {
 		Name: "Claude CLI", Protocol: "claude-cli", Command: fakeClaudeCLI(t, logDir), BypassRestrictions: true,
 	})
 	e.cfg.Models = append(e.cfg.Models, config.ModelConfig{ModelName: "cc", Model: "claude-cli", Provider: "Claude CLI", Enabled: true})
-	e.cfg.TaskModels.Models = []config.TaskModel{{Model: "cc", Text: true}}
+	e.cfg.TaskModels.TextModels = []config.TaskModelRef{{Model: "cc"}}
 	if err := os.MkdirAll(e.cfg.CLIPath(), 0o700); err != nil {
 		t.Fatal(err)
 	}

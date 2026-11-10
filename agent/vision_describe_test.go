@@ -216,9 +216,9 @@ func TestFlowA_InjectsDescriptionForNonVisionModel(t *testing.T) {
 	}
 }
 
-// The vision-describe chain is the models ticked Vision on the Task models
-// page, in page order; a ticked model that is missing is skipped, and with
-// none ticked the feature is off.
+// The vision-describe chain is the Describe images list on the Task models
+// page, in its order (not another list's); a listed model that is missing is
+// skipped, and with an empty list the feature is off.
 func TestWireVisionClients_TaskModelsInPageOrder(t *testing.T) {
 	cfg := ownerTestConfig(t)
 	cfg.Providers = []config.Provider{{Name: "p", Protocol: "openai-chat", BaseURL: "http://127.0.0.1:0/v1", APIKey: "k"}}
@@ -228,12 +228,9 @@ func TestWireVisionClients_TaskModelsInPageOrder(t *testing.T) {
 		{ModelName: "v2", Model: "v2-wire", Provider: "p", Enabled: true},
 	}
 	cfg.Agents.Defaults.Models = []string{"alpha"}
-	cfg.TaskModels.Models = []config.TaskModel{
-		{Model: "v2", Vision: true},
-		{Model: "gone", Vision: true},
-		{Model: "alpha", Text: true},
-		{Model: "v1", Vision: true, STT: true},
-	}
+	cfg.TaskModels.VisionModels = []config.TaskModelRef{{Model: "v2"}, {Model: "gone"}, {Model: "v1"}}
+	cfg.TaskModels.TextModels = []config.TaskModelRef{{Model: "alpha"}}
+	cfg.TaskModels.STTModels = []config.TaskModelRef{{Model: "v1"}, {Model: "v2"}}
 	al := mustNewAgentLoop(t, cfg, bus.NewMessageBus(), &mockProvider{}, providers.NewProviderDispatcher(cfg))
 	agent := al.registry.Default()
 	if agent == nil {
@@ -256,7 +253,7 @@ func TestWireVisionClients_TaskModelsInPageOrder(t *testing.T) {
 		t.Errorf("EffectiveVisionModel = %q, want v2", agent.EffectiveVisionModel)
 	}
 
-	cfg.TaskModels.Models = []config.TaskModel{{Model: "v1", STT: true}}
+	cfg.TaskModels.VisionModels = nil
 	al.wireVisionClients(cfg, agent)
 	if len(agent.VisionClients) != 0 || agent.EffectiveVisionModel != "" {
 		t.Fatalf("with no Vision model: %d clients, effective %q, want none", len(agent.VisionClients), agent.EffectiveVisionModel)

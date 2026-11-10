@@ -1,3 +1,4 @@
 {
-  "result_text_chars": 8000
+  "result_text_chars": 8000,
+  "lists": ["text", "image", "tts", "stt", "vision", "classify"]
 }

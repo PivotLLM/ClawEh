@@ -38,8 +38,8 @@ func ValidTaskKind(kind string) bool {
 // and one output.
 type TaskModelRequest struct {
 	Kind string `json:"kind"`
-	// Model names one task model ticked for Kind; "" = every one of them,
-	// in page order, falling back on failure.
+	// Model names one task model in Kind's list; "" = every one of them,
+	// in list order, falling back on failure.
 	Model string `json:"model,omitempty"`
 	// Prompt is the prompt (text, image), the text to speak (tts) or an
 	// optional hint (stt).
@@ -82,7 +82,7 @@ type TaskModelResult struct {
 // loop) implements it.
 type TaskModelRunner interface {
 	// Check returns the refusal for a request the agent may not make (no
-	// grant, no model ticked for the kind, a file it can't read); nil when
+	// grant, an empty list for the kind, a file it can't read); nil when
 	// it may. Nothing is called.
 	Check(ctx context.Context, agentID, workspace string, req TaskModelRequest) error
 	// Run makes the call. The result names what was written; the error says

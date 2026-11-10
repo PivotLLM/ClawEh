@@ -441,7 +441,7 @@ production instance directly; test against a dev instance.
   an agent with the per-agent switch `classifiers` (`agents.list[].classifiers`
   `{enabled, model}`, `AgentSuiteEnabled` case "classifiers", default off, WebUI
   "Allow classifiers" + "Classifier model" on the Agents page, which lists only
-  the models ticked Classify on Task models) gets the eleven
+  the models in the Classification list on Task models) gets the eleven
   `classifier_*` tools from `tools/classifier` (suite provider, namespace
   `classifier`; `SetService` installs the one `*classifier.Service`, built by
   `internal/gateway/classifier.go` BEFORE `NewAgentLoop`, started once the loop
@@ -482,31 +482,39 @@ production instance directly; test against a dev instance.
   `max_parallel` 8, `max_activity_hours` 720, `min_every_seconds` 15, the
   minimum `trigger.every_seconds`; 0/absent = default, negative refused; System page **Classifiers**, `classifiers-section.tsx`, defaults
   shared with the frontend through `config/testdata/classifier_defaults.json`). A classifier
-  model must be ticked Classify on Task models (`Config.ClassifierModelUsable`,
+  model must be in the Classification list on Task models (`Config.ClassifierModelUsable`,
   also checked by `ClassifierHost.Complete`): `Store.Update` writes the first
-  Classify model when a save turns the switch on with none
-  (`completeClassifierModels`; with no Classify model at all it refuses, naming
-  the agent and the Task models page), refuses a new model not ticked Classify
-  (`newClassifierModelProblems`, so also unticking the model in use) and a
+  model in that list when a save turns the switch on with none
+  (`completeClassifierModels`; with an empty list it refuses, naming
+  the agent and the Task models page), refuses a new model not in the list
+  (`newClassifierModelProblems`, so also removing the model in use) and a
   human agent with the switch on (`HumanClassifiers`); one already in the file
   is only marked. Check Up (`report/classifiers.go`, reading the folders
   with `classifier.Inspect(ctx, base, ceilings)`): per-agent "Allow classifiers" and
-  "Classifier model" rows (unusable marked, saying so when no model is ticked
-  Classify), a "Classifiers" table per agent
+  "Classifier model" rows (unusable marked, saying so when the Classification list is
+  empty), a "Classifiers" table per agent
   (invalid and foreign-owned files marked), assessment rows "Classifier model
   (<agent>)" and "Classifier (<agent>: <id>)", a Data row.
 - **Task models** (`config/task_models.go`, design `private/task-models.md`
   whose §2 decisions win; `manual/providers/task-models.md`): `task_models`
   (`result_text_chars`, 0/absent = `DefaultTaskResultTextChars` 8000, negative
   refused; `echo_transcription`, env `CLAW_TASK_MODELS_ECHO_TRANSCRIPTION`;
-  `models[]` of `{model, text, image, tts, stt, vision, classify, image_api
-  ("chat" default | "images"), tts_defaults{voice, format}}`). `model` is a
-  `model_list[].model_name`, at most once, never blank
-  (`TaskModelsConfig.Validate`, at load and on save); list order is the
-  fallback order per use (`ModelsFor(use)`). Each entry is a model reference
-  site (`task_models.models[<name>]`, role "a task model": rename follows it,
-  delete is refused, a missing model is pruned and the entry dropped,
-  `dropBlankTaskModels`, as is a human model). All speech and image HTTP calls
+  six ordered lists, one per use, keys `text`, `image`, `tts`, `stt`,
+  `vision`, `classify` (Go fields `TextModels` … `ClassifyModels`), entries
+  `{model}`, image entries also `image_api` ("chat" default | "images"), tts
+  entries also `tts_defaults{voice, format}`; a setting on another list is an
+  unknown key). `model` is a `model_list[].model_name`, never blank, at most
+  once per list, the same model allowed in several lists
+  (`TaskModelsConfig.Validate`, at load and on save; `Normalize` trims on the
+  WebUI save); a list's order is that use's fallback order. **The only way to
+  read a use's models is `TaskModelsConfig.Entries(use)`** (entries with their
+  settings) or `ModelsFor(use)` / `Entry` / `Has` built on it; code outside
+  `config` never names the per-use fields, enforced by
+  `config/task_models_guard_test.go` (`TestTaskModelLists_OnlyReadThroughEntries`,
+  an AST scan with an explicit, currently empty, exception list). Each entry is
+  a model reference site (`task_models.<use>[<name>]`, role "a task model":
+  rename follows it, delete is refused naming the list, a missing model is
+  pruned and the entry dropped, `dropBlankTaskModels`, as is a human model). All speech and image HTTP calls
   are spawnllm's (`speech`, `imagegen`; no default timeout, so every call has
   a context deadline); `voice.SpeechBackend(provider)` picks the client by
   protocol (openai-chat/-responses → `speech.NewOpenAI`, OpenRouter's JSON
@@ -514,11 +522,11 @@ production instance directly; test against a dev instance.
   `NewElevenLabs`); the usability rules (base_url, api_key) live there only.
   `gemini` and `elevenlabs` are provider protocols for task models only
   (`config.TaskOnlyProtocol`: base_url optional, api_key required, no chat
-  client in `factory_provider.go`). Built-in uses go by use in page order:
-  incoming voice uses the `stt` models (`voice.DetectTranscriberWithAlerter`,
+  client in `factory_provider.go`). Built-in uses read their list in order:
+  incoming voice uses `stt` (`voice.DetectTranscriberWithAlerter`,
   60 s per attempt, every enabled `model_list` entry of such a name),
-  vision describes use the `vision` models (`wireVisionClients`), classifier
-  models must be `classify` models (see Classifiers). Agents reach
+  vision describes use `vision` (`wireVisionClients`), classifier
+  models must be in `classify` (see Classifiers). Agents reach
   text/image/tts/stt through `agent_spawn`'s `kind` (`tools/agents/taskmodels.go`:
   `Spawner.spawnTask`, refused with `agent_id`/`character_card`, at the max
   depth, adds no level; `files` (≤10 workspace paths), `media`, `voice`,
@@ -527,8 +535,8 @@ production instance directly; test against a dev instance.
   (`taskModelHost`, injected as `SubagentManagerConfig.TaskRunner`): grant
   check (`agents.list[].task_models {text, image, tts, stt}`,
   `AgentConfig.TaskModelAllowed`, "Alice is not allowed to use task models
-  for images."), candidates (the named one, else every model ticked for the
-  kind), cooldown skip and fallback, files read like `msg_send_file`
+  for images."), candidates (the named one, which must be in the kind's
+  list, else the kind's list in order), cooldown skip and fallback, files read like `msg_send_file`
   (`toolsmsg.OpenReadable`, needs a file-reading tool), text as one
   dispatcher Chat with no tools (CLI via `GetIsolated` in
   `internal/temp/task-<agent>-*`), images by `image_api` (chat
@@ -541,15 +549,21 @@ production instance directly; test against a dev instance.
   alone (gemini/elevenlabs: stt, tts only; STT/TTS: openai-chat/-responses;
   vision: HTTP protocols, unknown for CLI; images: openai protocols, else
   unknown; text/classify: any other but a person). WebUI **Task models** page
-  (`/task-models`, Models group; `GET`/`PUT /api/task-models`, the PUT
-  replaces the block through `h.updateConfig` and reloads; the GET adds
-  per-model support; "Images through" select), Agents page **Allow task
-  models** (four boxes, each noting a kind with no model), defaults shared
-  with the frontend through `config/testdata/task_model_defaults.json`.
-  Check Up: "Speech to text" / "Vision" assessment rows ("No model.", linked
-  to the page), a "Task models" table in the providers section, a per-agent
-  "Task models" settings row; the capabilities golden lists each agent's
-  kinds.
+  (`/task-models`, Models group; six sections in list order, Generate text,
+  Generate images, Text to speech, Transcription, Describe images,
+  Classification (`TaskUse.Label`), each with its rows, Move up/down,
+  Remove, its own **Model to add**, "Images through" on image rows and
+  Voice/Format on tts rows; `GET`/`PUT /api/task-models`, the PUT
+  replaces the block through `h.updateConfig` and reloads; the GET returns
+  every list (read through `Entries`) and per-model support), Agents page
+  **Allow task models** (four boxes, each noting a kind whose list is empty),
+  defaults and the list order shared with the frontend through
+  `config/testdata/task_model_defaults.json`.
+  Check Up: "Speech to text" / "Vision" assessment rows ("No model in
+  Transcription." / "No model in Describe images.", linked to the page), a
+  "Task models" table in the providers section (one row per list: its models
+  in order and those whose provider can't serve it), a per-agent "Task
+  models" settings row; the capabilities golden lists each agent's kinds.
 - **Tool schemas**: `tools.ToolToSchema` (models) and the MCP host publish every
   object parameter that lists no members with `"additionalProperties": true`
   (`tools.OpenObjectProperties`); some upstreams otherwise send a blank string.

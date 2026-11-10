@@ -34,7 +34,9 @@ func setupTaskModelsEnv(t *testing.T) (string, *http.ServeMux, *int) {
 		config.ModelConfig{ModelName: "mixed", Model: "claude-sonnet", Provider: "anthropic-api", Enabled: true},
 		config.ModelConfig{ModelName: "off", Model: "gpt-4o", Provider: "openai", Enabled: false},
 	)
-	cfg.TaskModels.Models = []config.TaskModel{{Model: "custom-default", Classify: true, Text: true}}
+	cfg.TaskModels.ClassifyModels = []config.TaskModelRef{{Model: "custom-default"}}
+	cfg.TaskModels.TextModels = []config.TaskModelRef{{Model: "custom-default"}}
+	cfg.TaskModels.ImageModels = []config.ImageTaskModel{{Model: "custom-default", ImageAPI: config.ImageAPIImages}}
 	cfg.Agents.List[0].Classifiers = &config.AgentClassifiersConfig{Enabled: true, Model: "custom-default"}
 	if err = config.SaveConfig(configPath, cfg); err != nil {
 		t.Fatal(err)
@@ -53,8 +55,9 @@ func serveTaskModels(mux *http.ServeMux, method, body string) *httptest.Response
 	return rec
 }
 
-// GET returns the block, its default and every model name once, in config
-// order, with what its provider can serve; never a key.
+// GET returns the block with every list (an empty one as []), its default
+// and every model name once, in config order, with what its provider can
+// serve; never a key.
 func TestHandleGetTaskModels(t *testing.T) {
 	_, mux, _ := setupTaskModelsEnv(t)
 	rec := serveTaskModels(mux, http.MethodGet, "")
@@ -64,15 +67,35 @@ func TestHandleGetTaskModels(t *testing.T) {
 	if strings.Contains(rec.Body.String(), "sk-") {
 		t.Fatalf("response carries a key: %s", rec.Body.String())
 	}
-	var got taskModelsResponse
+	var got struct {
+		TaskModels map[string]json.RawMessage `json:"task_models"`
+		Defaults   struct {
+			ResultTextChars int `json:"result_text_chars"`
+		} `json:"defaults"`
+		Models []taskModelOption `json:"models"`
+	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
 	if got.Defaults.ResultTextChars != config.DefaultTaskResultTextChars {
 		t.Errorf("defaults = %+v", got.Defaults)
 	}
-	if len(got.TaskModels.Models) != 1 || got.TaskModels.Models[0].Model != "custom-default" {
-		t.Errorf("task_models = %+v", got.TaskModels)
+	for key, want := range map[string]string{
+		"text":               `[{"model":"custom-default"}]`,
+		"image":              `[{"model":"custom-default","image_api":"images"}]`,
+		"tts":                `[]`,
+		"stt":                `[]`,
+		"vision":             `[]`,
+		"classify":           `[{"model":"custom-default"}]`,
+		"result_text_chars":  `0`,
+		"echo_transcription": `false`,
+	} {
+		if s := string(got.TaskModels[key]); s != want {
+			t.Errorf("task_models.%s = %s, want %s", key, s, want)
+		}
+	}
+	if _, old := got.TaskModels["models"]; old || len(got.TaskModels) != 8 {
+		t.Errorf("task_models keys = %v", got.TaskModels)
 	}
 	byName := map[string]taskModelOption{}
 	names := make([]string, 0, len(got.Models))
@@ -93,6 +116,7 @@ func TestHandleGetTaskModels(t *testing.T) {
 		{"custom-default", "tts", "yes"},
 		{"sonnet", "tts", "no"},
 		{"cc", "image", "unknown"},
+		{"cc", "classify", "yes"},
 	} {
 		if s := byName[tc.model].Support[tc.use]; s != tc.want {
 			t.Errorf("%s %s = %q, want %q", tc.model, tc.use, s, tc.want)
@@ -108,10 +132,13 @@ func TestHandleGetTaskModels(t *testing.T) {
 func TestHandleUpdateTaskModels(t *testing.T) {
 	configPath, mux, reloads := setupTaskModelsEnv(t)
 
-	body := `{"result_text_chars":3000,"echo_transcription":true,"models":[
-		{"model":" sonnet ","vision":true},
-		{"model":"custom-default","classify":true,"stt":true,"tts":true,"tts_defaults":{"voice":" alloy ","format":"mp3"}},
-		{"model":"cc","text":true,"tts_defaults":{"voice":" ","format":""}}]}`
+	body := `{"result_text_chars":3000,"echo_transcription":true,
+		"text":[{"model":"cc"},{"model":" sonnet "}],
+		"image":[{"model":"custom-default","image_api":"images"},{"model":"cc"}],
+		"tts":[{"model":"custom-default","tts_defaults":{"voice":" alloy ","format":"mp3"}},{"model":"cc","tts_defaults":{"voice":" ","format":""}}],
+		"stt":[{"model":"custom-default"}],
+		"vision":[{"model":"sonnet"},{"model":"custom-default"}],
+		"classify":[{"model":"custom-default"},{"model":"cc"}]}`
 	rec := serveTaskModels(mux, http.MethodPut, body)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
@@ -124,22 +151,40 @@ func TestHandleUpdateTaskModels(t *testing.T) {
 		t.Fatal(err)
 	}
 	tm := cfg.TaskModels
-	if tm.ResultTextChars != 3000 || !tm.EchoTranscription || len(tm.Models) != 3 || tm.Models[0].Model != "sonnet" {
-		t.Fatalf("saved task_models = %+v", tm)
+	if tm.ResultTextChars != 3000 || !tm.EchoTranscription {
+		t.Fatalf("saved settings = %+v", tm)
 	}
-	if d := tm.Models[1].TTSDefaults; d == nil || d.Voice != "alloy" || d.Format != "mp3" {
-		t.Errorf("tts_defaults = %+v", d)
+	for use, want := range map[config.TaskUse]string{
+		config.TaskUseText:     "cc,sonnet",
+		config.TaskUseImage:    "custom-default,cc",
+		config.TaskUseTTS:      "custom-default,cc",
+		config.TaskUseSTT:      "custom-default",
+		config.TaskUseVision:   "sonnet,custom-default",
+		config.TaskUseClassify: "custom-default,cc",
+	} {
+		if got := strings.Join(tm.ModelsFor(use), ","); got != want {
+			t.Errorf("saved %s = %s, want %s", use, got, want)
+		}
 	}
-	if tm.Models[2].TTSDefaults != nil {
-		t.Errorf("blank tts_defaults kept: %+v", tm.Models[2].TTSDefaults)
+	if e, _ := tm.Entry(config.TaskUseImage, "custom-default"); e.ImageAPI != config.ImageAPIImages {
+		t.Errorf("image entry = %+v", e)
+	}
+	if e, _ := tm.Entry(config.TaskUseTTS, "custom-default"); e.TTSDefaults == nil || e.TTSDefaults.Voice != "alloy" || e.TTSDefaults.Format != "mp3" {
+		t.Errorf("tts entry = %+v", e)
+	}
+	if e, _ := tm.Entry(config.TaskUseTTS, "cc"); e.TTSDefaults != nil {
+		t.Errorf("blank tts_defaults kept: %+v", e.TTSDefaults)
 	}
 
 	for _, tc := range []struct{ name, body, want string }{
-		{"unknown model", `{"models":[{"model":"ghost","stt":true}]}`, `model \"ghost\" does not exist`},
-		{"twice", `{"models":[{"model":"cc"},{"model":"cc"}]}`, "Task model cc is listed twice."},
-		{"negative", `{"result_text_chars":-1}`, "result_text_chars must be 0"},
-		{"misspelt use", `{"models":[{"model":"cc","sst":true}]}`, "Invalid task models"},
-		{"classifier model unticked", `{"models":[{"model":"custom-default","text":true}]}`, "Agent Main cannot use model custom-default for its classifiers; pick a Classify model."},
+		{"unknown model", `{"stt":[{"model":"ghost"}],"classify":[{"model":"custom-default"}]}`, `task_models.stt[ghost]: model \"ghost\" does not exist`},
+		{"twice in a list", `{"vision":[{"model":"cc"},{"model":"cc"}],"classify":[{"model":"custom-default"}]}`, "Model cc is listed twice in Describe images."},
+		{"negative", `{"result_text_chars":-1,"classify":[{"model":"custom-default"}]}`, "result_text_chars must be 0"},
+		{"old single list", `{"models":[{"model":"cc","text":true}]}`, "Invalid task models"},
+		{"image_api on text", `{"text":[{"model":"cc","image_api":"images"}]}`, "Invalid task models"},
+		{"tts_defaults on stt", `{"stt":[{"model":"cc","tts_defaults":{"voice":"v"}}]}`, "Invalid task models"},
+		{"bad image_api", `{"image":[{"model":"cc","image_api":"dalle"}],"classify":[{"model":"custom-default"}]}`, `image_api must be \"chat\" or \"images\"`},
+		{"classifier model removed", `{"classify":[{"model":"cc"}]}`, "Agent Main cannot use model custom-default for its classifiers; pick a model in Classification."},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := serveTaskModels(mux, http.MethodPut, tc.body)
@@ -155,21 +200,21 @@ func TestHandleUpdateTaskModels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(after.TaskModels.Models) != 3 {
+	if got := strings.Join(after.TaskModels.ModelsFor(config.TaskUseText), ","); got != "cc,sonnet" {
 		t.Errorf("a refused save changed the file: %+v", after.TaskModels)
 	}
 }
 
-// A model on the Task models page cannot be deleted from the Models page
-// until it is taken off.
+// A model in a task model list cannot be deleted from the Models page until
+// it is taken off; the refusal names the list.
 func TestHandleDeleteModel_RefusedWhileATaskModel(t *testing.T) {
 	_, mux, _ := setupTaskModelsEnv(t)
-	if rec := serveTaskModels(mux, http.MethodPut, `{"models":[{"model":"custom-default","classify":true},{"model":"sonnet","vision":true}]}`); rec.Code != http.StatusOK {
+	if rec := serveTaskModels(mux, http.MethodPut, `{"classify":[{"model":"custom-default"}],"tts":[{"model":"sonnet"}]}`); rec.Code != http.StatusOK {
 		t.Fatalf("PUT: %d %s", rec.Code, rec.Body.String())
 	}
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/api/models/1", nil))
-	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "task_models.models[sonnet]") {
-		t.Fatalf("delete = %d %s, want a conflict naming the task model", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "task_models.tts[sonnet]") {
+		t.Fatalf("delete = %d %s, want a conflict naming the list", rec.Code, rec.Body.String())
 	}
 }

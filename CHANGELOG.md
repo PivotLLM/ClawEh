@@ -82,9 +82,10 @@
   never has tools. Turn it on per agent with **Allow classifiers** on the
   Agents page (`agents.list[].classifiers.enabled`, off by default) and pick
   the **Classifier model** (`agents.list[].classifiers.model`, one of the
-  models ticked **Classify** on the Task models page; turning the switch on
-  with no model sets the first Classify model, with none it is refused, a
-  model not ticked Classify is refused (one already in the file is marked on
+  models in the **Classification** list on the Task models page; turning the
+  switch on with no model sets the first model in that list, with an empty
+  list it is refused, a model not in the list is refused (one already in the
+  file is marked on
   Check Up and its classifiers do not run), and a person's agent cannot run
   classifiers). The
   agent manages its classifiers with eleven tools: `classifier_readme`,
@@ -139,36 +140,41 @@
 
 - **Task models page.** A new page in the Models group, **Task models**
   (`task_models` in `config.json`), lists the models ClawEh uses for single
-  calls without tools, each ticked for what it is used for: **Text**,
-  **Images**, **Speech (TTS)**, **Transcription (STT)**, **Vision** and
-  **Classify** (`task_models.models[]`: `model`, a `model_name` from the
-  Models page, listed at most once, and the booleans `text`, `image`,
-  `tts`, `stt`, `vision`, `classify`, plus `tts_defaults` with `voice` and
-  `format`). The list order is the fallback order within each use. Incoming
-  voice messages are transcribed with the Transcription (STT) models,
-  images are described for text-only models with the Vision models, and
-  classifier models are chosen from the Classify models; agents use Text,
-  Images, Speech (TTS) and Transcription (STT) models through `agent_spawn`
-  (below). Check Up says when models are ticked for transcription or
-  vision but none can be used, naming each and why. The page
+  calls without tools in six ordered lists, one per use: **Generate text**
+  (`task_models.text`), **Generate images** (`image`), **Text to speech**
+  (`tts`), **Transcription** (`stt`), **Describe images** (`vision`) and
+  **Classification** (`classify`). Each entry is `{"model": ...}`, a
+  `model_name` from the Models page; image entries may add `image_api`
+  (below) and speech entries `tts_defaults` with `voice` and `format`. A
+  list's order is that use's fallback order; a model may be in several
+  lists, at most once in each. Each list has its own **Model to add**
+  (enabled models not already in it, sorted by name) and **Move up** /
+  **Move down** / **Remove** per row. Incoming voice messages are transcribed with
+  the Transcription list, images are described for text-only models with
+  the Describe images list, and classifier models are chosen from the
+  Classification list; agents use Generate text, Generate images, Text to
+  speech and Transcription through `agent_spawn` (below). Check Up says when
+  a list has models but none can be used, naming each and why. The page
   also holds **Text in results (characters)**
   (`task_models.result_text_chars`, default 8000; 0 or absent uses the
   default, negative is refused) and **Echo transcription**
   (`task_models.echo_transcription`, environment variable
   `CLAW_TASK_MODELS_ECHO_TRANSCRIPTION`). A model whose provider cannot
-  serve a ticked use, judged from its protocol, is marked there. Renaming a
-  model follows it onto the page, and a model on the page cannot be deleted
-  until it is taken off. Check Up shows **Speech to text: No model** and
-  **Vision: No model** while no model is ticked for them, marks a classifier
-  model when no model is ticked Classify, and the full report has a Task
-  models table. API: `GET /api/task-models`, `PUT /api/task-models`.
+  serve a list's use, judged from its protocol, is marked in that list.
+  Renaming a model follows it into every list, and a model in a list cannot
+  be deleted until it is taken off (the refusal names the list, such as
+  `task_models.tts[<model>]`). Check Up shows **Speech to text: No model in
+  Transcription.** and **Vision: No model in Describe images.** while those
+  lists are empty, marks a classifier model when Classification is empty,
+  and the full report has a Task models table with each list's models in
+  order. API: `GET /api/task-models`, `PUT /api/task-models`.
 - **Agents can use task models through `agent_spawn`.** A new `kind`
   argument (`text`, `image`, `tts`, `stt`) makes the call one request to a
   task model instead of a sub-agent: no tools, no agent, no depth level
   (still refused at the maximum depth). `task` is the prompt, the text to
   speak, or an optional transcription hint; `model` may name one task model
-  of that kind, otherwise the models ticked for it on the Task models page
-  are tried in order, skipping any in cooldown; `files` (new, up to 10
+  in that kind's list, otherwise the kind's list on the Task models page is
+  tried in order, skipping any in cooldown; `files` (new, up to 10
   workspace paths, each checked like `msg_send_file`) and `media` are the
   inputs; `voice` and `format` (new) set a speech call's voice and format,
   else the model's `tts_defaults`. `agent_id` and `character_card` are refused
@@ -192,24 +198,24 @@
   agent and the kind ("Alice is not allowed to use task models for
   images."). On the Agents page it is **Allow task models**, one box per
   kind (**Text**, **Images**, **Speech (TTS)**, **Transcription (STT)**),
-  each noting when no model is ticked for it on Task models, and the card
+  each noting when that kind's list on Task models is empty, and the card
   says "Needs the agent_spawn tool." for an agent without it; Check Up lists
   each agent's allowed kinds, marked "(ignored: no agent_spawn)" then.
-- **Images API for task models.** `task_models.models[].image_api` chooses
-  how an Images model is called: `chat` (the default: image output of a chat
-  call) or `images` (OpenAI-style `/images/generations` and `/images/edits`;
-  OpenRouter's `/images`, which has no edits). On the Task models page it is
-  **Images through**, shown when Images is ticked.
+- **Images API for task models.** `task_models.image[].image_api` chooses
+  how a model in Generate images is called: `chat` (the default: image
+  output of a chat call) or `images` (OpenAI-style `/images/generations` and
+  `/images/edits`; OpenRouter's `/images`, which has no edits). On the Task
+  models page it is **Images through**, on each row of Generate images.
 - **Gemini and ElevenLabs speech.** Two provider protocols, `gemini` and
   `elevenlabs`, reach Google's Gemini API and ElevenLabs for speech: a model
-  on one serves Transcription (STT) and Speech (TTS) on the Task models page
-  and nothing else (an agent can't chat with it). The base URL is optional
+  on one serves the Transcription and Text to speech lists on the Task
+  models page and nothing else (an agent can't chat with it). The base URL is optional
   (the vendor's own) and the API key is required. Voice messages can now be
   transcribed by Gemini and ElevenLabs Scribe as well as by OpenAI-style
   endpoints (OpenAI, Groq, OpenRouter, local Whisper servers); the calls go
   through spawnllm, and a transcription's reported cost counts toward
-  `agents.defaults.daily_spend_alert_usd`. A model ticked Transcription
-  (STT) that is disabled on the Models page raises no alert. Gemini's
+  `agents.defaults.daily_spend_alert_usd`. A model in the Transcription
+  list that is disabled on the Models page raises no alert. Gemini's
   answer to a bad key (a
   400 with `API_KEY_INVALID`) raises **Voice transcription rejected** like a
   401 does.
@@ -384,16 +390,17 @@
 
 - **BREAKING: `voice.stt` and `voice.echo_transcription` are removed, with
   the Speech page.** Incoming voice messages are transcribed only with the
-  models ticked **Transcription (STT)** on the Task models page, and are not
-  transcribed until one is (Check Up: **Speech to text: No model**). The old
+  models in the **Transcription** list on the Task models page, and are not
+  transcribed while it is empty (Check Up: **Speech to text: No model in
+  Transcription.**). The old
   keys are reported as unknown at start and ignored, and the first save of
   any page rewrites `config.json` without them: **before saving anything
   after the upgrade, copy the old `voice` block** (each `voice.stt` entry's
   provider and model, in order, and `echo_transcription`). There is no
   automatic migration. Then, for each old entry in order, add its model on
   the Models page on that entry's provider (the provider gives the endpoint
-  and key, as before) and tick **Transcription (STT)** for it on the Task
-  models page. An entry with a blank model used the provider host's
+  and key, as before) and add it to **Transcription** on the Task models
+  page (`task_models.stt`), in the old order. An entry with a blank model used the provider host's
   default, which is now written out: `api.openai.com` → `whisper-1`,
   `api.groq.com` → `whisper-large-v3`, `openrouter.ai` →
   `openai/whisper-large-v3`. Set **Echo transcription** there
@@ -404,22 +411,19 @@
   removed.
 - **BREAKING: `agents.defaults.vision_model` and
   `agents.defaults.vision_model_fallbacks` are removed.** Images are
-  described for text-only models only with the models ticked **Vision** on
-  the Task models page, and are not described until one is (Check Up:
-  **Vision: No model**). The old keys are reported as unknown at start and
-  ignored, the vision fields are gone from the System page, and the first
-  save of any page rewrites `config.json` without them: **before saving
-  anything after the upgrade, copy the values of `vision_model` and
-  `vision_model_fallbacks`**. There is no automatic migration. Then tick
-  **Vision** on the Task models page for the old `vision_model` and then
-  each of its fallbacks, in that order. The environment variable
+  described for text-only models only with the models in the **Describe
+  images** list on the Task models page, and are not described while it is
+  empty (Check Up: **Vision: No model in Describe images.**). The old keys
+  are reported as unknown at start and ignored, the vision fields are gone
+  from the System page, and the first save of any page rewrites
+  `config.json` without them: **before saving anything after the upgrade,
+  copy the values of `vision_model` and `vision_model_fallbacks`**. There is
+  no automatic migration. Then add the old `vision_model` and then each of
+  its fallbacks, in that order, to **Describe images** on the Task models
+  page (`task_models.vision`). The environment variable
   `CLAW_AGENTS_DEFAULTS_VISION_MODEL` is removed.
 
 ### Fixed
-
-- **The Task models page lists the models to add by name.** The **Model to
-  add** list was in the order of the Models page, which made a model hard to
-  find; it is now sorted alphabetically, ignoring case.
 
 - **The device channel no longer warns that nobody can connect.** With
   `channels.device.allow_from` empty, any paired device may talk to the

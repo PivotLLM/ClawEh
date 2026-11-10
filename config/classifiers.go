@@ -114,8 +114,8 @@ func (a *AgentConfig) ClassifierModel() string {
 	return strings.TrimSpace(a.Classifiers.Model)
 }
 
-// firstClassifyModel is the first model ticked Classify on the Task models
-// page, or "" when there is none.
+// firstClassifyModel is the first model in the Classification list on the
+// Task models page, or "" when there is none.
 func (c *Config) firstClassifyModel() string {
 	if names := c.TaskModels.ModelsFor(TaskUseClassify); len(names) > 0 {
 		return names[0]
@@ -124,14 +124,14 @@ func (c *Config) firstClassifyModel() string {
 }
 
 // ClassifierModelUsable reports whether model can be a classifier model: it
-// is ticked Classify on the Task models page.
+// is in the Classification list on the Task models page.
 func (c *Config) ClassifierModelUsable(model string) bool {
 	return c.TaskModels.Has(model, TaskUseClassify)
 }
 
 // ClassifierModelProblem is an agent whose classifiers are on and whose
-// classifier model is not usable: none is set (Missing), or Model is not a
-// Classify model.
+// classifier model is not usable: none is set (Missing), or Model is not in
+// the Classification list.
 type ClassifierModelProblem struct {
 	Agent   string // the configured agent id
 	Model   string // the classifier model ("" when Missing)
@@ -139,8 +139,8 @@ type ClassifierModelProblem struct {
 }
 
 // ClassifierModelProblems lists every agent with the classifiers switch on
-// whose classifier model is missing or is not ticked Classify on the Task
-// models page. Its classifiers fail every run until the operator picks a
+// whose classifier model is missing or is not in the Classification list on
+// the Task models page. Its classifiers fail every run until the operator picks a
 // usable model.
 func (c *Config) ClassifierModelProblems() []ClassifierModelProblem {
 	var out []ClassifierModelProblem
@@ -172,7 +172,7 @@ func newClassifierModelProblems(before, next *Config) []error {
 				return nil
 			}
 			return errors.New("Agent " + next.agentName(p.Agent) + " cannot use model " + p.Model +
-				" for its classifiers; pick a Classify model.")
+				" for its classifiers; pick a model in Classification.")
 		})
 }
 
@@ -199,7 +199,7 @@ func completeClassifierModels(before, next *Config) []error {
 				continue
 			}
 			errs = append(errs, errors.New("Agent "+a.DisplayName()+
-				" has no Classify model for its classifiers; tick Classify for a model on the Task models page."))
+				" has no classifier model; add one to Classification on the Task models page."))
 			continue
 		}
 		a.Classifiers.Model = model

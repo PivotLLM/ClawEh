@@ -174,7 +174,7 @@ cat >"$HOME_DIR/config.json" <<EOF
     ]
   },
   "classifiers": {"limits": {"min_every_seconds": 1}},
-  "task_models": {"models": [{"model": "stub", "classify": true}]},
+  "task_models": {"classify": [{"model": "stub"}]},
   "security": {"permissions": {"agents": {"dir_mode": "0750", "file_mode": "0640"}}},
   "gateway": {"host": "127.0.0.1", "port": $GW_PORT, "tls": {"mode": "off"}},
   "mcp_host": {"enabled": true, "listen": "127.0.0.1:$MCP_PORT", "endpoint_path": "/mcp", "external_tools": ["*"]}

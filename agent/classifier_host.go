@@ -235,7 +235,7 @@ func (h *ClassifierHost) Complete(ctx context.Context, agentID, system, user str
 	// Checked whatever the switch says: an item still in flight after the
 	// switch was turned off is held to the same rule.
 	if !cfg.ClassifierModelUsable(alias) {
-		return "", "", fmt.Errorf("model %s is not a Classify model (agent %s): %w", alias, a.DisplayName(), classifier.ErrNoModel)
+		return "", "", fmt.Errorf("model %s is not in Classification (agent %s): %w", alias, a.DisplayName(), classifier.ErrNoModel)
 	}
 	mc, err := cfg.GetModelConfig(alias)
 	if err != nil || mc == nil {

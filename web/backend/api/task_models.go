@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/logger"
@@ -31,10 +30,11 @@ type taskModelOption struct {
 	Support map[string]string `json:"support"`
 }
 
-// taskModelsResponse is GET /api/task-models: the task_models block, its
-// defaults and the models it may name.
+// taskModelsResponse is GET /api/task-models: the task_models block (every
+// list present, in order, read through Entries), its defaults and the models
+// it may name.
 type taskModelsResponse struct {
-	TaskModels config.TaskModelsConfig `json:"task_models"`
+	TaskModels map[string]any `json:"task_models"`
 	Defaults   struct {
 		ResultTextChars int `json:"result_text_chars"`
 	} `json:"defaults"`
@@ -52,13 +52,23 @@ func (h *Handler) handleGetTaskModels(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Failed to load config: %v", err), http.StatusInternalServerError)
 		return
 	}
-	resp := taskModelsResponse{TaskModels: cfg.TaskModels, Models: taskModelOptions(cfg)}
-	if resp.TaskModels.Models == nil {
-		resp.TaskModels.Models = []config.TaskModel{}
-	}
+	resp := taskModelsResponse{TaskModels: taskModelsBlock(cfg.TaskModels), Models: taskModelOptions(cfg)}
 	resp.Defaults.ResultTextChars = config.DefaultTaskResultTextChars
 	w.Header().Set("Content-Type", "application/json")
 	encodeJSON(w, resp)
+}
+
+// taskModelsBlock is the task_models block as the page reads it: the two
+// settings and one array per use, empty when the list is.
+func taskModelsBlock(tm config.TaskModelsConfig) map[string]any {
+	block := map[string]any{
+		"result_text_chars":  tm.ResultTextChars,
+		"echo_transcription": tm.EchoTranscription,
+	}
+	for _, use := range config.TaskUses {
+		block[string(use)] = tm.Entries(use)
+	}
+	return block
 }
 
 // taskModelOptions lists each model_name once, in config order.
@@ -105,10 +115,10 @@ func supportWord(s config.TaskUseSupport) string {
 }
 
 // handleUpdateTaskModels replaces the task_models block. The store refuses an
-// unknown model, a model listed twice, a negative limit and a change that
-// leaves an agent's classifiers without a Classify model.
+// unknown model, a model listed twice in a list, a negative limit and a
+// change that leaves an agent's classifiers without a classifier model.
 //
-//	PUT /api/task-models  {"result_text_chars": ..., "echo_transcription": ..., "models": [...]}
+//	PUT /api/task-models  {"result_text_chars": ..., "echo_transcription": ..., "text": [...], "image": [...], ...}
 func (h *Handler) handleUpdateTaskModels(w http.ResponseWriter, r *http.Request) {
 	defer utils.CloseQuietly(r.Body)
 	var body config.TaskModelsConfig
@@ -118,16 +128,7 @@ func (h *Handler) handleUpdateTaskModels(w http.ResponseWriter, r *http.Request)
 		writeValidationErrors(w, []string{fmt.Sprintf("Invalid task models: %v", err)})
 		return
 	}
-	for i := range body.Models {
-		body.Models[i].Model = strings.TrimSpace(body.Models[i].Model)
-		if d := body.Models[i].TTSDefaults; d != nil {
-			d.Voice = strings.TrimSpace(d.Voice)
-			d.Format = strings.TrimSpace(d.Format)
-			if d.Voice == "" && d.Format == "" {
-				body.Models[i].TTSDefaults = nil
-			}
-		}
-	}
+	body.Normalize()
 
 	if err := h.updateConfig(r, func(cfg *config.Config) error {
 		cfg.TaskModels = body

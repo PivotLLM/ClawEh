@@ -761,20 +761,39 @@
   "task_models": {
     "result_text_chars": 1,
     "echo_transcription": true,
-    "models": [
+    "text": [
+      {
+        "model": "x"
+      }
+    ],
+    "image": [
       {
         "model": "x",
-        "text": true,
-        "image": true,
-        "tts": true,
-        "stt": true,
-        "vision": true,
-        "classify": true,
-        "image_api": "x",
+        "image_api": "x"
+      }
+    ],
+    "tts": [
+      {
+        "model": "x",
         "tts_defaults": {
           "voice": "x",
           "format": "x"
         }
+      }
+    ],
+    "stt": [
+      {
+        "model": "x"
+      }
+    ],
+    "vision": [
+      {
+        "model": "x"
+      }
+    ],
+    "classify": [
+      {
+        "model": "x"
       }
     ]
   },

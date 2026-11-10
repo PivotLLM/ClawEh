@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -33,24 +34,71 @@ func taskModelsTestConfig() *Config {
 	return cfg
 }
 
-func TestTaskModels_ModelsForInPageOrder(t *testing.T) {
-	tm := TaskModelsConfig{Models: []TaskModel{
-		{Model: "b", STT: true, Vision: true},
-		{Model: "a", Text: true},
-		{Model: " ", STT: true},
-		{Model: "c", STT: true, Classify: true},
-	}}
-	if got := tm.ModelsFor(TaskUseSTT); !slices.Equal(got, []string{"b", "c"}) {
-		t.Errorf("ModelsFor(stt) = %v, want [b c] (page order, blank left out)", got)
+// sixLists has a different order in every list, the same model in several
+// lists, a blank entry in stt and the per-list settings.
+func sixLists() TaskModelsConfig {
+	return TaskModelsConfig{
+		TextModels:     []TaskModelRef{{Model: "b"}, {Model: "a"}},
+		ImageModels:    []ImageTaskModel{{Model: "a", ImageAPI: ImageAPIImages}, {Model: "c"}},
+		TTSModels:      []TTSTaskModel{{Model: "c", TTSDefaults: &TTSDefaults{Voice: "alloy", Format: "mp3"}}, {Model: "b"}},
+		STTModels:      []TaskModelRef{{Model: "c"}, {Model: " "}, {Model: " a "}},
+		VisionModels:   []TaskModelRef{{Model: "a"}},
+		ClassifyModels: nil,
 	}
-	if got := tm.ModelsFor(TaskUseImage); len(got) != 0 {
-		t.Errorf("ModelsFor(image) = %v, want none", got)
+}
+
+func TestTaskModels_ModelsForFollowsEachListsOrder(t *testing.T) {
+	tm := sixLists()
+	for _, tc := range []struct {
+		use  TaskUse
+		want []string
+	}{
+		{TaskUseText, []string{"b", "a"}},
+		{TaskUseImage, []string{"a", "c"}},
+		{TaskUseTTS, []string{"c", "b"}},
+		{TaskUseSTT, []string{"c", "a"}}, // blank left out, name trimmed
+		{TaskUseVision, []string{"a"}},
+		{TaskUseClassify, []string{}},
+		{TaskUse("nope"), []string{}},
+	} {
+		if got := tm.ModelsFor(tc.use); !slices.Equal(got, tc.want) {
+			t.Errorf("ModelsFor(%s) = %v, want %v", tc.use, got, tc.want)
+		}
+		if got := tm.Entries(tc.use); got == nil {
+			t.Errorf("Entries(%s) = nil, want an empty list", tc.use)
+		}
 	}
-	if !tm.Has("c", TaskUseClassify) || tm.Has("a", TaskUseClassify) || tm.Has("", TaskUseSTT) {
-		t.Error("Has does not follow the ticks")
+	if !tm.Has("a", TaskUseSTT) || !tm.Has(" c ", TaskUseImage) || tm.Has("b", TaskUseImage) || tm.Has("", TaskUseSTT) || tm.Has("a", TaskUseClassify) {
+		t.Error("Has does not follow the lists")
 	}
-	if got := tm.Models[0].Uses(); !slices.Equal(got, []TaskUse{TaskUseSTT, TaskUseVision}) {
-		t.Errorf("Uses() = %v", got)
+}
+
+// Entries carries each list's own settings and nothing else.
+func TestTaskModels_EntriesCarryTheirListsSettings(t *testing.T) {
+	tm := sixLists()
+	if got := tm.Entries(TaskUseImage); !reflect.DeepEqual(got, []TaskModelEntry{{Model: "a", ImageAPI: ImageAPIImages}, {Model: "c"}}) {
+		t.Errorf("Entries(image) = %+v", got)
+	}
+	tts := tm.Entries(TaskUseTTS)
+	if len(tts) != 2 || tts[0].TTSDefaults == nil || tts[0].TTSDefaults.Voice != "alloy" || tts[1].TTSDefaults != nil {
+		t.Errorf("Entries(tts) = %+v", tts)
+	}
+	for _, use := range []TaskUse{TaskUseText, TaskUseSTT, TaskUseVision} {
+		for _, e := range tm.Entries(use) {
+			if e.ImageAPI != "" || e.TTSDefaults != nil {
+				t.Errorf("%s entry %+v carries another list's settings", use, e)
+			}
+		}
+	}
+	if e, ok := tm.Entry(TaskUseImage, "a"); !ok || e.EffectiveImageAPI() != ImageAPIImages {
+		t.Errorf("Entry(image, a) = %+v, %v", e, ok)
+	}
+	// "a" is in image with the images API, but its text entry has none.
+	if e, ok := tm.Entry(TaskUseText, "a"); !ok || e.EffectiveImageAPI() != ImageAPIChat {
+		t.Errorf("Entry(text, a) = %+v, %v", e, ok)
+	}
+	if _, ok := tm.Entry(TaskUseTTS, "a"); ok {
+		t.Error("Entry(tts, a) found a model that is not in that list")
 	}
 }
 
@@ -63,20 +111,25 @@ func TestTaskModels_EffectiveResultTextChars(t *testing.T) {
 }
 
 // testdata/task_model_defaults.json holds the defaults of task_models that
-// the WebUI shows; the frontend checks its own copy against the same file.
+// the WebUI shows and the lists in page order; the frontend checks its own
+// copy against the same file.
 func TestTaskModels_DefaultsFixture(t *testing.T) {
 	b, err := os.ReadFile("testdata/task_model_defaults.json")
 	if err != nil {
 		t.Fatal(err)
 	}
 	var fixture struct {
-		ResultTextChars int `json:"result_text_chars"`
+		ResultTextChars int       `json:"result_text_chars"`
+		Lists           []TaskUse `json:"lists"`
 	}
 	if err := json.Unmarshal(b, &fixture); err != nil {
 		t.Fatal(err)
 	}
 	if fixture.ResultTextChars != DefaultTaskResultTextChars {
 		t.Errorf("task_model_defaults.json result_text_chars = %d, want %d", fixture.ResultTextChars, DefaultTaskResultTextChars)
+	}
+	if !slices.Equal(fixture.Lists, TaskUses) {
+		t.Errorf("task_model_defaults.json lists = %v, want %v", fixture.Lists, TaskUses)
 	}
 }
 
@@ -86,10 +139,18 @@ func TestTaskModels_Validate(t *testing.T) {
 		tm   TaskModelsConfig
 		want []string
 	}{
-		{name: "valid", tm: TaskModelsConfig{ResultTextChars: 100, Models: []TaskModel{{Model: "m", Text: true}, {Model: "whisper"}}}},
+		{name: "valid", tm: func() TaskModelsConfig { tm := sixLists(); tm.STTModels = tm.STTModels[:1]; return tm }()},
+		{name: "same model in every list", tm: TaskModelsConfig{
+			TextModels: []TaskModelRef{{Model: "m"}}, ImageModels: []ImageTaskModel{{Model: "m"}}, TTSModels: []TTSTaskModel{{Model: "m"}},
+			STTModels: []TaskModelRef{{Model: "m"}}, VisionModels: []TaskModelRef{{Model: "m"}}, ClassifyModels: []TaskModelRef{{Model: "m"}},
+		}},
 		{name: "negative", tm: TaskModelsConfig{ResultTextChars: -1}, want: []string{"task_models.result_text_chars must be 0 (the default) or more."}},
-		{name: "blank", tm: TaskModelsConfig{Models: []TaskModel{{Model: "m"}, {Model: ""}}}, want: []string{"task_models.models[1] names no model."}},
-		{name: "twice", tm: TaskModelsConfig{Models: []TaskModel{{Model: "m"}, {Model: "m", STT: true}}}, want: []string{"Task model m is listed twice."}},
+		{name: "blank", tm: TaskModelsConfig{TTSModels: []TTSTaskModel{{Model: "m"}, {Model: " "}}}, want: []string{"task_models.tts[1] names no model."}},
+		{name: "twice in text", tm: TaskModelsConfig{TextModels: []TaskModelRef{{Model: "m"}, {Model: "m "}}}, want: []string{"Model m is listed twice in Generate text."}},
+		{name: "twice in image", tm: TaskModelsConfig{ImageModels: []ImageTaskModel{{Model: "m"}, {Model: "m", ImageAPI: ImageAPIImages}}}, want: []string{"Model m is listed twice in Generate images."}},
+		{name: "twice in classify and stt", tm: TaskModelsConfig{
+			STTModels: []TaskModelRef{{Model: "w"}, {Model: "w"}}, ClassifyModels: []TaskModelRef{{Model: "c"}, {Model: "c"}},
+		}, want: []string{"Model w is listed twice in Transcription.", "Model c is listed twice in Classification."}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := tc.tm.Validate()
@@ -108,15 +169,37 @@ func TestTaskModels_Validate(t *testing.T) {
 	}
 }
 
+func TestTaskModels_Normalize(t *testing.T) {
+	tm := TaskModelsConfig{
+		TextModels:  []TaskModelRef{{Model: " m "}},
+		ImageModels: []ImageTaskModel{{Model: " i", ImageAPI: ImageAPIImages}},
+		TTSModels: []TTSTaskModel{
+			{Model: "s ", TTSDefaults: &TTSDefaults{Voice: " alloy ", Format: " "}},
+			{Model: "t", TTSDefaults: &TTSDefaults{Voice: " ", Format: ""}},
+		},
+		ClassifyModels: []TaskModelRef{{Model: "\tc"}},
+	}
+	tm.Normalize()
+	want := TaskModelsConfig{
+		TextModels:     []TaskModelRef{{Model: "m"}},
+		ImageModels:    []ImageTaskModel{{Model: "i", ImageAPI: ImageAPIImages}},
+		TTSModels:      []TTSTaskModel{{Model: "s", TTSDefaults: &TTSDefaults{Voice: "alloy"}}, {Model: "t"}},
+		ClassifyModels: []TaskModelRef{{Model: "c"}},
+	}
+	if !reflect.DeepEqual(tm, want) {
+		t.Errorf("Normalize() = %+v, want %+v", tm, want)
+	}
+}
+
 // A file with an invalid task_models block does not load.
 func TestLoadConfig_RefusesInvalidTaskModels(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
-	body := `{"task_models":{"result_text_chars":-5,"models":[{"model":"m"},{"model":"m"}]}}`
+	body := `{"task_models":{"result_text_chars":-5,"stt":[{"model":"m"},{"model":"m"}]}}`
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	_, err := LoadConfig(path)
-	if err == nil || !strings.Contains(err.Error(), "result_text_chars must be 0") || !strings.Contains(err.Error(), "listed twice") {
+	if err == nil || !strings.Contains(err.Error(), "result_text_chars must be 0") || !strings.Contains(err.Error(), "Model m is listed twice in Transcription.") {
 		t.Fatalf("LoadConfig() = %v, want both problems", err)
 	}
 }
@@ -125,12 +208,12 @@ func TestStoreUpdate_TaskModels(t *testing.T) {
 	s := storeFor(t, taskModelsTestConfig())
 
 	err := s.Update(func(c *Config) error {
-		c.TaskModels.Models = []TaskModel{{Model: "nope", STT: true}}
+		c.TaskModels.STTModels = []TaskModelRef{{Model: "nope"}}
 		return nil
 	})
 	var ve *ValidationError
-	if !errors.As(err, &ve) || !strings.Contains(err.Error(), `task_models.models[nope]: model "nope" does not exist`) {
-		t.Fatalf("an unknown model = %v, want a ValidationError naming it", err)
+	if !errors.As(err, &ve) || !strings.Contains(err.Error(), `task_models.stt[nope]: model "nope" does not exist`) {
+		t.Fatalf("an unknown model = %v, want a ValidationError naming it and its list", err)
 	}
 	if err := s.Update(func(c *Config) error {
 		c.TaskModels.ResultTextChars = -1
@@ -139,9 +222,9 @@ func TestStoreUpdate_TaskModels(t *testing.T) {
 		t.Fatal("a negative result_text_chars was accepted")
 	}
 	if err := s.Update(func(c *Config) error {
-		c.TaskModels.Models = []TaskModel{{Model: "whisper", STT: true}, {Model: "whisper", Text: true}}
+		c.TaskModels.TextModels = []TaskModelRef{{Model: "whisper"}, {Model: "whisper"}}
 		return nil
-	}); err == nil || !strings.Contains(err.Error(), "Task model whisper is listed twice.") {
+	}); err == nil || !strings.Contains(err.Error(), "Model whisper is listed twice in Generate text.") {
 		t.Fatalf("a model listed twice = %v", err)
 	}
 
@@ -149,10 +232,12 @@ func TestStoreUpdate_TaskModels(t *testing.T) {
 		c.TaskModels = TaskModelsConfig{
 			ResultTextChars:   2000,
 			EchoTranscription: true,
-			Models: []TaskModel{
-				{Model: "whisper", STT: true},
-				{Model: "m", Text: true, Vision: true, TTS: true, TTSDefaults: &TTSDefaults{Voice: "alloy", Format: "mp3"}},
-			},
+			TextModels:        []TaskModelRef{{Model: "m"}, {Model: "sonnet"}},
+			ImageModels:       []ImageTaskModel{{Model: "m", ImageAPI: ImageAPIImages}},
+			TTSModels:         []TTSTaskModel{{Model: "m", TTSDefaults: &TTSDefaults{Voice: "alloy", Format: "mp3"}}},
+			STTModels:         []TaskModelRef{{Model: "whisper"}, {Model: "m"}},
+			VisionModels:      []TaskModelRef{{Model: "sonnet"}, {Model: "m"}},
+			ClassifyModels:    []TaskModelRef{{Model: "cc"}},
 		}
 		return nil
 	}); err != nil {
@@ -162,25 +247,124 @@ func TestStoreUpdate_TaskModels(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := s.Current().TaskModels
-	if got.ResultTextChars != 2000 || !got.EchoTranscription || len(got.Models) != 2 ||
-		got.Models[1].TTSDefaults == nil || got.Models[1].TTSDefaults.Voice != "alloy" {
-		t.Fatalf("task_models after reload = %+v", got)
+	if got.ResultTextChars != 2000 || !got.EchoTranscription {
+		t.Fatalf("settings after reload = %+v", got)
+	}
+	for use, want := range map[TaskUse][]string{
+		TaskUseText: {"m", "sonnet"}, TaskUseImage: {"m"}, TaskUseTTS: {"m"},
+		TaskUseSTT: {"whisper", "m"}, TaskUseVision: {"sonnet", "m"}, TaskUseClassify: {"cc"},
+	} {
+		if names := got.ModelsFor(use); !slices.Equal(names, want) {
+			t.Errorf("ModelsFor(%s) after reload = %v, want %v", use, names, want)
+		}
+	}
+	if e, _ := got.Entry(TaskUseImage, "m"); e.ImageAPI != ImageAPIImages {
+		t.Errorf("image entry after reload = %+v", e)
+	}
+	if e, _ := got.Entry(TaskUseTTS, "m"); e.TTSDefaults == nil || e.TTSDefaults.Voice != "alloy" {
+		t.Errorf("tts entry after reload = %+v", e)
 	}
 
-	// A model referenced from the page cannot be renamed away silently: the
-	// rename follows it.
+	// A rename follows the model into every list it is in.
 	if err := s.Update(func(c *Config) error {
-		c.Models[1].ModelName = "stt"
-		c.RenameModelReferences("whisper", "stt")
+		c.Models[0].ModelName = "gpt"
+		c.RenameModelReferences("m", "gpt")
 		return nil
 	}); err != nil {
 		t.Fatalf("rename: %v", err)
 	}
-	if got := s.Current().TaskModels.ModelsFor(TaskUseSTT); !slices.Equal(got, []string{"stt"}) {
-		t.Errorf("STT models after rename = %v, want [stt]", got)
+	cur := s.Current().TaskModels
+	if !slices.Equal(cur.ModelsFor(TaskUseSTT), []string{"whisper", "gpt"}) || !slices.Equal(cur.ModelsFor(TaskUseText), []string{"gpt", "sonnet"}) {
+		t.Errorf("lists after rename = %+v", cur)
 	}
-	if refs := s.Current().ModelReferences("stt"); !slices.Equal(refs, []string{"task_models.models[stt]"}) {
-		t.Errorf("ModelReferences(stt) = %v", refs)
+	if e, _ := cur.Entry(TaskUseImage, "gpt"); e.ImageAPI != ImageAPIImages {
+		t.Errorf("image entry after rename = %+v, want its image_api kept", e)
+	}
+	want := []string{"agents.defaults.models", "task_models.text[gpt]", "task_models.image[gpt]", "task_models.tts[gpt]", "task_models.stt[gpt]", "task_models.vision[gpt]"}
+	if refs := s.Current().ModelReferences("gpt"); !slices.Equal(refs, want) {
+		t.Errorf("ModelReferences(gpt) = %v, want %v", refs, want)
+	}
+	// The reference names the list, so a refused delete says which.
+	if refs := s.Current().ModelReferences("cc"); !slices.Equal(refs, []string{"task_models.classify[cc]"}) {
+		t.Errorf("ModelReferences(cc) = %v", refs)
+	}
+}
+
+// The pre-release single list (task_models.models) is an unknown key: the
+// file loads without it and the next save drops it.
+func TestLoadConfig_OldTaskModelsListIsUnknownAndDropped(t *testing.T) {
+	cfg := taskModelsTestConfig()
+	s := storeFor(t, cfg)
+	raw, err := os.ReadFile(s.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	doc["task_models"] = map[string]any{
+		"echo_transcription": true,
+		"models":             []any{map[string]any{"model": "whisper", "stt": true}},
+		"text":               []any{map[string]any{"model": "m"}},
+	}
+	raw, err = json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(s.Path(), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := decodeDocument(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := unknownConfigKeys(decoded); !slices.Equal(got, []string{"task_models.models"}) {
+		t.Fatalf("unknownConfigKeys = %v, want [task_models.models]", got)
+	}
+	cur, err := s.Reload()
+	if err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	if got := cur.TaskModels; len(got.ModelsFor(TaskUseSTT)) != 0 || !slices.Equal(got.ModelsFor(TaskUseText), []string{"m"}) || !got.EchoTranscription {
+		t.Fatalf("task_models = %+v, want only the text list and the setting", got)
+	}
+	if err := s.Update(func(c *Config) error {
+		c.TaskModels.ResultTextChars = 100
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err = os.ReadFile(s.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved struct {
+		TaskModels map[string]json.RawMessage `json:"task_models"`
+	}
+	if err := json.Unmarshal(raw, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := saved.TaskModels["models"]; ok {
+		t.Errorf("saved task_models = %s, want the old list dropped", raw)
+	}
+	if _, ok := saved.TaskModels["text"]; !ok {
+		t.Errorf("saved task_models lost its text list: %v", saved.TaskModels)
+	}
+}
+
+// A setting on a list that does not have it is an unknown key: image_api
+// belongs to image entries, tts_defaults to tts entries.
+func TestTaskModels_SettingsOnlyOnTheirList(t *testing.T) {
+	doc := map[string]any{"task_models": map[string]any{
+		"text":  []any{map[string]any{"model": "m", "image_api": "images"}},
+		"image": []any{map[string]any{"model": "m", "image_api": "images", "tts_defaults": map[string]any{"voice": "v"}}},
+		"tts":   []any{map[string]any{"model": "m", "tts_defaults": map[string]any{"voice": "v"}, "image_api": "chat"}},
+		"stt":   []any{map[string]any{"model": "m", "sst": true}},
+	}}
+	want := []string{"task_models.image[0].tts_defaults", "task_models.stt[0].sst", "task_models.text[0].image_api", "task_models.tts[0].image_api"}
+	if got := unknownConfigKeys(doc); !slices.Equal(got, want) {
+		t.Errorf("unknownConfigKeys = %v, want %v", got, want)
 	}
 }
 
@@ -200,8 +384,10 @@ func TestLoadConfig_RemovedVoiceAndVisionKeysAreUnknown(t *testing.T) {
 	if cfg.Agents.Defaults.MaxTokens != 77 {
 		t.Errorf("max_tokens = %d, want 77 (the removed keys must not disturb their neighbours)", cfg.Agents.Defaults.MaxTokens)
 	}
-	if cfg.TaskModels.EchoTranscription || len(cfg.TaskModels.Models) != 0 {
-		t.Errorf("task_models = %+v, want nothing carried over", cfg.TaskModels)
+	for _, use := range TaskUses {
+		if cfg.TaskModels.EchoTranscription || len(cfg.TaskModels.ModelsFor(use)) != 0 {
+			t.Errorf("task_models = %+v, want nothing carried over", cfg.TaskModels)
+		}
 	}
 	doc, err := decodeDocument([]byte(body))
 	if err != nil {
@@ -211,8 +397,42 @@ func TestLoadConfig_RemovedVoiceAndVisionKeysAreUnknown(t *testing.T) {
 	if got := unknownConfigKeys(doc); !slices.Equal(got, want) {
 		t.Fatalf("unknownConfigKeys = %v, want %v", got, want)
 	}
-	if got := unknownConfigKeys(map[string]any{"task_models": map[string]any{"models": []any{map[string]any{"model": "m", "sst": true}}}}); !slices.Equal(got, []string{"task_models.models[0].sst"}) {
-		t.Errorf("a misspelt use = %v, want it reported", got)
+}
+
+func TestTaskModelsUnsupported(t *testing.T) {
+	cfg := taskModelsTestConfig()
+	cfg.TaskModels = TaskModelsConfig{
+		STTModels:    []TaskModelRef{{Model: "sonnet"}, {Model: "whisper"}, {Model: "gone"}, {Model: "cc"}},
+		TextModels:   []TaskModelRef{{Model: "sonnet"}},
+		VisionModels: []TaskModelRef{{Model: "cc"}, {Model: "sonnet"}},
+	}
+	if got := cfg.TaskModelsUnsupported(TaskUseSTT); !slices.Equal(got, []string{"sonnet", "cc"}) {
+		t.Errorf("stt = %v, want [sonnet cc] in list order (a missing model left out)", got)
+	}
+	if got := cfg.TaskModelsUnsupported(TaskUseText); len(got) != 0 {
+		t.Errorf("text = %v, want none", got)
+	}
+	if got := cfg.TaskModelsUnsupported(TaskUseVision); len(got) != 0 {
+		t.Errorf("vision = %v, want none (unknown for a CLI)", got)
+	}
+}
+
+func TestTaskModels_ImageAPI(t *testing.T) {
+	for _, tc := range []struct {
+		api, want string
+		bad       bool
+	}{{"", ImageAPIChat, false}, {"chat", ImageAPIChat, false}, {"images", ImageAPIImages, false}, {"dalle", ImageAPIChat, true}} {
+		tm := TaskModelsConfig{ImageModels: []ImageTaskModel{{Model: "m", ImageAPI: tc.api}}}
+		if e, _ := tm.Entry(TaskUseImage, "m"); e.EffectiveImageAPI() != tc.want {
+			t.Errorf("EffectiveImageAPI(%q) = %q, want %q", tc.api, e.EffectiveImageAPI(), tc.want)
+		}
+		err := tm.Validate()
+		if (err != nil) != tc.bad {
+			t.Errorf("Validate(image_api %q) = %v, want refused %v", tc.api, err, tc.bad)
+		}
+		if tc.bad && !strings.Contains(err.Error(), `Model m in Generate images: image_api must be "chat" or "images".`) {
+			t.Errorf("refusal = %v", err)
+		}
 	}
 }
 
@@ -245,38 +465,6 @@ func TestTaskUseSupportFor(t *testing.T) {
 	} {
 		if got := TaskUseSupportFor(tc.protocol, tc.use); got != tc.want {
 			t.Errorf("TaskUseSupportFor(%s, %s) = %v, want %v", tc.protocol, tc.use, got, tc.want)
-		}
-	}
-}
-
-func TestTaskModelUnsupported(t *testing.T) {
-	cfg := taskModelsTestConfig()
-	if got := cfg.TaskModelUnsupported(TaskModel{Model: "sonnet", STT: true, Text: true, Vision: true}); !slices.Equal(got, []TaskUse{TaskUseSTT}) {
-		t.Errorf("sonnet = %v, want [stt]", got)
-	}
-	if got := cfg.TaskModelUnsupported(TaskModel{Model: "cc", Vision: true, Classify: true}); len(got) != 0 {
-		t.Errorf("cc = %v, want none (vision unknown for a CLI)", got)
-	}
-	if got := cfg.TaskModelUnsupported(TaskModel{Model: "gone", STT: true}); got != nil {
-		t.Errorf("missing model = %v, want nil", got)
-	}
-}
-
-func TestTaskModels_ImageAPI(t *testing.T) {
-	for _, tc := range []struct {
-		api, want string
-		bad       bool
-	}{{"", ImageAPIChat, false}, {"chat", ImageAPIChat, false}, {"images", ImageAPIImages, false}, {"dalle", ImageAPIChat, true}} {
-		m := TaskModel{Model: "m", Image: true, ImageAPI: tc.api}
-		if got := m.EffectiveImageAPI(); got != tc.want {
-			t.Errorf("EffectiveImageAPI(%q) = %q, want %q", tc.api, got, tc.want)
-		}
-		err := TaskModelsConfig{Models: []TaskModel{m}}.Validate()
-		if (err != nil) != tc.bad {
-			t.Errorf("Validate(image_api %q) = %v, want refused %v", tc.api, err, tc.bad)
-		}
-		if tc.bad && !strings.Contains(err.Error(), `Task model m: image_api must be "chat" or "images".`) {
-			t.Errorf("refusal = %v", err)
 		}
 	}
 }
@@ -341,7 +529,7 @@ func TestTaskModelProblem(t *testing.T) {
 		{"nope", TaskUseVision, "not on the Models page"},
 		{"off", TaskUseVision, "disabled on the Models page"},
 		{"orphan", TaskUseVision, "provider not configured"},
-		{"scribe", TaskUseVision, "its provider can't do Vision"},
+		{"scribe", TaskUseVision, "its provider can't serve Describe images"},
 		{"scribe", TaskUseSTT, ""},
 	} {
 		if got := cfg.TaskModelProblem(tc.name, tc.use); got != tc.want {

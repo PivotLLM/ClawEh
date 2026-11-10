@@ -164,7 +164,8 @@ func fixtureConfig(t *testing.T) (*config.Config, Environment) {
 	cfg.Tools.Web.Brave = config.BraveConfig{Enabled: true, APIKey: secretBrave}
 	cfg.Tools.Skills.Github.Token = secretGitHub
 	cfg.Tools.Skills.Registries.ClawHub.AuthToken = secretClawHub
-	cfg.TaskModels.Models = []config.TaskModel{{Model: "GPT", STT: true, Classify: true}}
+	cfg.TaskModels.STTModels = []config.TaskModelRef{{Model: "GPT"}}
+	cfg.TaskModels.ClassifyModels = []config.TaskModelRef{{Model: "GPT"}}
 
 	cfg.Gateway = config.GatewayConfig{Host: "127.0.0.1", Port: 18790, AllowedCIDRs: []string{"192.168.1.0/24"}}
 	cfg.Channels.Telegram = []config.TelegramBotConfig{{ID: "bob", Enabled: true, Token: secretTelegram, AllowFrom: []string{"*"}}}

@@ -5,14 +5,15 @@
 # Starts its own gateway in a temporary CLAW_HOME with a stub vendor
 # (tests/testdata/taskmodelsllm: OpenAI-style chat, images, speech and
 # transcription, and Gemini's generateContent TTS) and task models for every
-# kind: two Text models, the first of which answers 503 (fallback), a chat
-# image model and an images-API model, an OpenAI-style and a Gemini speech
-# model, and a transcription model. Alice may use every kind; Bob only Text.
-# The agents area has non-default modes so the output's modes can be checked
-# exactly.
+# kind, one ordered list per use: two models in Generate text, the first of
+# which answers 503 (fallback), a chat image model and an images-API model,
+# an OpenAI-style and a Gemini speech model, and a transcription model.
+# Alice may use every kind; Bob only Text. The agents area has non-default
+# modes so the output's modes can be checked exactly.
 #
 # Checks, from outside the process, driving agent_spawn over the MCP host
 # with each agent's service token:
+#   - the lists load with no unknown task_models key;
 #   - text (wait): the 503 model is tried, the next one answers; the text is
 #     in the result and in a .md file under files/generated/<date>/;
 #   - image (wait): chat image output, an images-API generation and an edit
@@ -210,15 +211,13 @@ cat >"$HOME_DIR/config.json" <<EOF
   ],
   "task_models": {
     "result_text_chars": 5000,
-    "models": [
-      {"model": "txt-down", "text": true},
-      {"model": "txt", "text": true},
-      {"model": "imgchat", "image": true},
-      {"model": "imgapi", "image": true, "image_api": "images"},
-      {"model": "tts", "tts": true, "tts_defaults": {"voice": "alloy", "format": "mp3"}},
-      {"model": "gtts", "tts": true, "tts_defaults": {"voice": "Kore"}},
-      {"model": "stt", "stt": true}
-    ]
+    "text": [{"model": "txt-down"}, {"model": "txt"}],
+    "image": [{"model": "imgchat"}, {"model": "imgapi", "image_api": "images"}],
+    "tts": [
+      {"model": "tts", "tts_defaults": {"voice": "alloy", "format": "mp3"}},
+      {"model": "gtts", "tts_defaults": {"voice": "Kore"}}
+    ],
+    "stt": [{"model": "stt"}]
   },
   "agents": {
     "defaults": {"model": "chat"},
@@ -259,6 +258,13 @@ if ! wait_for 30 curl -sf "http://127.0.0.1:$GW_PORT/ready"; then
     exit 1
 fi
 TODAY="$(date +%F)"
+
+# ---- 0. The per-use lists load as written. ----
+if grep -q 'unknown config key: task_models' "$GW_OUT"; then
+    fail "config: a task_models key was not recognised: $(grep 'unknown config key: task_models' "$GW_OUT" | tr '\n' ';')"
+else
+    pass "config: the task_models lists load with no unknown key"
+fi
 
 # ---- 1. Text, with fallback. ----
 OUT="$(mcp "$ALICE" agent_spawn '{"kind":"text","task":"Say something.","mode":"wait","name":"t1"}')"

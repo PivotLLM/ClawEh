@@ -143,7 +143,7 @@ func TestHumanProblems(t *testing.T) {
 			c.Agents.List[0].SummarizationModels = []string{"Bob (human)"}
 		}, want: []HumanProblemKind{HumanModelMisused}, text: "a summarization model"},
 		{name: "task model", mutate: func(c *Config) {
-			c.TaskModels.Models = []TaskModel{{Model: "Bob (human)", Vision: true}}
+			c.TaskModels.VisionModels = []TaskModelRef{{Model: "Bob (human)"}}
 		}, want: []HumanProblemKind{HumanModelMisused}, text: "Bob (human) represents a person and can't be a task model."},
 		{name: "default models", mutate: func(c *Config) {
 			c.Agents.Defaults.Models = []string{"m", "Bob (human)"}
@@ -251,7 +251,8 @@ func TestPruneHumanProblems(t *testing.T) {
 		cfg := humanTestConfig()
 		cfg.Agents.List[1].Models = []string{"Bob (human)", "m"}
 		cfg.Summarization.Models = []string{"Bob (human)", "m"}
-		cfg.TaskModels.Models = []TaskModel{{Model: "Bob (human)", Vision: true}, {Model: "m", Text: true}}
+		cfg.TaskModels.VisionModels = []TaskModelRef{{Model: "Bob (human)"}}
+		cfg.TaskModels.TextModels = []TaskModelRef{{Model: "m"}}
 		got := cfg.PruneHumanProblems()
 		if len(got) != 3 {
 			t.Fatalf("pruned %+v, want 3 problems", got)
@@ -265,8 +266,8 @@ func TestPruneHumanProblems(t *testing.T) {
 		if !slices.Equal(cfg.Summarization.Models, []string{"m"}) {
 			t.Errorf("summarization.models = %v, want [m]", cfg.Summarization.Models)
 		}
-		if !slices.Equal(cfg.TaskModels.ModelsFor(TaskUseText), []string{"m"}) || len(cfg.TaskModels.Models) != 1 {
-			t.Errorf("task models = %+v, want only m", cfg.TaskModels.Models)
+		if !slices.Equal(cfg.TaskModels.ModelsFor(TaskUseText), []string{"m"}) || len(cfg.TaskModels.VisionModels) != 0 {
+			t.Errorf("task models = %+v, want only m", cfg.TaskModels)
 		}
 		if !slices.Equal(cfg.Agents.List[1].Models, []string{"Bob (human)", "m"}) {
 			t.Error("the agent's own model list was edited")

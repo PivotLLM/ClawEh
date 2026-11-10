@@ -18,7 +18,8 @@ func refTestConfig() *Config {
 	}
 	cfg.Agents.Defaults.Models = []string{"alpha"}
 	cfg.Summarization.Models = []string{"alpha"}
-	cfg.TaskModels.Models = []TaskModel{{Model: "alpha", Vision: true}}
+	cfg.TaskModels.ImageModels = []ImageTaskModel{{Model: "alpha", ImageAPI: ImageAPIImages}}
+	cfg.TaskModels.VisionModels = []TaskModelRef{{Model: "alpha"}}
 	cfg.Agents.List = []AgentConfig{{
 		ID:                  "alice",
 		Models:              []string{"alpha"},
@@ -31,12 +32,13 @@ func refTestConfig() *Config {
 }
 
 // allSites is every site refTestConfig references alias from; a task model's
-// site is labelled with its own name.
+// site is labelled with its list and its own name.
 func allSites(alias string) []string {
 	return []string{
 		"agents.defaults.models",
 		"summarization.models",
-		"task_models.models[" + alias + "]",
+		"task_models.image[" + alias + "]",
+		"task_models.vision[" + alias + "]",
 		"agents.list[alice].models",
 		"agents.list[alice].summarization_models",
 		"agents.list[alice].subagents.models",
@@ -63,8 +65,11 @@ func TestRenameModelReferences_CoversSubagentsModels(t *testing.T) {
 	if got := cfg.ModelReferences("omega"); !reflect.DeepEqual(got, allSites("omega")) {
 		t.Fatalf("ModelReferences(omega) = %v\nwant %v", got, allSites("omega"))
 	}
-	if got := cfg.TaskModels.Models[0]; got.Model != "omega" || !got.Vision {
-		t.Fatalf("task model = %+v, want omega with its Vision tick", got)
+	if got := cfg.TaskModels.ImageModels; !reflect.DeepEqual(got, []ImageTaskModel{{Model: "omega", ImageAPI: ImageAPIImages}}) {
+		t.Fatalf("image list = %+v, want omega with its image_api", got)
+	}
+	if got := cfg.TaskModels.ModelsFor(TaskUseVision); !reflect.DeepEqual(got, []string{"omega"}) {
+		t.Fatalf("vision list = %v, want [omega]", got)
 	}
 	if got := cfg.Agents.List[0].Subagents.Models; !reflect.DeepEqual(got, []string{"omega"}) {
 		t.Fatalf("subagents.models = %v, want [omega]", got)
@@ -86,10 +91,10 @@ func TestValidateModelReferences(t *testing.T) {
 			name: "missing alias is an error naming site and alias",
 			mutate: func(c *Config) {
 				c.Agents.List[0].Models = []string{"ghost", "alpha"}
-				c.TaskModels.Models = append(c.TaskModels.Models, TaskModel{Model: "ghost", STT: true})
+				c.TaskModels.STTModels = []TaskModelRef{{Model: "ghost"}}
 			},
 			wantErrs: []string{
-				`task_models.models[ghost]: model "ghost" does not exist`,
+				`task_models.stt[ghost]: model "ghost" does not exist`,
 				`agents.list[alice].models: model "ghost" does not exist`,
 			},
 		},
@@ -97,11 +102,11 @@ func TestValidateModelReferences(t *testing.T) {
 			name: "disabled alias is a warning",
 			mutate: func(c *Config) {
 				c.Summarization.Models = []string{"beta"}
-				c.TaskModels.Models = []TaskModel{{Model: "beta", Text: true}}
+				c.TaskModels.TextModels = []TaskModelRef{{Model: "beta"}}
 			},
 			wantWarnings: []string{
 				`summarization.models: model "beta" is disabled`,
-				`task_models.models[beta]: model "beta" is disabled`,
+				`task_models.text[beta]: model "beta" is disabled`,
 			},
 		},
 		{
@@ -134,13 +139,14 @@ func TestPruneDanglingModelReferences(t *testing.T) {
 	cfg := refTestConfig()
 	cfg.Agents.List[0].Models = []string{"ghost", "alpha", "beta", "phantom"}
 	cfg.Agents.List[0].Subagents.Models = []string{"ghost"}
-	cfg.TaskModels.Models = []TaskModel{{Model: "ghost", STT: true}, {Model: "alpha", Vision: true}, {Model: "phantom", Text: true}}
+	cfg.TaskModels.STTModels = []TaskModelRef{{Model: "ghost"}, {Model: "alpha"}}
+	cfg.TaskModels.TTSModels = []TTSTaskModel{{Model: "phantom", TTSDefaults: &TTSDefaults{Voice: "v"}}, {Model: "alpha"}}
 
 	removed := cfg.PruneDanglingModelReferences()
 
 	want := []DanglingModelReference{
-		{Site: "task_models.models[ghost]", Alias: "ghost"},
-		{Site: "task_models.models[phantom]", Alias: "phantom"},
+		{Site: "task_models.tts[phantom]", Alias: "phantom"},
+		{Site: "task_models.stt[ghost]", Alias: "ghost"},
 		{Site: "agents.list[alice].models", Alias: "ghost", Agent: "alice"},
 		{Site: "agents.list[alice].models", Alias: "phantom", Agent: "alice"},
 		{Site: "agents.list[alice].subagents.models", Alias: "ghost", Agent: "alice"},
@@ -155,9 +161,16 @@ func TestPruneDanglingModelReferences(t *testing.T) {
 	if got := cfg.Agents.List[0].Subagents.Models; len(got) != 0 {
 		t.Fatalf("subagents.models = %v, want empty", got)
 	}
-	// A task model whose model is gone is removed from the page, not blanked.
-	if got := cfg.TaskModels.Models; !reflect.DeepEqual(got, []TaskModel{{Model: "alpha", Vision: true}}) {
-		t.Fatalf("task_models.models = %+v, want only alpha", got)
+	// A task model whose model is gone is removed from its list, not
+	// blanked; the other lists keep their entries.
+	if got := cfg.TaskModels.STTModels; !reflect.DeepEqual(got, []TaskModelRef{{Model: "alpha"}}) {
+		t.Fatalf("task_models.stt = %+v, want only alpha", got)
+	}
+	if got := cfg.TaskModels.TTSModels; !reflect.DeepEqual(got, []TTSTaskModel{{Model: "alpha"}}) {
+		t.Fatalf("task_models.tts = %+v, want only alpha", got)
+	}
+	if got := cfg.TaskModels.ModelsFor(TaskUseVision); !reflect.DeepEqual(got, []string{"alpha"}) {
+		t.Fatalf("task_models.vision = %v, want alpha kept", got)
 	}
 	// Nothing dangling remains, and a second pass removes nothing.
 	if errs, _ := cfg.ValidateModelReferences(); len(errs) != 0 {
@@ -167,9 +180,9 @@ func TestPruneDanglingModelReferences(t *testing.T) {
 		t.Fatalf("second prune removed %v, want nothing", again)
 	}
 	// A disabled model is left alone.
-	cfg.TaskModels.Models = []TaskModel{{Model: "beta", Vision: true}}
-	if again := cfg.PruneDanglingModelReferences(); len(again) != 0 || len(cfg.TaskModels.Models) != 1 {
-		t.Fatalf("disabled task model: removed %v, task models = %+v, want it kept", again, cfg.TaskModels.Models)
+	cfg.TaskModels.VisionModels = []TaskModelRef{{Model: "beta"}}
+	if again := cfg.PruneDanglingModelReferences(); len(again) != 0 || len(cfg.TaskModels.VisionModels) != 1 {
+		t.Fatalf("disabled task model: removed %v, task models = %+v, want it kept", again, cfg.TaskModels.VisionModels)
 	}
 }
 

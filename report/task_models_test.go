@@ -22,20 +22,25 @@ func taskModelsSection(t *testing.T, cfg *config.Config, env Environment) Sectio
 	return Section{}
 }
 
-// One row per task model with its ticked uses; a use the provider's protocol
-// cannot serve is named and the row highlighted.
+// One row per list, in page order, with its models in list order; the models
+// whose provider's protocol cannot serve the use are named and the row
+// highlighted.
 func TestCollectProviders_TaskModelsTable(t *testing.T) {
 	cfg, env := fixtureConfig(t)
-	cfg.TaskModels.Models = []config.TaskModel{
-		{Model: "GPT", STT: true, Vision: true},
-		{Model: "Claude CLI", Text: true, STT: true, Classify: true},
-		{Model: "Codex Fast"},
+	cfg.TaskModels = config.TaskModelsConfig{
+		TextModels:     []config.TaskModelRef{{Model: "Claude CLI"}},
+		STTModels:      []config.TaskModelRef{{Model: "Claude CLI"}, {Model: "GPT"}},
+		VisionModels:   []config.TaskModelRef{{Model: "GPT"}},
+		ClassifyModels: []config.TaskModelRef{{Model: "Claude CLI"}, {Model: "GPT"}},
 	}
 	tb := findTable(t, taskModelsSection(t, cfg, env), "Task models")
 	want := [][]string{
-		{"GPT", "Transcription (STT), Vision", ""},
-		{"Claude CLI", "Text, Transcription (STT), Classify", "Transcription (STT)"},
-		{"Codex Fast", none, ""},
+		{"Generate text", "Claude CLI", ""},
+		{"Generate images", none, ""},
+		{"Text to speech", none, ""},
+		{"Transcription", "Claude CLI, GPT", "Claude CLI"},
+		{"Describe images", "GPT", ""},
+		{"Classification", "Claude CLI, GPT", ""},
 	}
 	if len(tb.Rows) != len(want) {
 		t.Fatalf("rows = %v, want %v", tb.Rows, want)
@@ -52,21 +57,28 @@ func TestCollectProviders_TaskModelsTable(t *testing.T) {
 		}
 	}
 
-	cfg.TaskModels.Models = nil
+	cfg.TaskModels = config.TaskModelsConfig{}
 	tb = findTable(t, taskModelsSection(t, cfg, env), "Task models")
-	if len(tb.Rows) != 1 || tb.Rows[0][0] != none {
-		t.Errorf("no task models rows = %v", tb.Rows)
+	if len(tb.Rows) != len(want) {
+		t.Fatalf("empty lists rows = %v", tb.Rows)
+	}
+	for _, r := range tb.Rows {
+		if r[1] != none || r[2] != "" {
+			t.Errorf("empty list row = %v", r)
+		}
 	}
 }
 
 // "Speech to text" and "Vision" rows appear, unmarked and linked to the Task
-// models page, while no model is ticked for them, and go once one is.
+// models page, while their list is empty, and go once it has a model. Each
+// reads its own list: a model in Describe images does not answer for
+// Transcription.
 func TestAssessment_TaskModelRows(t *testing.T) {
 	cfg, env := fixtureConfig(t)
-	cfg.TaskModels.Models = nil
+	cfg.TaskModels = config.TaskModelsConfig{TextModels: []config.TaskModelRef{{Model: "GPT"}}}
 	s := collectAssessment(t.Context(), cfg, env)
-	for _, item := range []string{itemSTT, itemVision} {
-		if r := assessmentRow(t, s, item); r[0] != "" || r[2] != "No model." {
+	for item, want := range map[string]string{itemSTT: "No model in Transcription.", itemVision: "No model in Describe images."} {
+		if r := assessmentRow(t, s, item); r[0] != "" || r[2] != want {
 			t.Errorf("%s row = %v", item, r)
 		}
 	}
@@ -84,10 +96,15 @@ func TestAssessment_TaskModelRows(t *testing.T) {
 		t.Errorf("found %d task model rows in Assess, want 2", links)
 	}
 
-	cfg.TaskModels.Models = []config.TaskModel{{Model: "GPT", STT: true, Vision: true}}
+	cfg.TaskModels.VisionModels = []config.TaskModelRef{{Model: "GPT"}}
+	s = collectAssessment(t.Context(), cfg, env)
+	if r := assessmentRow(t, s, itemSTT); r[2] != "No model in Transcription." {
+		t.Errorf("stt row with only a vision model = %v", r)
+	}
+	cfg.TaskModels.STTModels = []config.TaskModelRef{{Model: "GPT"}}
 	for _, r := range collectAssessment(t.Context(), cfg, env).Tables[0].Rows {
 		if r[1] == itemSTT || r[1] == itemVision {
-			t.Errorf("row listed with a model ticked: %v", r)
+			t.Errorf("row listed with a model in its list: %v", r)
 		}
 	}
 }
@@ -103,11 +120,11 @@ func TestCollectAgents_TaskModelGrant(t *testing.T) {
 	}
 	cfg.Agents.List[0].TaskModels = &config.AgentTaskModels{Image: true, STT: true}
 	cfg.Agents.List[0].Tools = []string{"file_read_bytes"}
-	if _, r := findRow(t, settings("alice"), "Task models"); r[1] != "Images, Transcription (STT) (ignored: no agent_spawn)" {
+	if _, r := findRow(t, settings("alice"), "Task models"); r[1] != "Generate images, Transcription (ignored: no agent_spawn)" {
 		t.Errorf("grant without agent_spawn = %q", r[1])
 	}
 	cfg.Agents.List[0].Tools = []string{"agent_spawn"}
-	if _, r := findRow(t, settings("alice"), "Task models"); r[1] != "Images, Transcription (STT)" {
+	if _, r := findRow(t, settings("alice"), "Task models"); r[1] != "Generate images, Transcription" {
 		t.Errorf("grant = %q", r[1])
 	}
 	cfg.Agents.List[0].DenyTools = []string{"agent_spawn"}
@@ -116,14 +133,12 @@ func TestCollectAgents_TaskModelGrant(t *testing.T) {
 	}
 }
 
-// Models ticked but none usable: a marked row naming each with why.
+// Models listed but none usable: a marked row naming each with why.
 func TestAssessment_NoUsableTaskModel(t *testing.T) {
 	cfg, env := fixtureConfig(t)
 	cfg.Models = append(cfg.Models, config.ModelConfig{ModelName: "Off", Model: "x", Provider: "OpenAI", Enabled: false})
-	cfg.TaskModels.Models = []config.TaskModel{
-		{Model: "Claude CLI", STT: true},
-		{Model: "Off", STT: true, Vision: true},
-	}
+	cfg.TaskModels.STTModels = []config.TaskModelRef{{Model: "Claude CLI"}, {Model: "Off"}}
+	cfg.TaskModels.VisionModels = []config.TaskModelRef{{Model: "Off"}}
 	s := collectAssessment(t.Context(), cfg, env)
 	if r := assessmentRow(t, s, itemSTT); r[0] != actionMark ||
 		r[2] != "No usable model: Claude CLI (provider protocol does not serve speech), Off (disabled on the Models page)." {
@@ -133,7 +148,8 @@ func TestAssessment_NoUsableTaskModel(t *testing.T) {
 		t.Errorf("vision row = %v", r)
 	}
 	// One usable model is enough: no row.
-	cfg.TaskModels.Models = append(cfg.TaskModels.Models, config.TaskModel{Model: "GPT", STT: true, Vision: true})
+	cfg.TaskModels.STTModels = append(cfg.TaskModels.STTModels, config.TaskModelRef{Model: "GPT"})
+	cfg.TaskModels.VisionModels = append(cfg.TaskModels.VisionModels, config.TaskModelRef{Model: "GPT"})
 	for _, r := range collectAssessment(t.Context(), cfg, env).Tables[0].Rows {
 		if r[1] == itemSTT || r[1] == itemVision {
 			t.Errorf("row listed with a usable model: %v", r)

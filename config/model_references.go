@@ -33,9 +33,10 @@ func (c *Config) modelRefSites() []modelRef {
 		{where: "agents.defaults.models", slice: &d.Models, role: "a default model"},
 		{where: "summarization.models", slice: &c.Summarization.Models, role: "a summarization model"},
 	}
-	for i := range c.TaskModels.Models {
-		m := &c.TaskModels.Models[i]
-		sites = append(sites, modelRef{where: "task_models.models[" + m.Model + "]", scalar: &m.Model, role: "a task model"})
+	for _, use := range TaskUses {
+		for _, name := range c.TaskModels.modelFields(use) {
+			sites = append(sites, modelRef{where: "task_models." + string(use) + "[" + *name + "]", scalar: name, role: "a task model"})
+		}
 	}
 	for i := range c.Agents.List {
 		a := &c.Agents.List[i]

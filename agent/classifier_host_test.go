@@ -97,7 +97,7 @@ func (s *chatServer) count() int {
 
 // classifierHostConfig has Alice (default, classifiers on, model alpha) and
 // Bob (classifiers off) on an OpenAI-compatible provider at url; beta is a
-// model that is not ticked Classify.
+// model that is not in Classification.
 func classifierHostConfig(t *testing.T, url string) *config.Config {
 	t.Helper()
 	cfg := ownerTestConfig(t)
@@ -114,14 +114,10 @@ func classifierHostConfig(t *testing.T, url string) *config.Config {
 		},
 		{ID: "bob", Name: "Bob"},
 	}
-	// alpha, and the models some tests switch to, are Classify models; beta
-	// is not.
-	cfg.TaskModels.Models = []config.TaskModel{
-		{Model: "alpha", Classify: true},
-		{Model: "beta", Text: true},
-		{Model: "gamma", Classify: true},
-		{Model: "cc", Classify: true},
-	}
+	// alpha, and the models some tests switch to, are in Classification;
+	// beta is not.
+	cfg.TaskModels.TextModels = []config.TaskModelRef{{Model: "beta"}}
+	cfg.TaskModels.ClassifyModels = []config.TaskModelRef{{Model: "alpha"}, {Model: "gamma"}, {Model: "cc"}}
 	return cfg
 }
 
@@ -285,8 +281,8 @@ func TestClassifierHost_Complete(t *testing.T) {
 		want  string
 	}{
 		{"no model", "", false, "has no classifier model"},
-		{"not a Classify model", "beta", false, "model beta is not a Classify model (agent Alice)"},
-		{"not a Classify model, switch off", "beta", true, "model beta is not a Classify model (agent Alice)"},
+		{"not in Classification", "beta", false, "model beta is not in Classification (agent Alice)"},
+		{"not in Classification, switch off", "beta", true, "model beta is not in Classification (agent Alice)"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := classifierHostConfig(t, ts.URL)

@@ -33,11 +33,11 @@ func sttModel(alias, provider, model string) config.ModelConfig {
 }
 
 // sttConfig is a config with the providers and models given and the named
-// models ticked Transcription (STT), in that order.
+// models in the Transcription list, in that order.
 func sttConfig(providers []config.Provider, models []config.ModelConfig, stt ...string) *config.Config {
 	cfg := &config.Config{Providers: providers, Models: models}
 	for _, name := range stt {
-		cfg.TaskModels.Models = append(cfg.TaskModels.Models, config.TaskModel{Model: name, STT: true})
+		cfg.TaskModels.STTModels = append(cfg.TaskModels.STTModels, config.TaskModelRef{Model: name})
 	}
 	return cfg
 }
@@ -63,26 +63,27 @@ func TestDetectTranscriber(t *testing.T) {
 		},
 		{
 			// A model alone does not enable STT; only the Transcription tick does.
-			name:    "model not ticked does not enable STT",
+			name:    "a model not in Transcription does not enable STT",
 			cfg:     sttConfig(allProviders, allModels),
 			wantNil: true,
 		},
 		{
-			name: "a model ticked for other uses only is not used",
+			name: "a model in other lists only is not used",
 			cfg: func() *config.Config {
 				c := sttConfig(allProviders, allModels)
-				c.TaskModels.Models = []config.TaskModel{{Model: "whisper-groq", Text: true, Vision: true}}
+				c.TaskModels.TextModels = []config.TaskModelRef{{Model: "whisper-groq"}}
+				c.TaskModels.VisionModels = []config.TaskModelRef{{Model: "whisper-groq"}}
 				return c
 			}(),
 			wantNil: true,
 		},
 		{
-			name:     "the one ticked model is used",
+			name:     "the one listed model is used",
 			cfg:      sttConfig(allProviders, allModels, "whisper-or"),
 			wantName: "whisper-or",
 		},
 		{
-			name: "ticked models form a fallback chain in page order",
+			name: "the listed models form a fallback chain in list order",
 			cfg:  sttConfig(allProviders, allModels, "whisper-or", "whisper-groq"),
 			// fallbackTranscriber.Name() joins the chain in order.
 			wantName: "whisper-or,whisper-groq",
@@ -169,8 +170,8 @@ func TestDetectTranscriber_SkipsUnusableModels(t *testing.T) {
 	}
 }
 
-// A ticked model that is missing from the model list, or disabled there, is
-// skipped and the next ticked model serves.
+// A listed model that is missing from the model list, or disabled there, is
+// skipped and the next listed model serves.
 func TestDetectTranscriber_SkipsMissingModel(t *testing.T) {
 	disabled := sttModel("off", "groq", "whisper-large-v3")
 	disabled.Enabled = false

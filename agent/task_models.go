@@ -47,11 +47,10 @@ const taskAttemptTimeout = 5 * time.Minute
 const taskTempPrefix = "task-"
 
 // taskModelHost runs agent_spawn's task-model calls (TaskModelRunner): one
-// call per model, never a turn, never tools. Candidates are the models
-// ticked for the kind on the Task models page, in page order (or the one
-// named), skipping those in cooldown and falling back on failure. Output is
-// written in the caller's workspace (a clone's is its source's) under
-// files/generated/<date>/.
+// call per model, never a turn, never tools. Candidates are the kind's list
+// on the Task models page, in order (or the one named), skipping those in
+// cooldown and falling back on failure. Output is written in the caller's
+// workspace (a clone's is its source's) under files/generated/<date>/.
 type taskModelHost struct {
 	al *AgentLoop
 	// httpClient is used by the speech and image clients; nil is the
@@ -133,12 +132,12 @@ func (h *taskModelHost) prepare(agentID, workspace string, req toolsagents.TaskM
 	candidates := cfg.TaskModels.ModelsFor(use)
 	if req.Model != "" {
 		if !cfg.TaskModels.Has(req.Model, use) {
-			return nil, nil, fmt.Errorf("Model %s is not a task model for %s; tick it on the Task models page.", req.Model, config.TaskSpawnKindName(use)) //nolint:staticcheck // ST1005: user-facing sentence
+			return nil, nil, fmt.Errorf("Model %s is not in %s; add it on the Task models page.", req.Model, use.Label()) //nolint:staticcheck // ST1005: user-facing sentence
 		}
 		candidates = []string{strings.TrimSpace(req.Model)}
 	}
 	if len(candidates) == 0 {
-		return nil, nil, fmt.Errorf("No model is ticked for %s on the Task models page.", config.TaskSpawnKindName(use)) //nolint:staticcheck // ST1005: user-facing sentence
+		return nil, nil, fmt.Errorf("No model in %s; add one on the Task models page.", use.Label()) //nolint:staticcheck // ST1005: user-facing sentence
 	}
 	inputs, err := h.inputs(cfg, a, workspace, req, read)
 	if err != nil {
@@ -435,7 +434,7 @@ func (h *taskModelHost) call(ctx context.Context, cfg *config.Config, agentID, a
 	case toolsagents.TaskKindSTT:
 		return h.transcribe(callCtx, mc, prov, req, inputs[0])
 	case toolsagents.TaskKindImage:
-		entry := taskModelEntry(cfg, alias)
+		entry, _ := cfg.TaskModels.Entry(config.TaskUseImage, alias)
 		if entry.EffectiveImageAPI() == config.ImageAPIImages {
 			return h.imagesAPI(callCtx, mc, prov, req, inputs)
 		}
@@ -457,16 +456,6 @@ func attemptTimeout(cfg *config.Config, mc *config.ModelConfig) time.Duration {
 	default:
 		return taskAttemptTimeout
 	}
-}
-
-// taskModelEntry is the Task models row of alias.
-func taskModelEntry(cfg *config.Config, alias string) config.TaskModel {
-	for _, m := range cfg.TaskModels.Models {
-		if strings.TrimSpace(m.Model) == alias {
-			return m
-		}
-	}
-	return config.TaskModel{Model: alias}
 }
 
 // chat is one dispatcher Chat with no tool definitions: the prompt, text
@@ -568,7 +557,8 @@ func (h *taskModelHost) speak(ctx context.Context, cfg *config.Config, alias str
 		return nil, errors.New(problem)
 	}
 	voiceName, format := req.Voice, req.Format
-	if d := taskModelEntry(cfg, alias).TTSDefaults; d != nil {
+	if e, _ := cfg.TaskModels.Entry(config.TaskUseTTS, alias); e.TTSDefaults != nil {
+		d := e.TTSDefaults
 		if voiceName == "" {
 			voiceName = d.Voice
 		}

@@ -17,55 +17,43 @@ const (
 	itemVision = "Vision"
 )
 
-// taskModelsLink is the WebUI page where task models are ticked.
+// taskModelsLink is the WebUI page where the task model lists are kept.
 const taskModelsLink = "/task-models"
 
-// taskModelsTable is one row per task model: its ticked uses and the uses its
-// provider cannot serve (known from the protocol), highlighted.
+// taskModelsTable is one row per list, in page order: its models in
+// fallback order and those whose provider cannot serve the use (known from
+// the protocol), highlighted.
 func taskModelsTable(cfg *config.Config) Table {
-	t := Table{Caption: "Task models", Columns: []string{"Model", "Uses", "Provider cannot serve"}}
-	for _, m := range cfg.TaskModels.Models {
-		uses := labels(m.Uses())
-		bad := cfg.TaskModelUnsupported(m)
+	t := Table{Caption: "Task models", Columns: []string{"List", "Models", "Provider cannot serve"}}
+	for _, use := range config.TaskUses {
+		bad := cfg.TaskModelsUnsupported(use)
 		if len(bad) > 0 {
 			t.Highlight = append(t.Highlight, len(t.Rows))
 		}
-		t.Rows = append(t.Rows, row(m.Model, joinOr(uses, none), joinOr(labels(bad), "")))
-	}
-	if len(t.Rows) == 0 {
-		t.Rows = append(t.Rows, row(none, "", ""))
+		t.Rows = append(t.Rows, row(use.Label(), joinOr(cfg.TaskModels.ModelsFor(use), none), joinOr(bad, "")))
 	}
 	return t
 }
 
-// labels are the uses as the page names them.
-func labels(uses []config.TaskUse) []string {
-	out := make([]string, len(uses))
-	for i, u := range uses {
-		out[i] = u.Label()
-	}
-	return out
-}
-
-// taskModelAssessment is the assessment rows for the built-in uses with no
-// model ticked: incoming voice messages are not transcribed and images are
+// taskModelAssessment is the assessment rows for the built-in uses whose
+// list is empty: incoming voice messages are not transcribed and images are
 // not described for text-only models until one is. A state, not a finding,
 // so no action mark.
 //
-// When models are ticked but none can be used the row is marked and names
+// When the list has models but none can be used the row is marked and names
 // each with why: transcription by the transcriber's own rules
 // (voice.TranscriptionStatus), vision by the configuration
 // (Config.TaskModelProblem).
 func taskModelAssessment(cfg *config.Config) []assessRow {
 	var rows []assessRow
 	if len(cfg.TaskModels.ModelsFor(config.TaskUseSTT)) == 0 {
-		rows = append(rows, assessRow{false, itemSTT, "No model."})
+		rows = append(rows, assessRow{false, itemSTT, "No model in " + config.TaskUseSTT.Label() + "."})
 	} else if st := voice.TranscriptionStatus(cfg); len(st.Usable) == 0 {
 		rows = append(rows, assessRow{true, itemSTT, noUsableModel(st.Unusable)})
 	}
 	vision := cfg.TaskModels.ModelsFor(config.TaskUseVision)
 	if len(vision) == 0 {
-		rows = append(rows, assessRow{false, itemVision, "No model."})
+		rows = append(rows, assessRow{false, itemVision, "No model in " + config.TaskUseVision.Label() + "."})
 	} else {
 		var unusable []voice.UnusableModel
 		for _, name := range vision {
@@ -80,7 +68,7 @@ func taskModelAssessment(cfg *config.Config) []assessRow {
 	return rows
 }
 
-// noUsableModel is the status of a use whose ticked models are all
+// noUsableModel is the status of a use whose listed models are all
 // unusable, naming each with why.
 func noUsableModel(models []voice.UnusableModel) string {
 	parts := make([]string, len(models))
@@ -90,9 +78,9 @@ func noUsableModel(models []voice.UnusableModel) string {
 	return "No usable model: " + strings.Join(parts, ", ") + "."
 }
 
-// classifyNote is the classifier model status when no model is ticked
-// Classify at all, naming where to fix it.
-const classifyNote = "No Classify model; tick Classify on the Task models page."
+// classifyNote is the classifier model status when the Classification list
+// is empty, naming where to fix it.
+const classifyNote = "No model in Classification; add one on the Task models page."
 
 // taskModelGrant is the kinds of task model the agent may use through
 // agent_spawn, by their labels, or "off"; a grant is marked ignored when

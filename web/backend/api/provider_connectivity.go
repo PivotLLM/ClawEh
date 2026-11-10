@@ -62,7 +62,7 @@ func testProviderConnectivity(req providerTestRequest) providerTestResponse {
 	case proto == "anthropic" || proto == "anthropic-messages":
 		return probeAnthropicAuth(base, key)
 	case config.TaskOnlyProtocol(proto):
-		return providerTestResponse{Message: "This provider can't be tested here; tick its model on the Task models page and try it."}
+		return providerTestResponse{Message: "This provider can't be tested here; add its model on the Task models page and try it."}
 	default: // openai, openai-chat, openai-responses, and other openai-compatible
 		return probeOpenAICompatAuth(base, key)
 	}

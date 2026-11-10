@@ -102,10 +102,10 @@ func (al *AgentLoop) buildVisionLLMClient(cfg *config.Config, agent *AgentInstan
 	}, true
 }
 
-// wireVisionClients builds the agent's vision-describe chain from the models
-// ticked Vision on the Task models page, in page order, and stores it on the
+// wireVisionClients builds the agent's vision-describe chain from the Describe
+// images list on the Task models page, in its order, and stores it on the
 // instance. Called once per agent from agentBuilder (initial construction
-// and config reload). No Vision model leaves VisionClients empty, which keeps
+// and config reload). An empty list leaves VisionClients empty, which keeps
 // the feature off (images are dropped from dispatch, with a hidden-attachment
 // note from messagesForModel).
 func (al *AgentLoop) wireVisionClients(cfg *config.Config, agent *AgentInstance) {

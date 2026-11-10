@@ -1,5 +1,5 @@
-// Package voice transcribes incoming voice messages with the models ticked
-// Transcription (STT) on the Task models page. The HTTP calls are spawnllm's
+// Package voice transcribes incoming voice messages with the models in
+// the Transcription list on the Task models page. The HTTP calls are spawnllm's
 // speech package; ClawEh keeps the policy: which models, in which order, the
 // per-attempt deadline, the fallback and the operator alerts.
 package voice
@@ -287,8 +287,8 @@ func (f *fallbackTranscriber) Transcribe(ctx context.Context, audio AudioFile) (
 	return nil, lastErr
 }
 
-// DetectTranscriber builds the transcription backend from the models ticked
-// Transcription (STT) on the Task models page, in page order. Every enabled
+// DetectTranscriber builds the transcription backend from the models in
+// the Transcription list on the Task models page, in its order. Every enabled
 // model_list entry of such a model is usable when SpeechBackend accepts its
 // provider; the usable ones form an ordered fallback chain. No usable entry
 // means transcription is off. The result raises no operator alerts; the
@@ -383,7 +383,7 @@ type STTStatus struct {
 	Unusable []UnusableModel
 }
 
-// UnusableModel is a ticked task model that is not used, and why.
+// UnusableModel is a listed task model that is not used, and why.
 type UnusableModel struct {
 	Model, Reason string
 }

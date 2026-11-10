@@ -70,15 +70,15 @@ func TestCollectAgents_ClassifierSettings(t *testing.T) {
 	check("bob", "on", "GPT", false)
 
 	bob.Classifiers.Model = "Codex Fast"
-	check("bob", "on", "Codex Fast (not a Classify model)", true)
+	check("bob", "on", "Codex Fast (not in Classification)", true)
 
 	bob.Classifiers.Model = ""
 	check("bob", "on", "(none set)", true)
 
-	// With no Classify model at all, the row says where to tick one.
-	cfg.TaskModels.Models = nil
-	check("bob", "on", "(none set: No Classify model; tick Classify on the Task models page.)", true)
-	cfg.TaskModels.Models = []config.TaskModel{{Model: "GPT", Classify: true}}
+	// With an empty Classification list, the row says where to add one.
+	cfg.TaskModels.ClassifyModels = nil
+	check("bob", "on", "(none set: No model in Classification; add one on the Task models page.)", true)
+	cfg.TaskModels.ClassifyModels = []config.TaskModelRef{{Model: "GPT"}}
 
 	// With the switch off the model is not used, so it is not marked.
 	bob.Classifiers = &config.AgentClassifiersConfig{Model: "Codex Fast"}
@@ -150,7 +150,7 @@ func TestAssessment_Classifiers(t *testing.T) {
 	writeClassifier(t, cfg, "bob", "inbox", classifierDef("inbox", "bob"))
 
 	s := collectAssessment(t.Context(), cfg, env)
-	if r := assessmentRow(t, s, "Classifier model (Bob)"); r[0] != actionMark || r[2] != "Codex Fast is not a Classify model." {
+	if r := assessmentRow(t, s, "Classifier model (Bob)"); r[0] != actionMark || r[2] != "Codex Fast is not in Classification." {
 		t.Errorf("model row = %v", r)
 	}
 	if r := assessmentRow(t, s, "Classifier (Bob: broken)"); r[0] != actionMark || !strings.HasPrefix(r[2], "Invalid, not run: ") {
@@ -172,15 +172,15 @@ func TestAssessment_Classifiers(t *testing.T) {
 		t.Errorf("missing model row = %v", r)
 	}
 
-	// With no Classify model at all, the note says where to tick one.
-	cfg.TaskModels.Models = nil
+	// With an empty Classification list, the note says where to add one.
+	cfg.TaskModels.ClassifyModels = nil
 	if r := assessmentRow(t, collectAssessment(t.Context(), cfg, env), "Classifier model (Bob)"); r[0] != actionMark ||
-		r[2] != "No Classify model; tick Classify on the Task models page." {
+		r[2] != "No model in Classification; add one on the Task models page." {
 		t.Errorf("no Classify model row = %v", r)
 	}
 	bob.Classifiers.Model = "GPT"
 	if r := assessmentRow(t, collectAssessment(t.Context(), cfg, env), "Classifier model (Bob)"); r[0] != actionMark ||
-		r[2] != "GPT is not a Classify model. No Classify model; tick Classify on the Task models page." {
+		r[2] != "GPT is not in Classification. No model in Classification; add one on the Task models page." {
 		t.Errorf("no Classify model, model set row = %v", r)
 	}
 

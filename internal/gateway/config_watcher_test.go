@@ -413,7 +413,7 @@ func TestModelRefAlerts_SkippedOncePerReferenceUntilFixed(t *testing.T) {
 	rec := testalerts.Install(t)
 	m := &modelRefAlerts{}
 	alice := config.DanglingModelReference{Site: "agents.list[alice].models", Alias: "DeepSeek 4 Pro", Agent: "Alice"}
-	defaults := config.DanglingModelReference{Site: "task_models.models[gone]", Alias: "gone"}
+	defaults := config.DanglingModelReference{Site: "task_models.vision[gone]", Alias: "gone"}
 	skipped := func(refs ...config.DanglingModelReference) modelRefPrune { return modelRefPrune{skipped: refs} }
 
 	m.report(rec, skipped(alice))
@@ -435,7 +435,7 @@ func TestModelRefAlerts_SkippedOncePerReferenceUntilFixed(t *testing.T) {
 	if got[0].Description != want {
 		t.Fatalf("description = %q, want %q", got[0].Description, want)
 	}
-	if got[1].EventID != "model-ref:task_models.models[gone]" {
+	if got[1].EventID != "model-ref:task_models.vision[gone]" {
 		t.Fatalf("defaults alert EventID = %q", got[1].EventID)
 	}
 
@@ -447,7 +447,7 @@ func TestModelRefAlerts_SkippedOncePerReferenceUntilFixed(t *testing.T) {
 	if got[3].Description != aliceRemovedDesc {
 		t.Fatalf("removed description = %q, want %q", got[3].Description, aliceRemovedDesc)
 	}
-	wantSite := `task_models.models[gone] named model "gone", which no longer exists; it was removed from task_models.models[gone]. Nothing else to do — choose an existing model there if you want one.`
+	wantSite := `task_models.vision[gone] named model "gone", which no longer exists; it was removed from task_models.vision[gone]. Nothing else to do — choose an existing model there if you want one.`
 	if got[4].Description != wantSite {
 		t.Fatalf("removed site description = %q, want %q", got[4].Description, wantSite)
 	}

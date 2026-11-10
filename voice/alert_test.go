@@ -19,10 +19,10 @@ import (
 	"github.com/PivotLLM/ClawEh/config"
 )
 
-// TestDetectTranscriber_AlertsOnUnusableBackend: a ticked STT model that
+// TestDetectTranscriber_AlertsOnUnusableBackend: a Transcription model that
 // cannot be used raises one alert keyed by its name, urgent when it leaves no
-// usable model and normal when another one serves; a model not ticked raises
-// none.
+// usable model and normal when another one serves; a model not in that
+// list raises none.
 func TestDetectTranscriber_AlertsOnUnusableBackend(t *testing.T) {
 	models := []config.ModelConfig{
 		{ModelName: "alice-stt", Provider: "missing", Model: "whisper-1", Enabled: true},
@@ -30,25 +30,25 @@ func TestDetectTranscriber_AlertsOnUnusableBackend(t *testing.T) {
 	}
 	tests := []struct {
 		name         string
-		task         []config.TaskModel
+		task         config.TaskModelsConfig
 		wantAlert    bool
 		wantPriority int
 	}{
 		{
 			name:         "only model unusable",
-			task:         []config.TaskModel{{Model: "alice-stt", STT: true}},
+			task:         config.TaskModelsConfig{STTModels: []config.TaskModelRef{{Model: "alice-stt"}}},
 			wantAlert:    true,
 			wantPriority: alerter.Normal,
 		},
 		{
 			name:         "another model usable",
-			task:         []config.TaskModel{{Model: "alice-stt", STT: true}, {Model: "whisper-groq", STT: true}},
+			task:         config.TaskModelsConfig{STTModels: []config.TaskModelRef{{Model: "alice-stt"}, {Model: "whisper-groq"}}},
 			wantAlert:    true,
 			wantPriority: alerter.Normal,
 		},
 		{
-			name: "model not ticked",
-			task: []config.TaskModel{{Model: "alice-stt", Text: true}, {Model: "whisper-groq", STT: true}},
+			name: "model not in Transcription",
+			task: config.TaskModelsConfig{TextModels: []config.TaskModelRef{{Model: "alice-stt"}}, STTModels: []config.TaskModelRef{{Model: "whisper-groq"}}},
 		},
 	}
 	for _, tt := range tests {
@@ -57,7 +57,7 @@ func TestDetectTranscriber_AlertsOnUnusableBackend(t *testing.T) {
 			cfg := &config.Config{
 				Providers:  []config.Provider{groqProvider},
 				Models:     models,
-				TaskModels: config.TaskModelsConfig{Models: tt.task},
+				TaskModels: tt.task,
 			}
 			DetectTranscriberWithAlerter(cfg, rec)
 			if !tt.wantAlert {

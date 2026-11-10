@@ -3,7 +3,10 @@
 
 package config
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestValidateProvider_IgnoresOtherInvalidEntries(t *testing.T) {
 	cfg := &Config{Providers: []Provider{
@@ -76,7 +79,7 @@ func TestRenameModelReferences(t *testing.T) {
 			},
 		},
 		Summarization: SummarizationConfig{Models: []string{"z", "old"}},
-		TaskModels:    TaskModelsConfig{Models: []TaskModel{{Model: "old", Vision: true}, {Model: "x", STT: true}}},
+		TaskModels:    TaskModelsConfig{VisionModels: []TaskModelRef{{Model: "old"}, {Model: "x"}}, STTModels: []TaskModelRef{{Model: "old"}}},
 	}
 
 	cfg.RenameModelReferences("old", "new")
@@ -87,7 +90,7 @@ func TestRenameModelReferences(t *testing.T) {
 	if cfg.Agents.Defaults.Models[2] != "keep" {
 		t.Error("unrelated model entry should be untouched")
 	}
-	if tm := cfg.TaskModels.Models; tm[0].Model != "new" || !tm[0].Vision || tm[1].Model != "x" {
+	if tm := cfg.TaskModels; !slices.Equal(tm.ModelsFor(TaskUseVision), []string{"new", "x"}) || !slices.Equal(tm.ModelsFor(TaskUseSTT), []string{"new"}) {
 		t.Errorf("task models not repointed: %+v", tm)
 	}
 	if cfg.Summarization.Models[1] != "new" {
