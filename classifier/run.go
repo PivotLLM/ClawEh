@@ -314,9 +314,13 @@ func (s *Service) runClassifier(ctx context.Context, scope Scope, def *Definitio
 		if fatal != nil || stoppedBy != "" {
 			return true
 		}
-		select {
-		case <-ctx.Done():
+		// The service context first: a shutdown also closes every run's stop
+		// channel, and a select over both would pick either reason at random.
+		if ctx.Err() != nil {
 			stoppedBy = "the service stopped"
+			return true
+		}
+		select {
 		case <-stop:
 			stoppedBy = "the classifier was stopped"
 		default:

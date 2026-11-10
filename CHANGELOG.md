@@ -398,6 +398,10 @@
 
 ### Fixed
 
+- **A classifier run cut short by a shutdown says so.** Its last run was
+  sometimes recorded as "the classifier was stopped", as if the classifier
+  had been changed or deleted; it is now always "the service stopped".
+
 - **A link out of the workspace is refused in plain words.** Reading,
   listing, searching or globbing through a link in an agent's workspace that
   leads outside it answered with the raw "openat files/x: path escapes from
