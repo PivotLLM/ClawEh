@@ -22,7 +22,10 @@ A file counts as audio by its type (`audio/...`) or its name (`.mp3`, `.wav`,
 Transcription uses the models ticked **Transcription (STT)** on the
 [Task models](../providers/task-models.md) page. The model's provider gives the
 endpoint and the API key, so the same provider can serve both chat models and
-transcription.
+transcription. The audio goes to `<Base URL>/audio/transcriptions`; several
+providers with the same Base URL reach the same endpoint, so pick the one
+whose key should be billed (see
+[Which address is called](../providers/task-models.md#which-address-is-called)).
 
 1. On the **Providers** page, make sure the service has a provider with an
    **API Key**. The built-in catalogue already has **Groq**, **OpenAI** and
@@ -44,8 +47,9 @@ transcription.
 The page saves by itself ("Saved ✓"), and the change applies without a
 restart. Send the agent a voice message to check.
 
-A model whose provider is not `openai-chat` or `openai-responses`, or has no
-**Base URL** or **API Key**, is skipped, and ClawEh raises the **Speech backend
+A model whose provider can't serve speech (see
+[Task models](../providers/task-models.md#which-address-is-called)), or lacks
+the **Base URL** or **API Key** it needs, is skipped, and ClawEh raises the **Speech backend
 not usable** [alert](../admin/alerts.md). The provider's proxy setting is not
 used for transcription.
 

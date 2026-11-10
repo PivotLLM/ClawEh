@@ -107,6 +107,30 @@ An agent's mounts become [allowed folders](../agents/allowed-folders.md) at load
 
 An agent whose tools list is `"*"` also gets the new `file_glob` tool, which finds files by name. To keep it from such an agent, add `file_glob` to its **Denied tools**.
 
+### Transcription and image descriptions are set on Task models
+
+The Speech page (`voice.stt`, `voice.echo_transcription`) and the vision
+model settings (`agents.defaults.vision_model`, `vision_model_fallbacks`) are
+gone, and their values are not carried over. Until you set them again,
+voice messages are not transcribed and images are not described for models
+that can't see them. Check Up shows **Speech to text** and **Vision** with
+"No model."
+
+1. Before saving anything after the upgrade, note the old values in
+   `config.json`: each `voice.stt` entry's provider and model, in order,
+   `voice.echo_transcription`, and the vision model and its fallbacks. The
+   first save rewrites the file without them.
+2. For each `voice.stt` entry, add a model on the **Models** page with that
+   provider and model. An entry with a blank model used its service's
+   default: `whisper-1` on OpenAI, `whisper-large-v3` on Groq,
+   `openai/whisper-large-v3` on OpenRouter.
+3. On **Task models**, add those models in the old order and tick
+   **Transcription (STT)**; add the vision model, then each fallback, and
+   tick **Vision**. Turn on **Echo transcription** if it was on.
+
+See [Task models](../providers/task-models.md#transcription-and-speech) for
+which provider and model ID to use.
+
 ### Shell commands are not limited by path
 
 `shell_exec` no longer refuses a command for the paths in it or for its working folder. It runs with the full access of the account ClawEh runs as; the deny patterns still apply. Check that each agent with `shell_exec` ticked should have it.

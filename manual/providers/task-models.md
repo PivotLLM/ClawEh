@@ -17,26 +17,6 @@ group of the sidebar.
 | **Vision** | `vision` | Describes images for an agent whose model can't see them. See [Vision](#vision). |
 | **Classify** | `classify` | The models an agent's **Classifier model** can be. See [Classifiers](../agents/classifiers.md). |
 
-## Upgrading from the Speech page and the vision model settings
-
-Releases before 0.6.4 set transcription with `voice.stt` (the Speech page)
-and image descriptions with `agents.defaults.vision_model` and
-`vision_model_fallbacks`. Those settings are no longer read, and the first
-save of any page rewrites `config.json` without them, so **before saving
-anything after the upgrade**, copy them from `config.json`:
-
-- each `voice.stt` entry's provider and model, in order, and
-  `voice.echo_transcription`;
-- `agents.defaults.vision_model` and `agents.defaults.vision_model_fallbacks`.
-
-There is no automatic migration. Then add each speech model on the Models
-page, on the provider its entry named, and tick **Transcription (STT)** here,
-in the old order. An entry with a blank model used its provider host's
-default: `api.openai.com` → `whisper-1`, `api.groq.com` →
-`whisper-large-v3`, `openrouter.ai` → `openai/whisper-large-v3`. Tick
-**Vision** for the old vision model, then each fallback, in that order, and
-set **Echo transcription** below if it was on.
-
 ## Set it up
 
 1. Add the model on the [Models](./concepts.md) page first. Its provider gives
@@ -59,6 +39,54 @@ from the provider's protocol:
 | Transcription (STT), Speech (TTS) | `openai-chat` and `openai-responses` providers (OpenAI-style `/audio` endpoints; OpenRouter's transcription is recognised by its address), and `gemini` and `elevenlabs` providers. An OpenAI-style provider also needs a **Base URL**; every one needs an **API Key**; a model without them is skipped. |
 | Vision | HTTP providers. For a CLI provider it is not known, so it is not marked. |
 | Images | `openai-chat` and `openai-responses` providers. For others it is not known, so it is not marked. |
+
+## Transcription and speech
+
+A transcription or speech model is an ordinary entry on the Models page: a
+provider and a model ID. It is not a channel, and no agent chats with it
+unless you add it to that agent's models.
+
+### Which address is called
+
+The provider decides where the audio goes. For an `openai-chat` or
+`openai-responses` provider, ClawEh uses only its **Base URL** and **API
+Key**:
+
+| Use | Request |
+|---|---|
+| Transcription (STT) | `POST <Base URL>/audio/transcriptions` |
+| Speech (TTS) | `POST <Base URL>/audio/speech` |
+
+For an `openrouter.ai` Base URL the audio is sent in OpenRouter's format;
+for any other address, in OpenAI's. The provider's chat settings (its
+protocol, strict mode, reasoning options) are not used for these calls, so
+several providers with the same Base URL reach the same endpoint. Pick the
+one whose API key should be billed.
+
+### Which model ID to enter
+
+The model ID must be one the provider's service offers for that use:
+
+| Service | Base URL | Transcription model | Speech model |
+|---|---|---|---|
+| OpenRouter | `https://openrouter.ai/api/v1` | `openai/whisper-large-v3` | see OpenRouter's model list |
+| OpenAI | `https://api.openai.com/v1` | `whisper-1`, `gpt-4o-transcribe` | `tts-1`, `gpt-4o-mini-tts` |
+| Groq | `https://api.groq.com/openai/v1` | `whisper-large-v3` | see Groq's model list |
+| A local Whisper server with an OpenAI-style API | its address, ending in `/v1` | the name the server gives its model | — |
+
+The same model on another service has another ID: `openai/whisper-large-v3`
+is OpenRouter's name, and on OpenAI the model is `whisper-1`. A provider
+whose service has no audio endpoint (DeepSeek, for example) is not marked on
+this page, because only its protocol is known; its calls fail and the next
+ticked model is tried.
+
+### Example: OpenRouter transcription
+
+1. **Models** page: add a model named, for example, `OR Whisper`, with
+   provider your OpenRouter provider and model `openai/whisper-large-v3`.
+2. **Task models** page: add `OR Whisper` and tick **Transcription (STT)**.
+3. Send a voice message to an agent. Check Up's **Speech to text** row no
+   longer says "No model."
 
 ### Gemini and ElevenLabs
 
