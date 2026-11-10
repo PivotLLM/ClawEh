@@ -6,6 +6,8 @@ package maestro
 import (
 	"context"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -366,5 +368,27 @@ func TestRunnerCache_ConcurrentRegistrationsShareOneRunner(t *testing.T) {
 		if r == nil || r != cached {
 			t.Errorf("registration %d got runner %p, want the cached %p", i, r, cached)
 		}
+	}
+}
+
+// TestRunnerCache_ReferenceDirChangeRebuildsIdleRunner: a new allowed folder (a
+// new reference directory) on an idle runner builds a new runner.
+func TestRunnerCache_ReferenceDirChangeRebuildsIdleRunner(t *testing.T) {
+	reg := newRegistration(t, "alice-reload-folder")
+	reg.register(t, newGatedRunner())
+	before := cachedRunnerFor(reg.agentID())
+
+	dir := filepath.Join(t.TempDir(), "standards")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	reg.cfg.Agents.List[0].AllowedFolders = []config.AllowedFolderConfig{{Path: dir}}
+	reg.register(t, newGatedRunner())
+	after := cachedEntry(reg.agentID())
+	if after == nil || after.runner == before {
+		t.Fatal("an idle runner was kept although the agent's allowed folders changed")
+	}
+	if len(after.spec.refDirs) != 1 || after.spec.refDirs[0].Mount != "standards" {
+		t.Errorf("new runner's reference dirs = %+v, want the standards folder", after.spec.refDirs)
 	}
 }

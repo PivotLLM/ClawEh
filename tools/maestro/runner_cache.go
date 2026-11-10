@@ -6,6 +6,7 @@ package maestro
 import (
 	"context"
 	"reflect"
+	"slices"
 	"sync"
 	"sync/atomic"
 
@@ -60,9 +61,10 @@ func (s *swapDispatcher) TestLLM(llmID string) (bool, error) { return s.cur.Load
 // runnerSpec is the part of an agent's config a runner is built from and
 // cannot change afterwards.
 type runnerSpec struct {
-	base   string
-	runCfg mconfig.Runner
-	modes  config.Modes // the folder and file modes it creates with
+	base    string
+	runCfg  mconfig.Runner
+	refDirs []mconfig.ReferenceDir // the agent's allowed folders
+	modes   config.Modes           // the folder and file modes it creates with
 }
 
 // cachedRunner is an agent's Maestro runner, the spec it was built from and
@@ -80,8 +82,9 @@ type cachedRunner struct {
 // lives on the runner. So every registration of the agent's tools (at boot and
 // on each reload) gets the cached runner, and tools a turn still holds from
 // before a reload share it with the new ones, unless the runner has to be
-// rebuilt: the base directory changed, or the Maestro runner settings or the
-// agents area's modes changed while no run was in progress. In that residual case a turn still holding the old tools can start
+// rebuilt: the base directory changed, or the Maestro runner settings, the
+// reference directories (the agent's allowed folders) or the agents area's
+// modes changed while no run was in progress. In that residual case a turn still holding the old tools can start
 // a run on the old runner, which the new tools do not see.
 var runners = struct {
 	mu      sync.Mutex
@@ -90,8 +93,8 @@ var runners = struct {
 
 // runnerFor returns the Maestro runner and dispatcher the agent's tools use,
 // and points that dispatcher at disp. The cached runner is kept unless the
-// base directory changed, or its runner settings or modes changed while it is
-// idle; then a new one is built outside the lock and the
+// base directory changed, or its runner settings, reference directories or
+// modes changed while it is idle; then a new one is built outside the lock and the
 // decision is re-checked before it is cached.
 func runnerFor(agentID string, spec runnerSpec, disp *dispatcher, cfg *mconfig.Config, l *mlogging.Logger) (*runner.Runner, *swapDispatcher) {
 	if r, sw, ok := reuseRunner(agentID, spec, disp); ok {
@@ -161,7 +164,8 @@ func keepRunner(prev *cachedRunner, cached bool, spec runnerSpec) (bool, string)
 		return false, "first registration"
 	case prev.spec.base != spec.base:
 		return false, "base directory changed"
-	case reflect.DeepEqual(prev.spec.runCfg, spec.runCfg) && prev.spec.modes == spec.modes:
+	case reflect.DeepEqual(prev.spec.runCfg, spec.runCfg) && slices.Equal(prev.spec.refDirs, spec.refDirs) &&
+		prev.spec.modes == spec.modes:
 		return true, "configuration unchanged"
 	case prev.runner.IsRunning():
 		return true, reasonChangedWhileRunning

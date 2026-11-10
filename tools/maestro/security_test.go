@@ -47,9 +47,10 @@ func TestSecurity_ImportTraversalFromFolderRefused(t *testing.T) {
 	const project = "sec"
 	h.call("maestro_project_create", map[string]any{"name": project, "title": "Sec", "disclaimer_template": "none"}, false)
 	outside := writeSecret(t)
-	// t.TempDir() directories are siblings under one parent, so ".." from the
-	// folder reaches the secret's directory.
-	traversal := filepath.Join(h.mount, "..", filepath.Base(filepath.Dir(outside)), "secret.txt")
+	// t.TempDir() directories are siblings under one parent and the folder is
+	// one level inside its own, so "../.." from the folder reaches the
+	// secret's directory.
+	traversal := filepath.Join(h.mount, "..", "..", filepath.Base(filepath.Dir(outside)), "secret.txt")
 	if _, err := os.Stat(traversal); err != nil {
 		t.Fatalf("traversal path does not resolve: %v", err)
 	}

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	mconfig "github.com/PivotLLM/Maestro/config"
@@ -28,6 +29,50 @@ func runnerConfig(mc *config.MaestroConfig) mconfig.Runner {
 		RateLimit:     mconfig.RateLimit{MaxRequests: mc.RateLimitRequests, PeriodSeconds: mc.RateLimitPeriod},
 		AllowParallel: mc.AllowParallel,
 	}
+}
+
+// referenceDirsFromAllowedFolders maps the agent's allowed folders onto
+// Maestro reference directories (read-only inside Maestro, whatever the file
+// permissions say). Each is named after its last path component reduced to
+// one word Maestro accepts (referenceName); a name already taken, in any case,
+// gets "-2", "-3", … in config order. Names are given to every configured
+// folder before any is skipped, so a folder that goes missing does not rename
+// the others. A folder that is not an existing directory is skipped, so
+// Maestro never creates a directory on the host's behalf.
+func referenceDirsFromAllowedFolders(agentCfg *config.AgentConfig) []mconfig.ReferenceDir {
+	var (
+		out   []mconfig.ReferenceDir
+		taken = map[string]bool{}
+	)
+	for _, p := range agentCfg.AllowedFolderPaths() {
+		name := referenceName(p)
+		unique := name
+		for n := 2; taken[strings.ToLower(unique)]; n++ {
+			unique = name + "-" + strconv.Itoa(n)
+		}
+		taken[strings.ToLower(unique)] = true
+		if st, err := os.Stat(p); err != nil || !st.IsDir() {
+			continue
+		}
+		out = append(out, mconfig.ReferenceDir{Path: p, Mount: unique})
+	}
+	return out
+}
+
+// referenceNameRe matches the runs of characters a reference name leaves out.
+var referenceNameRe = regexp.MustCompile(`[^A-Za-z0-9_-]+`)
+
+// referenceName is the Maestro reference name for a folder: its last path
+// component with every run of characters other than letters, digits, '_' and
+// '-' turned into one '-', and leading and trailing '-' removed, so it is a
+// single word with no path separator and never "." or "..". A folder whose
+// name has nothing left ("/", "...") is "folder".
+func referenceName(p string) string {
+	name := strings.Trim(referenceNameRe.ReplaceAllString(filepath.Base(p), "-"), "-")
+	if name == "" {
+		return "folder"
+	}
+	return name
 }
 
 // importAllowed returns the predicate Maestro consults before importing a host

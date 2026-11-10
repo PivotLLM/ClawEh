@@ -24,6 +24,79 @@ func TestRunnerConfig_Mapping(t *testing.T) {
 	}
 }
 
+// Each allowed folder that exists is a reference directory named after its
+// last path component, reduced to one word; clashes (in any case) get -2, -3,
+// ... in config order; a missing folder is skipped without renaming the others
+// and is never created.
+func TestReferenceDirsFromAllowedFolders(t *testing.T) {
+	base := t.TempDir()
+	mk := func(rel string) string {
+		p := filepath.Join(base, rel)
+		if err := os.MkdirAll(p, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	audio := mk("opt/audio/in")
+	srcA := mk("a/src")
+	srcB := mk("b/SRC")
+	srcC := mk("c/src")
+	notes := mk("d/my notes.v2")
+	missing := filepath.Join(base, "e/src")
+	taken := mk("f/src-3")
+	a := &config.AgentConfig{ID: "alice", AllowedFolders: []config.AllowedFolderConfig{
+		{Path: audio},
+		{Path: srcA},
+		{Path: "relative/src"},
+		{Path: srcB},
+		{Path: missing},
+		{Path: srcC},
+		{Path: notes},
+		{Path: taken},
+		{Path: srcA + "/"},
+	}}
+	got := referenceDirsFromAllowedFolders(a)
+	want := []mconfig.ReferenceDir{
+		{Path: audio, Mount: "in"},
+		{Path: srcA, Mount: "src"},
+		{Path: srcB, Mount: "SRC-2"},
+		{Path: srcC, Mount: "src-4"}, // src-3 went to the missing folder
+		{Path: notes, Mount: "my-notes-v2"},
+		{Path: taken, Mount: "src-3-2"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("dirs = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("dir %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+	if _, err := os.Stat(missing); !os.IsNotExist(err) {
+		t.Error("a missing allowed folder must not be created")
+	}
+	if referenceDirsFromAllowedFolders(nil) != nil {
+		t.Error("nil agent must map to no dirs")
+	}
+}
+
+func TestReferenceName(t *testing.T) {
+	for in, want := range map[string]string{
+		"/srv/src":         "src",
+		"/opt/audio/in":    "in",
+		"/srv/My Docs":     "My-Docs",
+		"/srv/notes.v2":    "notes-v2",
+		"/srv/under_score": "under_score",
+		"/srv/..hidden..":  "hidden",
+		"/":                "folder",
+		"/srv/...":         "folder",
+	} {
+		if got := referenceName(in); got != want {
+			t.Errorf("referenceName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 // realTempDir is t.TempDir() with symlinks resolved. importAllowed compares
 // resolved paths (Maestro hands it the real path of every candidate), and on
 // macOS the temp root is a symlink (/var -> /private/var), so paths built from

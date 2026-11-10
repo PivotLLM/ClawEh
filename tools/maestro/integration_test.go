@@ -66,7 +66,10 @@ func newMaestroHarness(t *testing.T) *maestroHarness {
 func newMaestroHarnessWith(t *testing.T, mc *config.MaestroConfig) *maestroHarness {
 	t.Helper()
 	ws := t.TempDir()
-	mount := t.TempDir()
+	mount := filepath.Join(t.TempDir(), "standards")
+	if err := os.Mkdir(mount, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(mount, "standard.md"), []byte("# Standard\nrule one"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -216,10 +219,15 @@ func TestIntegration_TaskRunThroughClawEhWrappers(t *testing.T) {
 		t.Errorf("health = %s", hl)
 	}
 
-	// Neither the agent's allowed folder nor Maestro's own data directory
-	// is in Maestro's reference domain.
-	if lst := h.call("maestro_file_list", map[string]any{"source": "reference"}, false); strings.Contains(lst, `"maestro/`) || strings.Contains(lst, "standard.md") {
-		t.Errorf("a host folder leaked into the reference domain: %s", lst)
+	// The agent's allowed folder is in Maestro's reference library under its
+	// last path component.
+	ref := h.call("maestro_file_get", map[string]any{"source": "reference", "path": "standards/standard.md"}, false)
+	if !strings.Contains(ref, "rule one") {
+		t.Errorf("allowed folder not in the reference library: %s", ref)
+	}
+	// Maestro's own data directory is not.
+	if lst := h.call("maestro_file_list", map[string]any{"source": "reference"}, false); strings.Contains(lst, `"maestro/`) {
+		t.Errorf("maestro base directory leaked into the reference library: %s", lst)
 	}
 
 	const project = "seam"
