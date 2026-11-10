@@ -126,6 +126,10 @@ func (m *Manager) plan(cfg *config.Config) []channelSpec {
 
 	if cfg.Channels.Device.Enabled {
 		if s, ok := factorySpec(cfg, m, "device", "Device", cfg.Channels.Device.AllowFrom); ok {
+			// Devices authenticate by token and pairing approval, and an empty
+			// allow_from means any paired device (device.NewDeviceChannel), so
+			// the "nobody will be able to connect" warning would be wrong.
+			s.checkAllowFrom = false
 			add(s)
 		}
 	}

@@ -417,6 +417,12 @@
 
 ### Fixed
 
+- **The device channel no longer warns that nobody can connect.** With
+  `channels.device.allow_from` empty, any paired device may talk to the
+  agents (devices are let in by token and pairing approval), so the start-up
+  warning "empty allow_from — nobody will be able to connect" was wrong for
+  it. Other channels still warn.
+
 - **The Task models page scrolls.** Its content had no scroll area of its
   own, so anything below the window could not be reached, and the cards sat
   against the sidebar.
