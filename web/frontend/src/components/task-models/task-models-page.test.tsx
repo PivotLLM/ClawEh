@@ -259,6 +259,26 @@ describe("TaskModelsPage", () => {
     expect(puts).toEqual([])
   })
 
+  it("still saves list edits while Text in results is invalid, with the last valid limit", async () => {
+    const { puts } = mockFetch()
+    renderPage(newClient())
+    await screen.findByTestId("task-list-stt")
+    fireEvent.change(screen.getByLabelText("Text in results (characters)"), {
+      target: { value: "12a" },
+    })
+    fireEvent.click(
+      screen.getByRole("button", { name: "Remove whisper from Transcription" }),
+    )
+    await waitFor(() => expect(puts.length).toBe(1), { timeout: 3000 })
+    expect(puts[0]).toMatchObject({
+      result_text_chars: 2000,
+      stt: [{ model: "sonnet" }],
+    })
+    expect(
+      screen.getByText("Enter a whole number, or leave it blank."),
+    ).toBeTruthy()
+  })
+
   it("notes that echo does nothing while Transcription is empty", async () => {
     const { puts } = mockFetch()
     renderPage(newClient())
@@ -293,6 +313,40 @@ describe("TaskModelsPage leaving with an edit pending", () => {
     expect((puts[0] as { classify: unknown }).classify).toEqual([
       { model: "sonnet" },
     ])
+  })
+
+  it("shows the saved lists on return, even when a refetch started before the save answers after it", async () => {
+    // A slow server: the PUT is applied after 50 ms, a GET answers after
+    // 300 ms with the block as it was when the GET arrived.
+    let server = structuredClone(configured)
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        if (init?.method === "PUT") {
+          const body = JSON.parse(String(init.body))
+          await new Promise((r) => setTimeout(r, 50))
+          server = { ...server, task_models: body }
+          return { ok: true, json: async () => ({ status: "ok" }) }
+        }
+        const snapshot = structuredClone(server)
+        await new Promise((r) => setTimeout(r, 300))
+        return { ok: true, json: async () => snapshot }
+      }),
+    )
+    const qc = newClient()
+    const first = renderPage(qc)
+    await screen.findByTestId("task-list-stt", undefined, { timeout: 2000 })
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add model to Classification" }),
+    )
+    first.unmount() // saves on leaving
+    renderPage(qc) // back at once: its refetch sees the block before the save
+    await new Promise((r) => setTimeout(r, 700))
+    expect(
+      within(screen.getByTestId("task-list-classify")).queryByTestId(
+        "task-model-classify-sonnet",
+      ),
+    ).not.toBeNull()
   })
 
   it("saves nothing when there is no pending edit", async () => {

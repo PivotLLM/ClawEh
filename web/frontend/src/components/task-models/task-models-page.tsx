@@ -48,6 +48,9 @@ type SaveStatus = "saving" | "saved" | "error" | null
 interface PageState {
   lists: TaskModelLists
   resultChars: string
+  // validChars is the last valid "Text in results": what a save writes while
+  // the field holds something that is not a whole number.
+  validChars: number
   echo: boolean
 }
 
@@ -58,6 +61,7 @@ function stateOf(data: TaskModelsResponse | undefined): PageState {
   return {
     lists,
     resultChars: tm?.result_text_chars ? String(tm.result_text_chars) : "",
+    validChars: tm?.result_text_chars ?? 0,
     echo: tm?.echo_transcription === true,
   }
 }
@@ -71,6 +75,8 @@ export function TaskModelsPage() {
   const query = useQuery({
     queryKey: TASK_MODELS_QUERY_KEY,
     queryFn: getTaskModels,
+    // Keep the saved block's identity in the cache (see ownSaves).
+    structuralSharing: false,
   })
 
   // Editable copy of the fetched block, reseeded whenever a fresh fetch
@@ -78,9 +84,13 @@ export function TaskModelsPage() {
   // shows (and then saves) an empty page.
   const [state, setState] = useState<PageState>(() => stateOf(query.data))
   const [syncedData, setSyncedData] = useState(query.data)
+  // ownSaves are the blocks this page saved and put in the cache: they hold
+  // what the page already shows, so they do not reseed it (and replace a
+  // field being typed). Another visit of the page does reseed from them.
+  const [ownSaves] = useState(() => new WeakSet<object>())
   if (query.data && query.data !== syncedData) {
     setSyncedData(query.data)
-    setState(stateOf(query.data))
+    if (!ownSaves.has(query.data.task_models)) setState(stateOf(query.data))
   }
 
   const options = query.data?.models ?? []
@@ -100,17 +110,30 @@ export function TaskModelsPage() {
   // page saves it at once rather than dropping it.
   const pendingSave = useRef(false)
 
-  // doSave writes the whole block. It does not refetch the page, so a field
-  // being typed is not replaced mid-edit; the Agents page, whose classifier
-  // models follow the Classification list, is refreshed.
+  // doSave writes the whole block, with the last valid limit when the field
+  // holds an invalid one (the field shows why). The saved block then becomes
+  // the cached one, after cancelling any fetch in flight, so a refetch that
+  // started before the save (a quick return to the page) can't bring back
+  // the old lists. The Agents page, whose classifier models follow the
+  // Classification list, is refreshed.
   const doSave = async () => {
     pendingSave.current = false
     const s = stateRef.current
-    const chars = parseResultChars(s.resultChars)
-    if (chars === null) return // the field shows why
+    const block = taskModelsPayload(s.lists, s.validChars, s.echo)
     setStatus("saving")
     try {
-      await saveTaskModels(taskModelsPayload(s.lists, chars, s.echo))
+      await saveTaskModels(block)
+      await queryClient.cancelQueries({ queryKey: TASK_MODELS_QUERY_KEY })
+      const prev = queryClient.getQueryData<TaskModelsResponse>(
+        TASK_MODELS_QUERY_KEY,
+      )
+      if (prev) {
+        ownSaves.add(block)
+        queryClient.setQueryData(TASK_MODELS_QUERY_KEY, {
+          ...prev,
+          task_models: block,
+        })
+      }
       setStatus("saved")
       clearTimeout(savedTimer.current)
       savedTimer.current = setTimeout(() => setStatus(null), 2000)
@@ -213,9 +236,19 @@ export function TaskModelsPage() {
                       inputMode="numeric"
                       value={state.resultChars}
                       placeholder={String(defaultChars)}
-                      onChange={(e) =>
-                        change((s) => ({ ...s, resultChars: e.target.value }))
-                      }
+                      onChange={(e) => {
+                        const text = e.target.value
+                        const valid = parseResultChars(text)
+                        // An invalid value is not saved; the lists still are.
+                        if (valid === null)
+                          setState((s) => ({ ...s, resultChars: text }))
+                        else
+                          change((s) => ({
+                            ...s,
+                            resultChars: text,
+                            validChars: valid,
+                          }))
+                      }}
                     />
                     {charsValue === null ? (
                       <p className="text-destructive text-xs">
