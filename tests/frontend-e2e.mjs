@@ -1148,8 +1148,9 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
       await page.waitForTimeout(2000)
       await close()
       const a = (await config()).agents.list.find((x) => x.id === ID)
+      const folders = a?.allowed_folders ?? []
       assert(
-        JSON.stringify(a?.allowed_folders) === JSON.stringify([{ path: "/tmp", note: NOTE }]),
+        folders.length === 1 && folders[0].path === "/tmp" && folders[0].note === NOTE && !folders[0].notify,
         `allowed_folders = ${JSON.stringify(a?.allowed_folders)}`,
       )
       ;({ close, page } = await open("/agents"))
