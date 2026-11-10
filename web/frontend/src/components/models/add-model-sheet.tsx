@@ -158,6 +158,7 @@ export function AddModelSheet({
         model_name: modelName,
         model: modelId,
         provider: form.provider.trim(),
+        enabled: true,
         workspace: form.workspace.trim() || undefined,
         context_window: form.contextWindow
           ? Number(form.contextWindow)

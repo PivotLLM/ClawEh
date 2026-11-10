@@ -417,6 +417,14 @@
 
 ### Fixed
 
+- **The Task models page scrolls.** Its content had no scroll area of its
+  own, so anything below the window could not be reached, and the cards sat
+  against the sidebar.
+
+- **A model added on the Models page is enabled.** It used to be saved
+  disabled, so it had to be found and switched on before any page could use
+  it.
+
 - **An allowed folder whose path holds a line break is refused.** Such a
   path never matched its list of seen files, so its new-file notices were
   silently never sent. Saving one is refused ("Alice's allowed folder

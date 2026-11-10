@@ -3,7 +3,7 @@
 Regression coverage for the ClawEh web interface. Every step below has an ID, a
 process, and an expected result, so it can be followed by hand — and every one is
 also automated in `tests/frontend-e2e.mjs`, which prints the same IDs. There are
-175 checks in all; the runner prints the same tally at the end.
+176 checks in all; the runner prints the same tally at the end.
 
 ```
 export CLAW_E2E_USER=<admin>  CLAW_E2E_PASSWORD=<password>
@@ -170,6 +170,7 @@ Every check edits `task_models`; the group reads the block (`GET /api/task-model
 | U8 | Create a throwaway agent `e2e-tmk` through the API with one enabled model and no tools; select it on `/agents`; read **Allow task models**; tick its four boxes, ~2s apart; when no model was ticked Text, tick Text on the first added model through the API, reload `/agents`, select `e2e-tmk` again, then untick it; remove `e2e-tmk` | Each kind with no model ticked has the note *No model is ticked for this. Tick one on Task models.* linking to `/task-models`, and only those; *Needs the agent_spawn tool.* is shown; the Classify note is shown exactly when no model is ticked Classify; after the ticks `task_models` is `{text, image, tts, stt}` all true; with a Text model ticked the Text note is gone |
 | U9 | `GET /api/report/assessment`; when no model is ticked Vision, tick Vision on the first added model through the API, read it again, then untick it; load `/report` | **Speech to text** and **Vision** read *No model.* exactly when no model is ticked for them; with Vision ticked the Vision row no longer says so, and it does again after unticking; the Check Up page shows the rows the API lists, no console errors |
 | U10 | Click **Remove <model>** on each added row, ~2s apart | The rows are gone and `task_models.models` lists the same models as before U1 |
+| U11 | Open `/task-models` in a window 420 px high; scroll the page's content to the bottom | The **Settings** card comes fully into view (the content has its own scroll area), and the cards start at least 8 px right of the sidebar |
 
 ## R. Network page
 

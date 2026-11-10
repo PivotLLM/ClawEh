@@ -1713,6 +1713,39 @@ if (useGroup("U", "Task models page — add, uses, order, TTS defaults, limit, l
       const names = ((await saved()).models ?? []).map((m) => m.model)
       assert(JSON.stringify(names) === JSON.stringify(before.map((m) => m.model)), `models ${JSON.stringify(names)}`)
     })
+
+    await check(11, "the page scrolls in a short window and its cards keep clear of the sidebar", async () => {
+      const { close, page } = await open("/task-models")
+      try {
+        await page.setViewportSize({ width: 1100, height: 420 })
+        await page.waitForTimeout(300)
+        const r = await page.evaluate(() => {
+          const title = [...document.querySelectorAll("*")].find(
+            (el) => el.children.length === 0 && el.textContent?.trim() === "Settings",
+          )
+          if (!title) return { error: "no Settings card" }
+          let scroller = title.parentElement
+          while (scroller && !(["auto", "scroll"].includes(getComputedStyle(scroller).overflowY) && scroller.scrollHeight > scroller.clientHeight)) {
+            scroller = scroller.parentElement
+          }
+          if (!scroller) return { error: "no scrollable area holds the cards" }
+          scroller.scrollTop = scroller.scrollHeight
+          const t = title.getBoundingClientRect()
+          const sidebar = document.querySelector('[data-sidebar="sidebar"]')
+          const card = title.closest('[data-slot="card"]') ?? title.parentElement
+          return {
+            visible: t.top >= 0 && t.bottom <= window.innerHeight,
+            gap: sidebar ? Math.round(card.getBoundingClientRect().left - sidebar.getBoundingClientRect().right) : null,
+          }
+        })
+        assert(!r.error, r.error)
+        assert(r.visible, "the Settings card cannot be scrolled into view")
+        assert(r.gap === null || r.gap >= 8, `cards are ${r.gap}px from the sidebar`)
+        return r.gap === null ? "scrolls" : `scrolls; cards ${r.gap}px from the sidebar`
+      } finally {
+        await close()
+      }
+    })
   } finally {
     const r = await tmPut(snapshot)
     if (r.status !== 200) console.log(`   WARN could not restore task_models: ${r.status} ${r.text.slice(0, 200)}`)
