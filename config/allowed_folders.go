@@ -10,7 +10,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/PivotLLM/ClawEh/fileutil"
@@ -73,17 +72,18 @@ func (a *AgentConfig) AllowedFolderPaths() []string {
 	return out
 }
 
-// hasControlChar reports whether p holds a line break or another control
-// character. Such a path is never usable: it would break the prompt's
-// folder list and the new-file list kept for it.
-func hasControlChar(p string) bool {
-	return strings.IndexFunc(p, unicode.IsControl) >= 0
+// hasLineBreak reports whether p holds a line break (\n or \r). Such a path
+// is never usable: the new-file list kept for it is one path per line, so it
+// would never match. Other control characters (a tab) are legal in a path
+// and work.
+func hasLineBreak(p string) bool {
+	return strings.ContainsAny(p, "\n\r")
 }
 
 // CleanAllowedFolders returns the agent's allowed folders with clean absolute
 // paths, in config order, each path once (the first entry for a path wins).
-// A path that is not absolute (one a migration left) or holds a control
-// character is skipped: it names no folder. Notes are trimmed.
+// A path that is not absolute (one a migration left) or holds a line
+// break is skipped: it names no folder. Notes are trimmed.
 func (a *AgentConfig) CleanAllowedFolders() []AllowedFolderConfig {
 	if a == nil {
 		return nil
@@ -94,7 +94,7 @@ func (a *AgentConfig) CleanAllowedFolders() []AllowedFolderConfig {
 	)
 	for _, f := range a.AllowedFolders {
 		p := strings.TrimSpace(f.Path)
-		if !filepath.IsAbs(p) || hasControlChar(p) {
+		if !filepath.IsAbs(p) || hasLineBreak(p) {
 			continue
 		}
 		p = filepath.Clean(p)
@@ -153,11 +153,11 @@ func newLongFolderNotes(before, next *Config) []error {
 }
 
 // allowedFolderProblem is an allowed folder whose path is not absolute or
-// holds a control character.
+// holds a line break.
 type allowedFolderProblem struct {
-	Agent   string // agent id
-	Path    string // the path as configured
-	Control bool   // the path holds a control character
+	Agent     string // agent id
+	Path      string // the path as configured
+	LineBreak bool   // the path holds a line break
 }
 
 func (p allowedFolderProblem) key() string {
@@ -165,7 +165,7 @@ func (p allowedFolderProblem) key() string {
 }
 
 // allowedFolderProblems lists every allowed folder whose path is not an
-// absolute path or holds a control character, in config order.
+// absolute path or holds a line break, in config order.
 func (c *Config) allowedFolderProblems() []allowedFolderProblem {
 	var out []allowedFolderProblem
 	for i := range c.Agents.List {
@@ -173,8 +173,8 @@ func (c *Config) allowedFolderProblems() []allowedFolderProblem {
 		for _, f := range a.AllowedFolders {
 			p := strings.TrimSpace(f.Path)
 			switch {
-			case hasControlChar(p):
-				out = append(out, allowedFolderProblem{Agent: a.ID, Path: f.Path, Control: true})
+			case hasLineBreak(p):
+				out = append(out, allowedFolderProblem{Agent: a.ID, Path: f.Path, LineBreak: true})
 			case !filepath.IsAbs(p):
 				out = append(out, allowedFolderProblem{Agent: a.ID, Path: f.Path})
 			}
@@ -184,7 +184,7 @@ func (c *Config) allowedFolderProblems() []allowedFolderProblem {
 }
 
 // newAllowedFolderProblems returns, as errors, the allowed folders with a
-// path that is not absolute, or that holds a control character, that next
+// path that is not absolute, or that holds a line break, that next
 // has and before does not. One already in the file (a migrated relative
 // mount path, a hand edit) is not refused, so it cannot block an unrelated
 // save; the file tools skip it and it is listed as ignored.
@@ -195,8 +195,8 @@ func newAllowedFolderProblems(before, next *Config) []error {
 			if ac := next.AgentByID(p.Agent); ac != nil {
 				name = ac.DisplayName()
 			}
-			if p.Control {
-				return errors.New(name + "'s allowed folder " + strconv.Quote(p.Path) + " contains a line break or other control character.")
+			if p.LineBreak {
+				return errors.New(name + "'s allowed folder " + strconv.Quote(p.Path) + " contains a line break.")
 			}
 			return errors.New(name + "'s allowed folder " + strconv.Quote(p.Path) + " must be an absolute path.")
 		})
@@ -206,20 +206,19 @@ func newAllowedFolderProblems(before, next *Config) []error {
 const (
 	FolderNotAbsolute = "not_absolute"
 	FolderNotFound    = "not_found"
-	FolderControlChar = "control_char"
+	FolderLineBreak   = "line_break"
 )
 
 // IgnoredAllowedFolder is a configured allowed folder the file tools skip.
 type IgnoredAllowedFolder struct {
 	Agent  string // agent id
 	Path   string // the path as configured
-	Reason string // FolderNotAbsolute, FolderNotFound or FolderControlChar
+	Reason string // FolderNotAbsolute, FolderNotFound or FolderLineBreak
 }
 
 // IgnoredAllowedFolders lists every configured allowed folder the file tools
-// skip, in config order: a path with a line break or other control
-// character, one that is not absolute (one a migration left), or one that is
-// not an existing directory.
+// skip, in config order: a path with a line break, one that is not absolute
+// (one a migration left), or one that is not an existing directory.
 func (c *Config) IgnoredAllowedFolders() []IgnoredAllowedFolder {
 	var out []IgnoredAllowedFolder
 	for i := range c.Agents.List {
@@ -227,8 +226,8 @@ func (c *Config) IgnoredAllowedFolders() []IgnoredAllowedFolder {
 		for _, f := range a.AllowedFolders {
 			p := strings.TrimSpace(f.Path)
 			switch {
-			case hasControlChar(p):
-				out = append(out, IgnoredAllowedFolder{Agent: a.ID, Path: f.Path, Reason: FolderControlChar})
+			case hasLineBreak(p):
+				out = append(out, IgnoredAllowedFolder{Agent: a.ID, Path: f.Path, Reason: FolderLineBreak})
 			case !filepath.IsAbs(p):
 				out = append(out, IgnoredAllowedFolder{Agent: a.ID, Path: f.Path, Reason: FolderNotAbsolute})
 			case !isDir(p):

@@ -183,7 +183,7 @@ describe("AgentCard ignored allowed folders", () => {
       ignoredFolders: [
         { agent: "alice", path: "notes", reason: "not_absolute" },
         { agent: "alice", path: "/srv/gone", reason: "not_found" },
-        { agent: "alice", path: "/srv/a\nb", reason: "control_char" },
+        { agent: "alice", path: "/srv/a\nb", reason: "line_break" },
       ],
     })
     const notes = screen.getAllByTestId("ignored-folder")

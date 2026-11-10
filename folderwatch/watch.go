@@ -16,7 +16,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode"
 
 	"github.com/tenebris-tech/alerter"
 
@@ -132,14 +131,14 @@ func (w *Watcher) run() {
 }
 
 // notifyFolders returns agent's folders with notices on, cleaned and without
-// repeats, skipping a path that is not absolute or holds a control character
+// repeats, skipping a path that is not absolute or holds a line break
 // (config.IgnoredAllowedFolders lists it).
 func notifyFolders(agent *config.AgentConfig) []string {
 	var out []string
 	seen := map[string]bool{}
 	for _, f := range agent.AllowedFolders {
 		path := strings.TrimSpace(f.Path)
-		if !f.Notify || !filepath.IsAbs(path) || strings.IndexFunc(path, unicode.IsControl) >= 0 {
+		if !f.Notify || !filepath.IsAbs(path) || strings.ContainsAny(path, "\n\r") {
 			continue
 		}
 		path = filepath.Clean(path)

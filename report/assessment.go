@@ -267,7 +267,7 @@ func collectAssessment(ctx context.Context, cfg *config.Config, env Environment)
 		switch f.Reason {
 		case config.FolderNotFound:
 			status = "Ignored: folder " + strconv.Quote(f.Path) + " not found."
-		case config.FolderControlChar:
+		case config.FolderLineBreak:
 			status = "Ignored: " + strconv.Quote(f.Path) + " contains a line break."
 		}
 		add(true, "Allowed folder ("+agentNames(cfg, []string{f.Agent})[0]+")", status)

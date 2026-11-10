@@ -625,8 +625,8 @@ export function AgentCard({
                         {t(
                           ignored.reason === "not_absolute"
                             ? "agents.allowedFolderNotAbsolute"
-                            : ignored.reason === "control_char"
-                              ? "agents.allowedFolderControlChar"
+                            : ignored.reason === "line_break"
+                              ? "agents.allowedFolderLineBreak"
                               : "agents.allowedFolderNotFound",
                         )}
                       </p>

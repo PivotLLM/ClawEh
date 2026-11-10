@@ -92,7 +92,7 @@
     "allowedFoldersHint": "File tools can use these folders; write access follows file permissions.",
     "allowedFolderNotAbsolute": "Ignored: not an absolute path",
     "allowedFolderNotFound": "Ignored: folder not found",
-    "allowedFolderControlChar": "Ignored: path contains a line break",
+    "allowedFolderLineBreak": "Ignored: path contains a line break",
     "allowedFolderPath": "Folder path",
     "allowedFolderNotify": "Notify on new files",
     "allowedFolderNote": "Note",

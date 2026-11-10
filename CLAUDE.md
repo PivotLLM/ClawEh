@@ -644,7 +644,7 @@ production instance directly; test against a dev instance.
   `newLongFolderNotes`). The retired `mounts` list is migrated at load and on save
   (`migrateLegacyMounts`: path and notify kept, one WARN per entry, and a second WARN
   for a non-writable mount whose folder is writable). A folder the tools skip (not
-  absolute, a line break or other control character (`control_char`, refused on save),
+  absolute, a line break (`\n`/`\r`, `line_break`, refused on save; a tab is fine),
   not an existing directory: `Config.IgnoredAllowedFolders`) is marked on its
   Agents page row (`GET /api/agents/allowed-folders/ignored`) and is a Check Up row
   "Allowed folder (<agent>)". A path inside the workspace always follows the
