@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/PivotLLM/ClawEh/fileutil"
 	"github.com/PivotLLM/ClawEh/tools"
 )
 
@@ -254,17 +255,40 @@ func writeErr(t target, err error) error {
 	return err
 }
 
-// CheckWrite refuses nothing inside an allowed folder (its permissions
-// decide); other paths ask the layer below.
+// CheckWrite asks the folder's permissions for a path inside an allowed
+// folder: the write is refused, naming the path, when the account cannot
+// write the folder it would change (see writableInFolder), so a tool says so
+// before it backs anything up. Other paths ask the layer below.
 func (a *allowedFs) CheckWrite(path string) error {
 	t, err := a.place(path, true)
 	if err != nil {
 		return err
 	}
 	if t.sb != nil {
+		if !writableInFolder(filepath.Join(t.sb.workspace, t.rel)) {
+			return writeErr(t, fs.ErrPermission)
+		}
 		return nil
 	}
 	return checkWrite(a.inner, t.path)
+}
+
+// writableInFolder reports whether the account can write at p: an existing
+// folder itself, else the nearest existing folder above p, where a file's
+// writes happen (the atomic write's temporary file and rename, a backup
+// beside it, a removal, new folders).
+func writableInFolder(p string) bool {
+	if info, err := os.Stat(p); err == nil && info.IsDir() {
+		return fileutil.Writable(p)
+	}
+	for dir := filepath.Dir(p); ; dir = filepath.Dir(dir) {
+		if info, err := os.Stat(dir); err == nil && info.IsDir() {
+			return fileutil.Writable(dir)
+		}
+		if filepath.Dir(dir) == dir {
+			return true // nothing exists: the write itself will say why
+		}
+	}
 }
 
 func (a *allowedFs) ReadFile(path string) ([]byte, error) {

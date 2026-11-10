@@ -583,6 +583,10 @@ func (t *WriteFileTool) Execute(ctx context.Context, args map[string]any) *tools
 	}
 
 	if getBoolArg(args, "backup", false) {
+		// Refused before backing up, so the answer names the file.
+		if err := checkWrite(t.sysFs, path); err != nil {
+			return errResult(err)
+		}
 		if _, err := backupExistingFile(t.sysFs, path); err != nil {
 			return errResult(err)
 		}
@@ -916,7 +920,22 @@ func (r *sandboxFs) execute(path string, fn func(root *os.Root, relPath string) 
 		return err
 	}
 
-	return fn(root, relPath)
+	if err := fn(root, relPath); err != nil {
+		if isRootEscape(err) {
+			// A link that leads out of the sandbox: a refusal in plain words,
+			// not os.Root's "openat …: path escapes from parent".
+			return tools.Refusal(fmt.Errorf("access denied: %s resolves outside the workspace", r.abs(path)))
+		}
+		return err
+	}
+	return nil
+}
+
+// isRootEscape reports whether err is os.Root refusing a path that leaves the
+// root (through a link or ".."). os exports no sentinel for it, so the text
+// is matched.
+func isRootEscape(err error) bool {
+	return strings.Contains(err.Error(), "path escapes from parent")
 }
 
 func (r *sandboxFs) ReadFile(path string) ([]byte, error) {
@@ -927,7 +946,7 @@ func (r *sandboxFs) ReadFile(path string) ([]byte, error) {
 			if os.IsNotExist(err) {
 				return fmt.Errorf("failed to read file: file not found: %w", err)
 			}
-			if os.IsPermission(err) || strings.Contains(err.Error(), "escapes from parent") ||
+			if os.IsPermission(err) ||
 				strings.Contains(err.Error(), "permission denied") {
 				return fmt.Errorf("failed to read file: access denied: %w", err)
 			}
@@ -1118,7 +1137,7 @@ func (r *sandboxFs) Remove(path string) error {
 			if os.IsNotExist(err) {
 				return fmt.Errorf("failed to delete file: file not found: %w", err)
 			}
-			if os.IsPermission(err) || strings.Contains(err.Error(), "escapes from parent") ||
+			if os.IsPermission(err) ||
 				strings.Contains(err.Error(), "permission denied") {
 				return fmt.Errorf("failed to delete file: access denied: %w", err)
 			}
@@ -1148,7 +1167,7 @@ func (r *sandboxFs) Open(path string) (fs.File, error) {
 			if os.IsNotExist(err) {
 				return fmt.Errorf("failed to open file: file not found: %w", err)
 			}
-			if os.IsPermission(err) || strings.Contains(err.Error(), "escapes from parent") ||
+			if os.IsPermission(err) ||
 				strings.Contains(err.Error(), "permission denied") {
 				return fmt.Errorf("failed to open file: access denied: %w", err)
 			}

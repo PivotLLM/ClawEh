@@ -149,11 +149,13 @@ func TestCodingTools_PermissionMatrix(t *testing.T) {
 			read: true, write: true,
 		},
 		{
-			name:    "read-only allowed folder",
-			path:    func(f harnessFixture) string { return filepath.Join(f.ro, "doc.txt") },
-			file:    func(f harnessFixture) string { return filepath.Join(f.ro, "doc.txt") },
-			read:    true,
-			refusal: func(f harnessFixture) string { return "is read-only for this app" },
+			name: "read-only allowed folder",
+			path: func(f harnessFixture) string { return filepath.Join(f.ro, "doc.txt") },
+			file: func(f harnessFixture) string { return filepath.Join(f.ro, "doc.txt") },
+			read: true,
+			refusal: func(f harnessFixture) string {
+				return "permission denied: " + filepath.Join(f.ro, "doc.txt") + " is read-only for this app"
+			},
 		},
 		{
 			name: "link out of an allowed folder",
@@ -227,8 +229,14 @@ func TestCodingTools_PermissionMatrix(t *testing.T) {
 				if !res.IsError {
 					t.Fatalf("%s %s: not refused: %s", ht.name, path, res.ForLLM)
 				}
+				if !tools.IsExpectedRefusal(res.Err) {
+					t.Errorf("%s %s: want an expected refusal, got %v (%s)", ht.name, path, res.Err, res.ForLLM)
+				}
+				if strings.Contains(res.ForLLM, "escapes from parent") {
+					t.Errorf("%s %s: os.Root's text reached the agent: %s", ht.name, path, res.ForLLM)
+				}
 				if ht.write && pl.refusal != nil {
-					if want := pl.refusal(f); !strings.Contains(res.ForLLM, want) {
+					if want := pl.refusal(f); !strings.HasPrefix(res.ForLLM, want) {
 						t.Errorf("%s %s: refusal %q lacks %q", ht.name, path, res.ForLLM, want)
 					}
 				}
@@ -274,8 +282,117 @@ func TestCodingTools_ListMatrix(t *testing.T) {
 	}
 	for _, p := range []string{".", f.outside, "files/out", filepath.Join(f.src, "out"), ".."} {
 		res := list.Execute(ctx, map[string]any{"path": p})
-		if !res.IsError || strings.Contains(res.ForLLM, "doc.txt") {
+		if !res.IsError || !tools.IsExpectedRefusal(res.Err) || strings.Contains(res.ForLLM, "doc.txt") {
 			t.Errorf("list %s: want a refusal, got %v %s", p, res.IsError, res.ForLLM)
 		}
+	}
+}
+
+// A link in files/ that leads out of the workspace is refused for every read
+// in plain words, as a refusal (logged at WARN, not as a failure), never with
+// os.Root's "path escapes from parent".
+func TestCodingTools_WorkspaceLinkOutReadRefusal(t *testing.T) {
+	f := newHarnessFixture(t)
+	ctx := context.Background()
+	outTxt := filepath.Join(f.ws, "files", "out.txt")
+	outDir := filepath.Join(f.ws, "files", "out")
+	readLines := NewReadLinesTool(f.ws, true, MaxReadFileSize)
+	for _, tc := range []struct {
+		name string
+		res  *tools.ToolResult
+		want string
+	}{
+		{"file_read_lines", readLines.Execute(ctx, map[string]any{"path": "files/out.txt"}), outTxt},
+		{"file_read_lines in a linked folder", readLines.Execute(ctx, map[string]any{"path": "files/out/doc.txt"}), filepath.Join(outDir, "doc.txt")},
+		{"file_read_bytes", NewReadFileTool(f.ws, true, MaxReadFileSize).Execute(ctx, map[string]any{"path": "files/out.txt"}), outTxt},
+		{"file_list", NewListDirTool(f.ws, true).Execute(ctx, map[string]any{"path": "files/out"}), outDir},
+		{"file_glob", NewGlobTool(f.ws, true).Execute(ctx, map[string]any{"pattern": "**", "path": "files/out"}), outDir},
+		{"file_search_lines", NewSearchLinesTool(f.ws, true).Execute(ctx, map[string]any{"query": "L2", "path": "files/out.txt"}), outTxt},
+		{"file_count", NewCountFileTool(f.ws, true).Execute(ctx, map[string]any{"path": "files/out.txt"}), outTxt},
+	} {
+		want := "access denied: " + tc.want + " resolves outside the workspace"
+		if !tc.res.IsError || !tools.IsExpectedRefusal(tc.res.Err) || !strings.Contains(tc.res.ForLLM, want) {
+			t.Errorf("%s: want the refusal %q, got %v %q", tc.name, want, tc.res.IsError, tc.res.ForLLM)
+		}
+		if strings.Contains(tc.res.ForLLM, "escapes from parent") || strings.Contains(tc.res.ForLLM, "L2") {
+			t.Errorf("%s: %q", tc.name, tc.res.ForLLM)
+		}
+	}
+}
+
+// In a read-only allowed folder every write tool refuses naming the file
+// asked about, before any backup: nothing is left beside the file.
+func TestCodingTools_ReadOnlyFolderRefusesBeforeBackup(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs file permissions that bind the test account")
+	}
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name string
+		tool func(ws string) tools.Tool
+		args map[string]any
+	}{
+		{"file_edit_lines", func(ws string) tools.Tool { return newRangeEditTool("edit", "lines", ws, true, "files") }, map[string]any{"start": 2, "replace": "X"}},
+		{"file_delete_lines", func(ws string) tools.Tool { return newRangeEditTool("delete", "lines", ws, true, "files") }, map[string]any{"start": 2}},
+		{"file_insert_lines with backup", func(ws string) tools.Tool { return newRangeEditTool("insert", "lines", ws, true, "files") }, map[string]any{"after_line": 1, "text": "X", "backup": true}},
+		{"file_edit with backup", func(ws string) tools.Tool { return NewEditFileToolScoped(ws, true, "files") }, map[string]any{"old_text": "L2", "new_text": "X", "backup": true}},
+		{"file_write with backup", func(ws string) tools.Tool { return NewWriteFileToolScoped(ws, true, "files") }, map[string]any{"content": "X", "overwrite": true, "backup": true}},
+		{"file_append with backup", func(ws string) tools.Tool { return NewAppendFileToolScoped(ws, true, "files") }, map[string]any{"content": "X", "backup": true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newHarnessFixture(t)
+			doc := filepath.Join(f.ro, "doc.txt")
+			tc.args["path"] = doc
+			res := tc.tool(f.ws).Execute(ctx, tc.args)
+			want := "permission denied: " + doc + " is read-only for this app"
+			if !res.IsError || res.ForLLM != want || !tools.IsExpectedRefusal(res.Err) {
+				t.Errorf("refusal = %v %q, want %q", res.IsError, res.ForLLM, want)
+			}
+			if got := readBack(t, doc); got != harnessDoc {
+				t.Errorf("file changed to %q", got)
+			}
+			entries, err := os.ReadDir(f.ro)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(entries) != 1 {
+				t.Errorf("the folder holds %d entries, want only doc.txt", len(entries))
+			}
+		})
+	}
+}
+
+// The check follows the folder that would change: a writable subfolder of a
+// read-only allowed folder takes an edit with its backup, and a new file in
+// a new subfolder of the read-only folder is refused naming that file.
+func TestCodingTools_ReadOnlyFolderCheckFollowsTheFolder(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs file permissions that bind the test account")
+	}
+	f := newHarnessFixture(t)
+	inbox := filepath.Join(f.ro, "inbox")
+	if err := os.Chmod(f.ro, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(inbox, "doc.txt"), harnessDoc)
+	if err := os.Chmod(f.ro, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	doc := filepath.Join(inbox, "doc.txt")
+	res := newRangeEditTool("edit", "lines", f.ws, true, "files").Execute(ctx, map[string]any{"path": doc, "start": 2, "replace": "X"})
+	if res.IsError {
+		t.Fatalf("edit in a writable subfolder: %s", res.ForLLM)
+	}
+	if got := readBack(t, doc); got != "L1\nX\nL3\n" {
+		t.Errorf("file holds %q", got)
+	}
+	if _, err := os.Stat(doc + ".0001"); err != nil {
+		t.Errorf("no backup: %v", err)
+	}
+	p := filepath.Join(f.ro, "new", "deep", "x.txt")
+	res = NewWriteFileToolScoped(f.ws, true, "files").Execute(ctx, map[string]any{"path": p, "content": "x"})
+	if want := "permission denied: " + p + " is read-only for this app"; res.ForLLM != want {
+		t.Errorf("new file in a new subfolder: %q, want %q", res.ForLLM, want)
 	}
 }

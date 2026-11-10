@@ -398,6 +398,22 @@
 
 ### Fixed
 
+- **A link out of the workspace is refused in plain words.** Reading,
+  listing, searching or globbing through a link in an agent's workspace that
+  leads outside it answered with the raw "openat files/x: path escapes from
+  parent" and was logged at ERROR as "Tool execution failed". It is now the
+  refusal "access denied: <path> resolves outside the workspace", logged at
+  WARN as "Tool call refused", like the same link inside an allowed folder.
+
+- **A write in a read-only allowed folder names the file.** `file_edit_lines`
+  and `file_delete_lines` (backup on by default), and `file_edit`,
+  `file_insert_lines`, `file_write` and `file_append` with `backup: true`,
+  answered with the backup's failure ("backup: failed to write
+  <file>.0001: … is read-only for this app"). Every write tool now refuses
+  before any backup with "permission denied: <file> is read-only for this
+  app", decided by whether the app's account can write the folder that would
+  change.
+
 - **Logging no longer races with a change to the logger.** A line logged
   while the log files were being set up at start or rotated could read the
   logger's settings mid-change; each line now reads them under the logger's
