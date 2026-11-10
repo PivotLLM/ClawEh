@@ -273,7 +273,8 @@
   `file_edit_lines`, `file_insert_lines`, `file_delete_lines`, `file_edit`,
   `file_write` and `shell_exec` now open with what each is for (find files
   by name, find text, read the lines found, change text; `shell_exec` for
-  git, builds, tests and other programs, not for finding or reading files),
+  any command-line program, including grep, sed, awk and jq pipelines, with
+  the file tools named as usually better for finding, reading and editing),
   so smaller models pick the right one. Names, arguments and behaviour are
   unchanged.
 - **BREAKING: `shell_exec` no longer refuses commands by path.** The checks

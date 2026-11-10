@@ -139,8 +139,8 @@ func (t *ExecTool) Name() string {
 }
 
 func (t *ExecTool) Description() string {
-	return "Run git, builds, tests and other programs: executes a shell command and returns its output. " +
-		"Not for finding or reading files: use file_glob, file_search_lines and file_read_lines."
+	return "Run any command-line program: git, builds and tests, and Unix tools such as grep, sed, awk and jq for pipelines. " +
+		"To find, read or edit files, the file tools are usually better: their output is numbered and limited in size."
 }
 
 func (t *ExecTool) Parameters() map[string]any {

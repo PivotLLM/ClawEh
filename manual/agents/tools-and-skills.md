@@ -54,7 +54,7 @@ The same lists can be written by hand. Entries are tool names; a trailing `*` ma
 | `file_read_lines` | Read the lines found |
 | `file_edit`, `file_edit_lines`, `file_insert_lines`, `file_delete_lines` | Change text |
 | `file_write` | Create a file or replace a whole file |
-| `shell_exec` | Run git, builds, tests and other programs (see [Shell commands](#shell-commands)) |
+| `shell_exec` | Run any command-line program: git, builds, tests and Unix tools such as grep, sed and jq (see [Shell commands](#shell-commands)) |
 
 - Ticking the box adds every one the agent lacks to its tools list; unticking it removes them all. Nothing else changes, and there is no separate setting: the box only edits the list.
 - The box is ticked when all ten are granted and shows a mixed state when only some are. The single tool boxes and **Allow shell commands** stay and follow it.
