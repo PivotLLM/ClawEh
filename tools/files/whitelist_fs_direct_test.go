@@ -200,17 +200,17 @@ func TestBuildFs_Unrestricted(t *testing.T) {
 }
 
 func TestBuildFs_RestrictedNoPatterns(t *testing.T) {
-	fs := buildFs(t.TempDir(), true, nil)
+	fs := buildBaseFs(t.TempDir(), true, nil)
 	if _, ok := fs.(*sandboxFs); !ok {
-		t.Errorf("buildFs(restricted, no patterns) = %T, want *sandboxFs", fs)
+		t.Errorf("buildBaseFs(restricted, no patterns) = %T, want *sandboxFs", fs)
 	}
 }
 
 func TestBuildFs_RestrictedWithPatterns(t *testing.T) {
 	pattern := regexp.MustCompile(`/foo`)
-	fs := buildFs(t.TempDir(), true, []*regexp.Regexp{pattern})
+	fs := buildBaseFs(t.TempDir(), true, []*regexp.Regexp{pattern})
 	if _, ok := fs.(*whitelistFs); !ok {
-		t.Errorf("buildFs(restricted, with patterns) = %T, want *whitelistFs", fs)
+		t.Errorf("buildBaseFs(restricted, with patterns) = %T, want *whitelistFs", fs)
 	}
 }
 

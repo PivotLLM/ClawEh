@@ -43,12 +43,13 @@ func allowedFoldersForWorkspace(workspace string) []string {
 }
 
 // withAllowedFolders wraps inner with an allowedFs when the workspace has
-// allowed folders. allowedFs is the outermost layer, so a path inside an
-// allowed folder is served from that folder, not by the workspace read/write
-// scopes below.
+// allowed folders, or when the agent is confined (so a workspace path given in
+// its resolved form is the workspace's). allowedFs is the outermost layer, so a
+// path inside an allowed folder is served from that folder, not by the
+// workspace read/write scopes below.
 func withAllowedFolders(workspace string, restrict bool, inner fileSystem) fileSystem {
 	folders := allowedFoldersForWorkspace(workspace)
-	if len(folders) == 0 {
+	if len(folders) == 0 && (!restrict || workspace == "") {
 		return inner
 	}
 	a := &allowedFs{inner: inner, workspace: workspace, restrict: restrict}
@@ -93,12 +94,15 @@ func within(p, root string) bool {
 // from that folder, sandboxed to it (os.Root: nothing below it can lead out),
 // and hands every other path to inner unchanged.
 //
-// An absolute path is placed by where it resolves (links followed): inside an
-// allowed folder it is served there; one that only names an allowed folder but
-// leads elsewhere is the workspace's when it resolves into the workspace and
-// is refused otherwise (when the agent is confined). A relative path keeps
-// resolving from the workspace; it reaches an allowed folder only when the
-// folder lies in the workspace (maestro/).
+// A path is placed by where it resolves (links followed). The workspace's own
+// rules always win inside the workspace: a path that resolves there is served
+// by inner (with the workspace scopes), even when an allowed folder holds the
+// whole workspace, unless it lies in an allowed folder that is itself inside
+// the workspace (maestro/). A path that resolves into an allowed folder outside
+// the workspace is served there. One that names an allowed folder but leads
+// out of every folder the agent may use is refused (when the agent is
+// confined). A relative path keeps resolving from the workspace; it reaches an
+// allowed folder only when the folder lies in the workspace.
 //
 // Writes are attempted, never refused by policy: the folder's file permissions
 // decide, and a permission error becomes a short refusal.
@@ -132,13 +136,15 @@ func (a *allowedFs) place(path string, followLast bool) (target, error) {
 	if !ok {
 		return target{path: path}, nil
 	}
-	named := a.rootOf(abs) >= 0
-	if !filepath.IsAbs(path) && !named {
-		// A relative path outside every allowed folder keeps its meaning.
+	lex := a.rootOf(abs)
+	if !filepath.IsAbs(path) && (lex < 0 || !a.insideWorkspace(lex)) {
+		// A relative path keeps its workspace meaning, unless it names a
+		// folder inside the workspace (maestro/).
 		return target{path: path}, nil
 	}
 	resolved := resolveFrom(abs, followLast)
-	if i := a.rootOf(resolved); i >= 0 {
+	inWS := a.workspace != "" && a.ws.contains(resolved)
+	if i := a.rootOf(resolved); i >= 0 && (!inWS || a.insideWorkspace(i)) {
 		root := a.roots[i]
 		base := root.resolved
 		if !within(resolved, base) {
@@ -150,11 +156,9 @@ func (a *allowedFs) place(path string, followLast bool) (target, error) {
 		}
 		return target{sb: &sandboxFs{workspace: base}, rel: rel, abs: abs}, nil
 	}
-	if !named {
-		return target{path: path}, nil
-	}
-	// The path names an allowed folder but a link leads out of every one.
-	if a.workspace != "" && a.ws.contains(resolved) {
+	if inWS {
+		// The workspace's: in its configured form, which the scopes below
+		// compare against.
 		base := a.ws.resolved
 		if !within(resolved, base) {
 			base = a.ws.path
@@ -165,10 +169,30 @@ func (a *allowedFs) place(path string, followLast bool) (target, error) {
 		}
 		return target{path: filepath.Join(a.ws.path, rel)}, nil
 	}
+	if lex < 0 {
+		return target{path: path}, nil
+	}
+	// The path names an allowed folder but a link leads out of every folder
+	// the agent may use.
 	if a.restrict {
 		return target{}, errOutsideAllowed(abs)
 	}
-	return target{path: path}, nil
+	return target{path: abs}, nil
+}
+
+// insideWorkspace reports whether allowed folder i lies inside the workspace
+// (and is not the workspace itself).
+func (a *allowedFs) insideWorkspace(i int) bool {
+	if a.workspace == "" {
+		return false
+	}
+	r := a.roots[i]
+	for _, p := range []string{r.path, r.resolved} {
+		if p != a.ws.path && p != a.ws.resolved && a.ws.contains(p) {
+			return true
+		}
+	}
+	return false
 }
 
 // absolute returns path as a clean absolute path: an absolute path as given,

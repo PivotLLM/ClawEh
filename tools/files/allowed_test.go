@@ -252,10 +252,10 @@ func TestAgentFolders_Maestro(t *testing.T) {
 		ID: "alice", Maestro: &config.MaestroConfig{Enabled: true},
 		AllowedFolders: []config.AllowedFolderConfig{{Path: src}, {Path: "relative"}, {Path: filepath.Join(src, "missing")}, {Path: src + "/"}},
 	}
-	got := AgentFolders(agent, ws)
+	got := agentFolders(agent, ws)
 	want := []string{src, filepath.Join(ws, "maestro")}
 	if !slices.Equal(got, want) {
-		t.Fatalf("AgentFolders = %v, want %v", got, want)
+		t.Fatalf("agentFolders = %v, want %v", got, want)
 	}
 	if info, err := os.Stat(filepath.Join(ws, "maestro")); err != nil || !info.IsDir() {
 		t.Fatalf("maestro dir not created: %v", err)
@@ -280,10 +280,10 @@ func TestAgentFolders_Maestro(t *testing.T) {
 
 	// Maestro off: maestro/ is outside the read and write scopes again.
 	agent.Maestro = &config.MaestroConfig{Enabled: false}
-	if got := AgentFolders(agent, ws); !slices.Equal(got, []string{src}) {
-		t.Fatalf("maestro off: AgentFolders = %v", got)
+	if got := agentFolders(agent, ws); !slices.Equal(got, []string{src}) {
+		t.Fatalf("maestro off: agentFolders = %v", got)
 	}
-	allowFolders(t, ws, AgentFolders(agent, ws)...)
+	allowFolders(t, ws, agentFolders(agent, ws)...)
 	write = NewWriteFileToolScoped(ws, true, "files")
 	if res := write.Execute(ctx, map[string]any{"path": "maestro/x.md", "content": "x"}); !res.IsError {
 		t.Fatal("maestro off: writing maestro/ should be refused")
@@ -297,7 +297,7 @@ func TestAgentFolders_MaestroSymlinkEscape(t *testing.T) {
 	outside := t.TempDir()
 	mustWrite(t, filepath.Join(outside, "secret.md"), "secret")
 	agent := &config.AgentConfig{ID: "alice", Maestro: &config.MaestroConfig{Enabled: true}}
-	allowFolders(t, ws, AgentFolders(agent, ws)...)
+	allowFolders(t, ws, agentFolders(agent, ws)...)
 	if err := os.Symlink(outside, filepath.Join(ws, "maestro", "out")); err != nil {
 		t.Fatal(err)
 	}

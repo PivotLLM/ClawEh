@@ -102,7 +102,7 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 		// The agent's allowed folders, plus <workspace>/maestro when the suite
 		// is on. Must be registered before constructing the tools, which
 		// capture their fileSystem at build time.
-		SetAllowedFoldersForWorkspace(workspace, AgentFolders(cd.AgentCfg, workspace))
+		SetAllowedFoldersForWorkspace(workspace, agentFolders(cd.AgentCfg, workspace))
 
 		readBytes = NewReadFileTool(workspace, readRestrict, maxReadFileSize, allowReadPaths)
 		readLines = NewReadLinesTool(workspace, readRestrict, maxReadFileSize, allowReadPaths)
@@ -364,12 +364,12 @@ var readLinesSchema = map[string]any{
 	"required": []string{"path"},
 }
 
-// AgentFolders returns the folders an agent's file tools may use besides its
+// agentFolders returns the folders an agent's file tools may use besides its
 // workspace scope: each allowed folder that is an existing directory (others
 // are skipped with a WARN naming the agent and the path, so one broken entry
 // cannot take the agent down) and, with Maestro on, <workspace>/maestro,
 // created if needed.
-func AgentFolders(agentCfg *config.AgentConfig, workspace string) []string {
+func agentFolders(agentCfg *config.AgentConfig, workspace string) []string {
 	if agentCfg == nil {
 		return nil
 	}
