@@ -69,7 +69,10 @@ func TestTaskModelLists_OnlyReadThroughEntries(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		rel, _ := filepath.Rel(root, path)
+		rel, rerr := filepath.Rel(root, path)
+		if rerr != nil {
+			return rerr
+		}
 		rel = filepath.ToSlash(rel)
 		if d.IsDir() {
 			if skipDirs[rel] || d.Name() == "node_modules" {

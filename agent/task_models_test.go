@@ -361,10 +361,16 @@ func TestTaskModelHost_FallbackOrderIsPerList(t *testing.T) {
 	e.cfg.TaskModels.ImageModels = []config.ImageTaskModel{{Model: "chat-b"}, {Model: "chat-a"}}
 	e.vendor.fail["chat-a-wire"] = http.StatusBadRequest
 	e.vendor.fail["chat-b-wire"] = http.StatusBadRequest
-	text, _ := e.run(t, "alice", toolsagents.TaskModelRequest{Kind: "text", Prompt: "hi"})
-	image, _ := e.run(t, "alice", toolsagents.TaskModelRequest{Kind: "image", Prompt: "a cat"})
+	text, err := e.run(t, "alice", toolsagents.TaskModelRequest{Kind: "text", Prompt: "hi"})
+	if err == nil {
+		t.Fatal("text succeeded with every model failing")
+	}
+	image, err := e.run(t, "alice", toolsagents.TaskModelRequest{Kind: "image", Prompt: "a cat"})
+	if err == nil {
+		t.Fatal("image succeeded with every model failing")
+	}
 	attempts := func(res *toolsagents.TaskModelResult) []string {
-		var out []string
+		out := make([]string, 0, len(res.Attempts))
 		for _, a := range res.Attempts {
 			out = append(out, a.Model)
 		}

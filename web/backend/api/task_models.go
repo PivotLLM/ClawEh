@@ -128,7 +128,7 @@ func (h *Handler) handleUpdateTaskModels(w http.ResponseWriter, r *http.Request)
 		writeValidationErrors(w, []string{fmt.Sprintf("Invalid task models: %v", err)})
 		return
 	}
-	body.Normalize()
+	body = body.Normalized()
 
 	if err := h.updateConfig(r, func(cfg *config.Config) error {
 		cfg.TaskModels = body

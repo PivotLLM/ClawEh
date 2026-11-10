@@ -34,7 +34,7 @@ func (c *Config) modelRefSites() []modelRef {
 		{where: "summarization.models", slice: &c.Summarization.Models, role: "a summarization model"},
 	}
 	for _, use := range TaskUses {
-		for _, name := range c.TaskModels.modelFields(use) {
+		for _, name := range taskModelFields(&c.TaskModels, use) {
 			sites = append(sites, modelRef{where: "task_models." + string(use) + "[" + *name + "]", scalar: name, role: "a task model"})
 		}
 	}

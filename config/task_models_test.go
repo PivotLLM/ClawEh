@@ -169,7 +169,7 @@ func TestTaskModels_Validate(t *testing.T) {
 	}
 }
 
-func TestTaskModels_Normalize(t *testing.T) {
+func TestTaskModels_Normalized(t *testing.T) {
 	tm := TaskModelsConfig{
 		TextModels:  []TaskModelRef{{Model: " m "}},
 		ImageModels: []ImageTaskModel{{Model: " i", ImageAPI: ImageAPIImages}},
@@ -179,15 +179,18 @@ func TestTaskModels_Normalize(t *testing.T) {
 		},
 		ClassifyModels: []TaskModelRef{{Model: "\tc"}},
 	}
-	tm.Normalize()
+	got := tm.Normalized()
 	want := TaskModelsConfig{
 		TextModels:     []TaskModelRef{{Model: "m"}},
 		ImageModels:    []ImageTaskModel{{Model: "i", ImageAPI: ImageAPIImages}},
 		TTSModels:      []TTSTaskModel{{Model: "s", TTSDefaults: &TTSDefaults{Voice: "alloy"}}, {Model: "t"}},
 		ClassifyModels: []TaskModelRef{{Model: "c"}},
 	}
-	if !reflect.DeepEqual(tm, want) {
-		t.Errorf("Normalize() = %+v, want %+v", tm, want)
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Normalized() = %+v, want %+v", got, want)
+	}
+	if tm.TextModels[0].Model != " m " || tm.TTSModels[0].TTSDefaults.Voice != " alloy " {
+		t.Errorf("Normalized() changed its receiver: %+v", tm)
 	}
 }
 
@@ -300,7 +303,7 @@ func TestLoadConfig_OldTaskModelsListIsUnknownAndDropped(t *testing.T) {
 		t.Fatal(err)
 	}
 	var doc map[string]any
-	if err := json.Unmarshal(raw, &doc); err != nil {
+	if err = json.Unmarshal(raw, &doc); err != nil {
 		t.Fatal(err)
 	}
 	doc["task_models"] = map[string]any{
@@ -312,7 +315,7 @@ func TestLoadConfig_OldTaskModelsListIsUnknownAndDropped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(s.Path(), raw, 0o600); err != nil {
+	if err = os.WriteFile(s.Path(), raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	decoded, err := decodeDocument(raw)
@@ -329,7 +332,7 @@ func TestLoadConfig_OldTaskModelsListIsUnknownAndDropped(t *testing.T) {
 	if got := cur.TaskModels; len(got.ModelsFor(TaskUseSTT)) != 0 || !slices.Equal(got.ModelsFor(TaskUseText), []string{"m"}) || !got.EchoTranscription {
 		t.Fatalf("task_models = %+v, want only the text list and the setting", got)
 	}
-	if err := s.Update(func(c *Config) error {
+	if err = s.Update(func(c *Config) error {
 		c.TaskModels.ResultTextChars = 100
 		return nil
 	}); err != nil {
@@ -342,7 +345,7 @@ func TestLoadConfig_OldTaskModelsListIsUnknownAndDropped(t *testing.T) {
 	var saved struct {
 		TaskModels map[string]json.RawMessage `json:"task_models"`
 	}
-	if err := json.Unmarshal(raw, &saved); err != nil {
+	if err = json.Unmarshal(raw, &saved); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := saved.TaskModels["models"]; ok {

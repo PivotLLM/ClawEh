@@ -156,7 +156,7 @@ func (t TaskModelsConfig) Entries(use TaskUse) []TaskModelEntry {
 			add(TaskModelEntry{Model: m.Model, TTSDefaults: m.TTSDefaults})
 		}
 	default:
-		if refs := t.refList(use); refs != nil {
+		if refs := taskRefList(&t, use); refs != nil {
 			for _, m := range *refs {
 				add(TaskModelEntry{Model: m.Model})
 			}
@@ -193,9 +193,9 @@ func (t TaskModelsConfig) Has(model string, use TaskUse) bool {
 	return ok
 }
 
-// refList is the list of a use whose entries have no settings; nil for
+// taskRefList is the list of a use whose entries have no settings; nil for
 // image, tts and an unknown use.
-func (t *TaskModelsConfig) refList(use TaskUse) *[]TaskModelRef {
+func taskRefList(t *TaskModelsConfig, use TaskUse) *[]TaskModelRef {
 	switch use {
 	case TaskUseText:
 		return &t.TextModels
@@ -205,14 +205,16 @@ func (t *TaskModelsConfig) refList(use TaskUse) *[]TaskModelRef {
 		return &t.VisionModels
 	case TaskUseClassify:
 		return &t.ClassifyModels
+	case TaskUseImage, TaskUseTTS:
+		return nil
 	}
 	return nil
 }
 
-// modelFields returns a pointer to the model name of every entry of use's
+// taskModelFields returns a pointer to the model name of every entry of use's
 // list, in order, blank ones included: what validation, normalising and the
 // model reference sites walk.
-func (t *TaskModelsConfig) modelFields(use TaskUse) []*string {
+func taskModelFields(t *TaskModelsConfig, use TaskUse) []*string {
 	var out []*string
 	switch use {
 	case TaskUseImage:
@@ -224,7 +226,7 @@ func (t *TaskModelsConfig) modelFields(use TaskUse) []*string {
 			out = append(out, &t.TTSModels[i].Model)
 		}
 	default:
-		if refs := t.refList(use); refs != nil {
+		if refs := taskRefList(t, use); refs != nil {
 			for i := range *refs {
 				out = append(out, &(*refs)[i].Model)
 			}
@@ -233,23 +235,31 @@ func (t *TaskModelsConfig) modelFields(use TaskUse) []*string {
 	return out
 }
 
-// Normalize trims every model name, voice and format, and drops TTS
-// defaults that set nothing. The WebUI's save runs it before validation.
-func (t *TaskModelsConfig) Normalize() {
+// Normalized returns a copy with every model name, voice and format
+// trimmed and the TTS defaults that set nothing dropped. The WebUI's save
+// runs it before validation.
+func (t TaskModelsConfig) Normalized() TaskModelsConfig {
+	t.TextModels = slices.Clone(t.TextModels)
+	t.ImageModels = slices.Clone(t.ImageModels)
+	t.TTSModels = slices.Clone(t.TTSModels)
+	t.STTModels = slices.Clone(t.STTModels)
+	t.VisionModels = slices.Clone(t.VisionModels)
+	t.ClassifyModels = slices.Clone(t.ClassifyModels)
 	for _, use := range TaskUses {
-		for _, name := range t.modelFields(use) {
+		for _, name := range taskModelFields(&t, use) {
 			*name = strings.TrimSpace(*name)
 		}
 	}
 	for i := range t.TTSModels {
 		if d := t.TTSModels[i].TTSDefaults; d != nil {
-			d.Voice = strings.TrimSpace(d.Voice)
-			d.Format = strings.TrimSpace(d.Format)
-			if d.Voice == "" && d.Format == "" {
-				t.TTSModels[i].TTSDefaults = nil
+			trimmed := TTSDefaults{Voice: strings.TrimSpace(d.Voice), Format: strings.TrimSpace(d.Format)}
+			t.TTSModels[i].TTSDefaults = nil
+			if trimmed.Voice != "" || trimmed.Format != "" {
+				t.TTSModels[i].TTSDefaults = &trimmed
 			}
 		}
 	}
+	return t
 }
 
 // Validate refuses a negative result_text_chars, an entry that names no
@@ -262,7 +272,7 @@ func (t TaskModelsConfig) Validate() error {
 	}
 	for _, use := range TaskUses {
 		seen := map[string]bool{}
-		for i, field := range t.modelFields(use) {
+		for i, field := range taskModelFields(&t, use) {
 			name := strings.TrimSpace(*field)
 			switch {
 			case name == "":
@@ -291,7 +301,7 @@ func (c *Config) dropBlankTaskModels() {
 	t.ImageModels = slices.DeleteFunc(t.ImageModels, func(m ImageTaskModel) bool { return blank(m.Model) })
 	t.TTSModels = slices.DeleteFunc(t.TTSModels, func(m TTSTaskModel) bool { return blank(m.Model) })
 	for _, use := range TaskUses {
-		if refs := t.refList(use); refs != nil {
+		if refs := taskRefList(t, use); refs != nil {
 			*refs = slices.DeleteFunc(*refs, func(m TaskModelRef) bool { return blank(m.Model) })
 		}
 	}

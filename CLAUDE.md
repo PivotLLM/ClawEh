@@ -505,7 +505,7 @@ production instance directly; test against a dev instance.
   entries also `tts_defaults{voice, format}`; a setting on another list is an
   unknown key). `model` is a `model_list[].model_name`, never blank, at most
   once per list, the same model allowed in several lists
-  (`TaskModelsConfig.Validate`, at load and on save; `Normalize` trims on the
+  (`TaskModelsConfig.Validate`, at load and on save; `Normalized` trims on the
   WebUI save); a list's order is that use's fallback order. **The only way to
   read a use's models is `TaskModelsConfig.Entries(use)`** (entries with their
   settings) or `ModelsFor(use)` / `Entry` / `Has` built on it; code outside
