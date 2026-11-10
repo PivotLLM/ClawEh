@@ -40,7 +40,7 @@ whose key should be billed (see
    |---|---|
    | `https://api.groq.com/openai/v1` | `whisper-large-v3` |
    | `https://api.openai.com/v1` | `whisper-1` |
-   | `https://openrouter.ai/api/v1` | `openai/whisper-large-v3` |
+   | `https://openrouter.ai/api/v1` | `openai/whisper-large-v3-turbo` |
 
 3. On **Task models**, add the model and tick **Transcription (STT)**.
 

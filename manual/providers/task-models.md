@@ -69,7 +69,7 @@ The model ID must be one the provider's service offers for that use:
 
 | Service | Base URL | Transcription model | Speech model |
 |---|---|---|---|
-| OpenRouter | `https://openrouter.ai/api/v1` | `openai/whisper-large-v3` | see OpenRouter's model list |
+| OpenRouter | `https://openrouter.ai/api/v1` | `openai/whisper-large-v3-turbo` | see OpenRouter's model list |
 | OpenAI | `https://api.openai.com/v1` | `whisper-1`, `gpt-4o-transcribe` | `tts-1`, `gpt-4o-mini-tts` |
 | Groq | `https://api.groq.com/openai/v1` | `whisper-large-v3` | see Groq's model list |
 | A local Whisper server with an OpenAI-style API | its address, ending in `/v1` | the name the server gives its model | — |
@@ -83,7 +83,7 @@ ticked model is tried.
 ### Example: OpenRouter transcription
 
 1. **Models** page: add a model named, for example, `OR Whisper`, with
-   provider your OpenRouter provider and model `openai/whisper-large-v3`.
+   provider your OpenRouter provider and model `openai/whisper-large-v3-turbo`.
 2. **Task models** page: add `OR Whisper` and tick **Transcription (STT)**.
 3. Send a voice message to an agent. Check Up's **Speech to text** row no
    longer says "No model."
@@ -112,15 +112,47 @@ your OpenRouter provider and the ID as the model, then tick its use here.
 
 | Use | Model IDs (vendor) | Notes |
 |---|---|---|
-| **Transcription (STT)** | `openai/whisper-large-v3` (OpenAI), `mistralai/voxtral-mini-transcribe` (Mistral), `elevenlabs/scribe-v2` (ElevenLabs), `google/gemini-3.5-transcribe` (Google) | |
-| **Speech (TTS)** | `google/gemini-3.8-flash-tts` (Google), `elevenlabs/eleven-flash-v2.5` (ElevenLabs), `mistralai/voxtral-mini-tts-2603` (Mistral), `hexgrad/kokoro-82m` (Kokoro, open model) | Each model has its own voices: set **Voice** to one the model offers. |
-| **Images** | `google/gemini-3.1-flash-image` (Google), `openai/gpt-5-image-mini` (OpenAI) | **Images through:** **Chat (image output)**. |
-| **Vision** | `google/gemini-3.5-flash-lite` (Google), `anthropic/claude-haiku-5.5` (Anthropic), `qwen/qwen3.8-omni-flash` (Qwen) | |
-| **Text** | `anthropic/claude-haiku-5.5` (Anthropic), `deepseek/deepseek-v4.1-flash` (DeepSeek), `mistralai/mistral-small-2603` (Mistral) | |
-| **Classify** | `google/gemini-3.5-flash-lite` (Google), `deepseek/deepseek-v4.1-flash` (DeepSeek), `mistralai/mistral-small-2603` (Mistral) | Every item costs one call, so a small, fast model is usually enough. |
+| **Transcription (STT)** | `openai/whisper-large-v3-turbo` (OpenAI, recommended), `mistralai/voxtral-mini-transcribe` (Mistral), `elevenlabs/scribe-v2` (ElevenLabs), `google/gemini-3.5-transcribe` (Google) | |
+| **Speech (TTS)** | `google/gemini-3.8-flash-tts` (Google), `elevenlabs/eleven-flash-v2.5` (ElevenLabs), `mistralai/voxtral-mini-tts-2603` (Mistral), `hexgrad/kokoro-82m` (Kokoro, open model) | Each model has its own voices; see [Choosing a voice](#choosing-a-voice). |
+| **Images** | `google/gemini-nano-banana-2.1` (Google), `openai/gpt-5.4-image-2` (OpenAI) | **Images through:** **Chat (image output)**. |
+| **Vision** | `google/gemini-3.8-flash` or `~google/gemini-flash-latest` (Google), `anthropic/claude-haiku-5.5` (Anthropic), `qwen/qwen3.8-omni-flash` (Qwen) | |
+| **Text** | `anthropic/claude-haiku-5.5` (Anthropic), `deepseek/deepseek-v4.1-flash` (DeepSeek), `mistralai/mistral-small-2603` (Mistral), `~google/gemini-flash-latest` (Google) | |
+| **Classify** | `google/gemini-3.8-flash` or `~google/gemini-flash-latest` (Google), `deepseek/deepseek-v4.1-flash` (DeepSeek), `mistralai/mistral-small-2603` (Mistral), `anthropic/claude-haiku-5.5` (Anthropic) | Every item costs one call, so a small, fast model is usually enough. |
+
+An ID starting with `~`, such as `~google/gemini-flash-latest`, is an
+OpenRouter alias for the vendor's newest model of that kind: it moves to a new
+model when the vendor releases one, without a change on your side. Use the
+fixed ID instead when you want results to stay the same.
+
+A model that only writes text can't make images, even if it can read them:
+`google/gemini-3.8-flash` and `~google/gemini-flash-latest` are good for
+Vision, Text and Classify but not for Images. OpenRouter shows a model's
+outputs and any retirement date on its page; a model being retired should be
+replaced before that date.
 
 Ticking two models from different vendors for a use also gives you a
 fallback when one vendor is down.
+
+### Choosing a voice
+
+Tick **Speech (TTS)** for a model and a **Voice** field and a **Format** field
+appear on its row. **Voice** is the voice the model speaks in; **Format** is
+the audio format (for example `mp3`), and is left to the model's default when
+blank. Both are saved as the model's `tts_defaults`. An agent can ask for
+another voice or format on a single call (`voice` and `format` in
+`agent_spawn`).
+
+The voice must be one the model offers, and each model has its own set:
+
+| Model | Example voices |
+|---|---|
+| `google/gemini-3.8-flash-tts` | `Kore`, `Puck`, `Leda`, `Charon`, `Aoede` |
+| `elevenlabs/eleven-flash-v2.5` | `sarah`, `george`, `alice`, `brian`, `lily` |
+| `mistralai/voxtral-mini-tts-2603` | `en_paul_neutral`, `gb_oliver_neutral`, and moods such as `en_paul_cheerful` |
+| `hexgrad/kokoro-82m` | `af_heart`, `af_bella`, `am_adam`, `bf_emma`, `bm_daniel` |
+
+The full list for each model is on its page on OpenRouter. A voice the model
+doesn't have makes the call fail, and the next ticked Speech model is tried.
 
 ## Vision
 
