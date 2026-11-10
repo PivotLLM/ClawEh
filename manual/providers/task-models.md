@@ -114,7 +114,7 @@ your OpenRouter provider and the ID as the model, then tick its use here.
 |---|---|---|
 | **Transcription (STT)** | `openai/whisper-large-v3-turbo` (OpenAI, recommended), `mistralai/voxtral-mini-transcribe` (Mistral), `elevenlabs/scribe-v2` (ElevenLabs), `google/gemini-3.5-transcribe` (Google) | |
 | **Speech (TTS)** | `google/gemini-3.8-flash-tts` (Google), `elevenlabs/eleven-flash-v2.5` (ElevenLabs), `mistralai/voxtral-mini-tts-2603` (Mistral), `hexgrad/kokoro-82m` (Kokoro, open model) | Each model has its own voices; see [Choosing a voice](#choosing-a-voice). |
-| **Images** | `google/gemini-nano-banana-2.1` (Google), `openai/gpt-5.4-image-2` (OpenAI) | **Images through:** **Chat (image output)**. |
+| **Images** | `google/gemini-nano-banana-2.1` (Google), `openai/gpt-image-2.6-flare` (OpenAI) | Nano Banana: **Images through: Chat (image output)**; it makes and edits images. GPT Image: **Images through: Images API**; through OpenRouter it makes images but can't edit them, so list Nano Banana first. Put both on an `openai-chat` OpenRouter provider; see [Images on OpenRouter](#images-on-openrouter). |
 | **Vision** | `google/gemini-3.8-flash` or `~google/gemini-flash-latest` (Google), `anthropic/claude-haiku-5.5` (Anthropic), `qwen/qwen3.8-omni-flash` (Qwen) | |
 | **Text** | `anthropic/claude-haiku-5.5` (Anthropic), `deepseek/deepseek-v4.1-flash` (DeepSeek), `mistralai/mistral-small-2603` (Mistral), `~google/gemini-flash-latest` (Google) | |
 | **Classify** | `google/gemini-3.8-flash` or `~google/gemini-flash-latest` (Google), `deepseek/deepseek-v4.1-flash` (DeepSeek), `mistralai/mistral-small-2603` (Mistral), `anthropic/claude-haiku-5.5` (Anthropic) | Every item costs one call, so a small, fast model is usually enough. |
@@ -132,6 +132,23 @@ replaced before that date.
 
 Ticking two models from different vendors for a use also gives you a
 fallback when one vendor is down.
+
+### Images on OpenRouter
+
+Use an OpenRouter provider with the `openai-chat` protocol for image models,
+not `openai-responses`:
+
+- **Chat (image output)** is a chat call; ClawEh reads the images from the
+  reply's `images` list, which is how OpenRouter returns them on the chat
+  protocol. An `openai-responses` provider looks for OpenAI's own image
+  results instead and finds none. Use it for models that answer with images
+  and text, such as Gemini's image models. It can also edit: the agent's
+  input images are sent with the prompt.
+- **Images API** sends the request to OpenRouter's `/images` endpoint, using
+  only the provider's Base URL and API key. Use it for models that only
+  output images, such as OpenAI's `gpt-image` models. OpenRouter's endpoint
+  can't edit, so an edit request to such a model fails and the next ticked
+  Images model is tried.
 
 ### Choosing a voice
 
