@@ -503,6 +503,60 @@ func TestTick_NewFolderAtRuntimeIgnoresOldList(t *testing.T) {
 	}
 }
 
+// Two agents sharing one workspace spelled differently (a trailing slash, a
+// linked alias) keep each other's markers: both keep getting notices.
+func TestTick_SharedWorkspaceSpelledTwoWays(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		alias func(t *testing.T, ws string) string
+	}{
+		{"trailing slash", func(_ *testing.T, ws string) string { return ws + "/" }},
+		{"linked alias", func(t *testing.T, ws string) string {
+			link := filepath.Join(t.TempDir(), "alias")
+			if err := os.Symlink(ws, link); err != nil {
+				t.Fatal(err)
+			}
+			return link
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newWatchEnv(t)
+			ws := filepath.Join(e.cfg.Agents.BaseDir, "shared")
+			if err := os.MkdirAll(ws, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			bobFolder := t.TempDir()
+			e.cfg.Agents.List[0].Workspace = ws
+			e.cfg.Agents.List = append(e.cfg.Agents.List, config.AgentConfig{
+				ID: "bob", Name: "Bob", Workspace: tc.alias(t, ws),
+				AllowedFolders: []config.AllowedFolderConfig{{Path: bobFolder, Notify: true}},
+			})
+			e.cfg.Bindings = append(e.cfg.Bindings, config.AgentBinding{
+				AgentID: "bob", Default: true,
+				Match: config.BindingMatch{Channel: "telegram", Peer: &config.PeerMatch{Kind: "direct", ID: "43"}},
+			})
+			w := e.watcher()
+			w.tick() // baselines
+			w.tick()
+			for _, m := range []string{markerPath(ws, "alice", e.folder), markerPath(ws, "bob", bobFolder)} {
+				if _, err := os.Stat(m); err != nil {
+					t.Fatalf("a marker was removed: %v", err)
+				}
+			}
+			a := e.add(t, "a.md")
+			b := filepath.Join(bobFolder, "b.md")
+			if err := os.WriteFile(b, []byte("x"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			w.tick()
+			got := strings.Join(e.notices(), "\n")
+			if !strings.Contains(got, a) || !strings.Contains(got, b) {
+				t.Fatalf("notices = %q, want both agents told", got)
+			}
+		})
+	}
+}
+
 // Markers of another agent sharing the workspace, and files that are not
 // markers, are left alone.
 func TestTick_KeepsOtherMarkers(t *testing.T) {

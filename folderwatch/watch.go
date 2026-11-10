@@ -181,10 +181,32 @@ func (w *Watcher) tick() {
 			w.scanFolder(cfg, agent, path, marker, fresh)
 		}
 	}
+	// Two spellings of one workspace (a trailing slash, a linked alias) are
+	// one marker folder: merge them by the folder's real path, after the
+	// scans have created it, so one clean-up pass sees every agent's markers
+	// and none deletes another's.
+	byDir := map[string]map[string]bool{}
 	for ws, names := range wanted {
-		removeStaleMarkers(filepath.Join(ws, markerDir), names)
+		dir := realDir(filepath.Join(ws, markerDir))
+		if byDir[dir] == nil {
+			byDir[dir] = map[string]bool{}
+		}
+		for name := range names {
+			byDir[dir][name] = true
+		}
+	}
+	for dir, names := range byDir {
+		removeStaleMarkers(dir, names)
 	}
 	w.state.scanned, w.state.pairs = true, pairs
+}
+
+// realDir is dir with its links resolved, or cleaned when it does not exist.
+func realDir(dir string) string {
+	if real, err := filepath.EvalSymlinks(dir); err == nil {
+		return real
+	}
+	return filepath.Clean(dir)
 }
 
 // removeStaleMarkers deletes the markers in dir that keep is missing: those of
