@@ -382,7 +382,9 @@ func newWatchEnv(t *testing.T) *watchEnv {
 	return e
 }
 
-func (e *watchEnv) setFolders(f ...config.AllowedFolderConfig) { e.cfg.Agents.List[0].AllowedFolders = f }
+func (e *watchEnv) setFolders(f ...config.AllowedFolderConfig) {
+	e.cfg.Agents.List[0].AllowedFolders = f
+}
 
 // watcher is the watcher a (re)load builds: a new one over the same State.
 func (e *watchEnv) watcher() *Watcher {
