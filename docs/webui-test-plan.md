@@ -3,7 +3,7 @@
 Regression coverage for the ClawEh web interface. Every step below has an ID, a
 process, and an expected result, so it can be followed by hand — and every one is
 also automated in `tests/frontend-e2e.mjs`, which prints the same IDs. There are
-176 checks in all; the runner prints the same tally at the end.
+177 checks in all; the runner prints the same tally at the end.
 
 ```
 export CLAW_E2E_USER=<admin>  CLAW_E2E_PASSWORD=<password>
@@ -92,6 +92,7 @@ until curl -sf http://127.0.0.1:8077/ready >/dev/null; do sleep 1; done
 | C2 | Look at the sidebar footer | Shows `ClawEh v<version>` |
 | C3 | Click the **Models** sidebar entry, then the **Models** link beneath it | The entry is a disclosure control (`aria-expanded`), not a link. It expands, and the link navigates to `/models` without a full page load |
 | C4 | `curl -o /dev/null -w '%{http_code}' $BASE/no-such-route` | `200` — unknown paths fall through to the SPA |
+| C5 | On every route in the suite's list, set the window to 1100×420 and compare each clipping `<main>`'s scroll height with its visible height | No page has content below the frame that cannot be scrolled to: each page scrolls inside its own area |
 
 ## D. i18n integrity
 

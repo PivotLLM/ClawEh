@@ -552,6 +552,30 @@ if (useGroup("C", "Shell and navigation")) {
     const r = await api("/no-such-route")
     assert(r.status === 200, `expected SPA fallback 200, got ${r.status}`)
   })
+  // Playwright scrolls an element into view before it acts on it, so no other
+  // check notices content a person cannot scroll to. The layout's <main> clips
+  // (overflow hidden): every page must fit it and scroll inside its own area.
+  await check(5, "every page: in a short window nothing is cut off below the frame", async () => {
+    const bad = []
+    for (const route of ROUTES) {
+      const { close, page } = await open(route)
+      try {
+        await page.setViewportSize({ width: 1100, height: 420 })
+        await page.waitForTimeout(300)
+        const cut = await page.evaluate(() =>
+          [...document.querySelectorAll("main")]
+            .filter((m) => ["hidden", "clip"].includes(getComputedStyle(m).overflowY))
+            .map((m) => m.scrollHeight - m.clientHeight)
+            .filter((d) => d > 2),
+        )
+        if (cut.length) bad.push(`${route} (${Math.max(...cut)}px cut off)`)
+      } finally {
+        await close()
+      }
+    }
+    assert(bad.length === 0, `content that cannot be scrolled to: ${bad.join(", ")}`)
+    return `${ROUTES.length} pages`
+  })
 }
 
 // D. i18n integrity
