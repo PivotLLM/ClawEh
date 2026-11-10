@@ -624,7 +624,11 @@ production instance directly; test against a dev instance.
   resolving from the workspace. The read scope (`readScopedFs`) and the write scope
   (`writeScopedFs`) check a workspace path both as given and with its links resolved
   (`resolveInWorkspace`), so files/x -> ../sessions/... is refused ("access denied:
-  <path> resolves outside the folders the agent can read"). `agentFolders` (tools/files) lists the folders the provider
+  <path> resolves outside the folders the agent can read"); a read the scope allows is
+  then made inside the `os.Root` of the read root the resolved path lies in, so a
+  link swapped in after the check cannot leave it. A path matching an allow-read
+  pattern is read through the host only when its resolved target is allow-listed too
+  or inside the same allow-listed folder (`whitelistFs.hostReadPath`). `agentFolders` (tools/files) lists the folders the provider
   registers per workspace (`SetAllowedFoldersForWorkspace`): each existing absolute
   allowed folder plus `<workspace>/maestro` when Maestro is on (no mount: `maestro/` is
   simply part of the workspace then). `files.Reader` uses the same table, so
