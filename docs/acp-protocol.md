@@ -101,7 +101,7 @@ logging goes to `$CLAW_HOME/logs/claw.log`.
   `attachments`. The device server decodes them, saves each to the media store,
   and passes `media://` refs to the agent loop — which materializes them and, via
   the existing vision-describe path, sends them to a vision model (or describes
-  them with the models ticked Vision on the Task models page if the agent's model is not
+  them with the Describe images list on the Task models page if the agent's model is not
   vision-capable). `audio`/`resource` blocks are still ignored (the R1's voice
   already arrives as text via rabbit-agent's STT).
 

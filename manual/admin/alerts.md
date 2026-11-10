@@ -80,8 +80,8 @@ See [Channels](../channels/index.md#when-a-message-cannot-be-delivered) for whic
 | SecMsg account discovery failed | The SecMsg service could not be asked for its accounts. |
 | SecMsg has no linked accounts | The SecMsg service has no account to use. |
 | Voice transcription rejected | The transcription service refused the key or credit. |
-| Speech backend not usable | A model ticked Transcription (STT) on the Task models page can't be used; urgent when no other model works. |
-| Voice message not transcribed | Every Transcription (STT) model failed on a voice message. |
+| Speech backend not usable | A model in the Transcription list on the Task models page can't be used; urgent when no other model works. |
+| Voice message not transcribed | Every model in the Transcription list failed on a voice message. |
 | Device source not started | A device event source failed to start. |
 | USB device monitor stopped | USB plug/unplug monitoring ended. |
 | Device store unavailable | The paired-device database could not be opened. |

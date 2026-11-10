@@ -19,7 +19,7 @@ A file counts as audio by its type (`audio/...`) or its name (`.mp3`, `.wav`,
 
 ## Set up a transcription service
 
-Transcription uses the models ticked **Transcription (STT)** on the
+Transcription uses the models in the **Transcription** list on the
 [Task models](../providers/task-models.md) page. The model's provider gives the
 endpoint and the API key, so the same provider can serve both chat models and
 transcription. The audio goes to `<Base URL>/audio/transcriptions`; several
@@ -42,7 +42,7 @@ whose key should be billed (see
    | `https://api.openai.com/v1` | `whisper-1` |
    | `https://openrouter.ai/api/v1` | `openai/whisper-large-v3-turbo` |
 
-3. On **Task models**, add the model and tick **Transcription (STT)**.
+3. On **Task models**, add the model to **Transcription**.
 
 The page saves by itself ("Saved ✓"), and the change applies without a
 restart. Send the agent a voice message to check.
@@ -55,12 +55,11 @@ used for transcription.
 
 ## Several models
 
-Models ticked **Transcription (STT)** are tried in the order of the Task models
-page. If one fails (the service is down, or refuses the key), the next usable
+The models in **Transcription** are tried in the order of that list. If one fails (the service is down, or refuses the key), the next usable
 one is tried. Silence is not a failure: an empty transcript does not move on to
 the next model.
 
-To stop transcribing, untick **Transcription (STT)** on every model.
+To stop transcribing, remove every model from **Transcription**.
 
 ## What the agent sees
 
@@ -86,13 +85,13 @@ service).
   the **Voice transcription rejected** [alert](../admin/alerts.md), and voice
   messages are not transcribed until it is fixed.
 - The key is the provider's, stored in `config.json` under `providers`. The
-  models are under `task_models.models`, each naming a model from the Models
+  models are under `task_models.stt`, each naming a model from the Models
   page. Like other secrets, the key can be a reference such as
   `env:GROQ_API_KEY` (see
   [Configuration](../reference/configuration.md#keeping-secrets-out-of-the-file)).
-- [Check Up](../admin/checkup.md) shows **Speech to text: No model.** while no
-  model is ticked, and the full report lists the task models and the chain in
-  use.
+- [Check Up](../admin/checkup.md) shows **Speech to text: No model in Transcription.** while
+  that list is empty, and the full report lists each task model list in
+  order.
 
 ## Agents that represent a person
 

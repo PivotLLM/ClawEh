@@ -113,8 +113,8 @@ The Speech page (`voice.stt`, `voice.echo_transcription`) and the vision
 model settings (`agents.defaults.vision_model`, `vision_model_fallbacks`) are
 gone, and their values are not carried over. Until you set them again,
 voice messages are not transcribed and images are not described for models
-that can't see them. Check Up shows **Speech to text** and **Vision** with
-"No model."
+that can't see them. Check Up shows **Speech to text** with "No model in
+Transcription." and **Vision** with "No model in Describe images."
 
 1. Before saving anything after the upgrade, note the old values in
    `config.json`: each `voice.stt` entry's provider and model, in order,
@@ -124,9 +124,9 @@ that can't see them. Check Up shows **Speech to text** and **Vision** with
    provider and model. An entry with a blank model used its service's
    default: `whisper-1` on OpenAI, `whisper-large-v3` on Groq,
    `openai/whisper-large-v3` on OpenRouter.
-3. On **Task models**, add those models in the old order and tick
-   **Transcription (STT)**; add the vision model, then each fallback, and
-   tick **Vision**. Turn on **Echo transcription** if it was on.
+3. On **Task models**, add those models to **Transcription** in the old
+   order; add the vision model, then each fallback, to **Describe images**.
+   Turn on **Echo transcription** if it was on.
 
 See [Task models](../providers/task-models.md#transcription-and-speech) for
 which provider and model ID to use.

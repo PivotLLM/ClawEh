@@ -45,7 +45,7 @@ func classifierDef(id, owner string) map[string]any {
 }
 
 // The Settings rows: the switch and the model, marked when the switch is on
-// and the model is missing or not ticked Classify.
+// and the model is missing or not in Classification.
 func TestCollectAgents_ClassifierSettings(t *testing.T) {
 	cfg, env := fixtureConfig(t)
 	settings := func(id string) Table {

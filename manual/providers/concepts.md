@@ -142,7 +142,7 @@ A model can see images only when its **Vision (tool-result images)** setting (`v
 - **User message** (`user_message`): images are added as a follow-up message. Works on chat-completion models.
 - **Tool response** (`tool_response`): images are attached to the tool result itself. The OpenAI Responses API (`openai-responses`) and xAI accept this; plain OpenAI chat does not, so use **User message** there.
 
-When an agent's model is set to **Off** and it receives an image, ClawEh sends the image to the models ticked **Vision** on the [Task models](./task-models.md) page, in order, for a text description and gives the agent that description. With no Vision model, images are dropped for such models.
+When an agent's model is set to **Off** and it receives an image, ClawEh sends the image to the models in **Describe images** on the [Task models](./task-models.md) page, in order, for a text description and gives the agent that description. While that list is empty, images are dropped for such models.
 
 ## Other model settings
 

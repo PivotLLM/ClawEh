@@ -74,6 +74,8 @@ This page explains the terms used in ClawEh and this manual.
 
 **Sub-agent** — A clone an agent starts to do a task separately and report back. Nesting is limited by **Max sub-agent depth** on the **System** page (default 3). See [Sub-agents](../agents/subagents.md).
 
+**Task model** — A model ClawEh uses for one call with no conversation and no tools: writing text, making images, speech, transcription, describing images or classifying. Each use has its own ordered list on the **Task models** page. See [Task models](../providers/task-models.md).
+
 **Temporary agent** — An agent created while ClawEh runs, such as a clone or a forum participant. It is not in `config.json` and is removed when its work is done or after a day idle. See [Temporary agents](../agents/subagents.md#temporary-agents).
 
 **Tools** — The actions an agent can take, such as reading files or searching the web. An agent has only the tools its configuration lists. See [Tools and skills](../agents/tools-and-skills.md).

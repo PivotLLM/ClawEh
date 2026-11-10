@@ -62,7 +62,7 @@ See [Providers, models and fallback](../providers/concepts.md).
 
 ### Task models
 
-The models ClawEh uses for single calls without tools, each ticked for what it is for: **Text**, **Images**, **Speech (TTS)**, **Transcription (STT)**, **Vision** and **Classify**. Each use tries its models from the top down. The **Settings** card holds **Text in results (characters)** and **Echo transcription**.
+The models ClawEh uses for single calls without tools, in six ordered lists: **Generate text**, **Generate images**, **Text to speech**, **Transcription**, **Describe images** and **Classification**. Each list tries its models from the top down; a model can be in several lists. The **Settings** card holds **Text in results (characters)** and **Echo transcription**.
 
 See [Task models](../providers/task-models.md).
 
