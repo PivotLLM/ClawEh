@@ -264,8 +264,11 @@ func collectAssessment(ctx context.Context, cfg *config.Config, env Environment)
 	// An allowed folder the file tools skip.
 	for _, f := range cfg.IgnoredAllowedFolders() {
 		status := "Ignored: " + strconv.Quote(f.Path) + " is not an absolute path."
-		if f.Reason == config.FolderNotFound {
+		switch f.Reason {
+		case config.FolderNotFound:
 			status = "Ignored: folder " + strconv.Quote(f.Path) + " not found."
+		case config.FolderControlChar:
+			status = "Ignored: " + strconv.Quote(f.Path) + " contains a line break."
 		}
 		add(true, "Allowed folder ("+agentNames(cfg, []string{f.Agent})[0]+")", status)
 	}

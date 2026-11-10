@@ -42,7 +42,7 @@ func (h *Handler) registerAgentRoutes(mux *http.ServeMux) {
 
 // ignoredAllowedFolder is an allowed folder of the saved configuration the
 // file tools skip (config.IgnoredAllowedFolders); the Agents page marks its
-// row. Reason is "not_absolute" or "not_found".
+// row. Reason is "not_absolute", "not_found" or "control_char".
 type ignoredAllowedFolder struct {
 	Agent  string `json:"agent"`
 	Path   string `json:"path"`

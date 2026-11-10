@@ -178,16 +178,19 @@ describe("AgentCard ignored allowed folders", () => {
         { path: "/srv/src", notify: false },
         { path: "notes", notify: false },
         { path: "/srv/gone", notify: false },
+        { path: "/srv/a\nb", notify: false },
       ],
       ignoredFolders: [
         { agent: "alice", path: "notes", reason: "not_absolute" },
         { agent: "alice", path: "/srv/gone", reason: "not_found" },
+        { agent: "alice", path: "/srv/a\nb", reason: "control_char" },
       ],
     })
     const notes = screen.getAllByTestId("ignored-folder")
     expect(notes.map((n) => n.textContent)).toEqual([
       "Ignored: not an absolute path",
       "Ignored: folder not found",
+      "Ignored: path contains a line break",
     ])
   })
 

@@ -39,6 +39,50 @@ func TestStoreUpdate_RelativeAllowedFolderRefused(t *testing.T) {
 	}
 }
 
+// A path with a line break or other control character is refused on save,
+// naming the agent and the folder. One already in the file blocks no other
+// save, is skipped by the tools and is listed as ignored with its reason.
+func TestStoreUpdate_ControlCharAllowedFolder(t *testing.T) {
+	dir := t.TempDir()
+	bad := dir + "\nsub"
+	s := newTestStore(t)
+	err := s.Update(func(c *Config) error {
+		c.Agents.List[0].AllowedFolders = []AllowedFolderConfig{{Path: bad, Notify: true}}
+		return nil
+	})
+	want := `Main's allowed folder "` + dir + `\nsub" contains a line break or other control character.`
+	if err == nil || err.Error() != want {
+		t.Fatalf("err = %v, want %q", err, want)
+	}
+	if _, ok := errors.AsType[*ValidationError](err); !ok {
+		t.Errorf("err = %T, want a ValidationError", err)
+	}
+
+	// Already in the file (a hand edit).
+	cfg, err := LoadConfig(s.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Agents.List[0].AllowedFolders = []AllowedFolderConfig{{Path: bad, Notify: true}, {Path: dir}}
+	if err = writeRawConfig(s.Path(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Update(func(c *Config) error { c.Agents.List[0].Name = "Alice"; return nil }); err != nil {
+		t.Fatalf("an unrelated save was blocked: %v", err)
+	}
+	cur := s.Current()
+	if got := cur.Agents.List[0].CleanAllowedFolders(); len(got) != 1 || got[0].Path != dir {
+		t.Errorf("CleanAllowedFolders = %+v, want only %s", got, dir)
+	}
+	ignored := cur.IgnoredAllowedFolders()
+	if len(ignored) != 1 || ignored[0].Path != bad || ignored[0].Reason != FolderControlChar {
+		t.Errorf("IgnoredAllowedFolders = %+v", ignored)
+	}
+}
+
 // An absolute path is saved, with its notify flag.
 func TestStoreUpdate_AllowedFolderSaved(t *testing.T) {
 	s := newTestStore(t)

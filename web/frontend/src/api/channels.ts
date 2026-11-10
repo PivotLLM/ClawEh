@@ -102,11 +102,12 @@ export async function getHumanAgents(): Promise<HumanAgentsInfo> {
 }
 
 // IgnoredAllowedFolder is a saved allowed folder the file tools skip: its
-// path is not absolute, or the folder does not exist.
+// path is not absolute, holds a line break or other control character, or
+// the folder does not exist.
 export interface IgnoredAllowedFolder {
   agent: string
   path: string
-  reason: "not_absolute" | "not_found"
+  reason: "not_absolute" | "not_found" | "control_char"
 }
 
 export async function getIgnoredAllowedFolders(): Promise<

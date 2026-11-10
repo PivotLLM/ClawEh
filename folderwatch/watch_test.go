@@ -345,6 +345,18 @@ func TestTick_TwoAgentsOnOneFolderBothNotified(t *testing.T) {
 	}
 }
 
+// A folder whose path holds a line break is not watched (it is listed as
+// ignored instead); its list could never match it.
+func TestNotifyFolders_SkipsControlCharacters(t *testing.T) {
+	dir := t.TempDir()
+	agent := &config.AgentConfig{ID: "alice", AllowedFolders: []config.AllowedFolderConfig{
+		{Path: dir + "\nx", Notify: true}, {Path: dir, Notify: true},
+	}}
+	if got := notifyFolders(agent); len(got) != 1 || got[0] != dir {
+		t.Fatalf("notifyFolders = %q, want only %q", got, dir)
+	}
+}
+
 // Agents sharing a workspace still keep one marker each for the same folder.
 func TestMarkerPath_PerAgent(t *testing.T) {
 	if markerPath("/ws", "alice", "/srv/src") == markerPath("/ws", "bob", "/srv/src") {

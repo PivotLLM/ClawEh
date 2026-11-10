@@ -408,6 +408,13 @@
 
 ### Fixed
 
+- **An allowed folder whose path holds a line break is refused.** Such a
+  path never matched its list of seen files, so its new-file notices were
+  silently never sent. Saving one is refused ("Alice's allowed folder
+  "/srv/a\nb" contains a line break or other control character."); one
+  already in `config.json` is ignored by the file tools and marked on the
+  Agents page ("Ignored: path contains a line break") and on Check Up.
+
 - **File tools no longer hang on a FIFO or read a device.** Reading,
   editing, viewing, counting or attaching a path that is a FIFO (named
   pipe), device or socket could wait forever for a writer. Every file read

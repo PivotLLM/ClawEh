@@ -41,7 +41,7 @@ An allowed folder gives one agent's file tools a folder elsewhere on the machine
 3. Optionally type a **Note** saying what the folder holds, for example `inbound audio notes` (at most 100 characters).
 4. Tick **Notify on new files** to tell the agent when a new file appears there (see below).
 
-The trash icon removes a folder. A path that is not absolute is refused, for example "Alice's allowed folder "src" must be an absolute path.", and so is a note longer than 100 characters ("Alice's note for "/opt/audio/in" is longer than 100 characters."). A saved folder the file tools cannot use is marked on its row: "Ignored: not an absolute path" (left by an older configuration) or "Ignored: folder not found"; Check Up lists it too.
+The trash icon removes a folder. A path that is not absolute is refused, for example "Alice's allowed folder "src" must be an absolute path.", and so is a note longer than 100 characters ("Alice's note for "/opt/audio/in" is longer than 100 characters."). A saved folder the file tools cannot use is marked on its row: "Ignored: not an absolute path" (left by an older configuration), "Ignored: path contains a line break" (a hand edit; such a path is refused on save) or "Ignored: folder not found"; Check Up lists it too.
 
 ClawEh does not decide write access. The agent may read and write wherever the account ClawEh runs as may; in a folder that account cannot write, a write fails with "permission denied: \<path\> is read-only for this app". To give an agent a read-only folder, make it read-only for that account.
 
