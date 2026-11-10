@@ -205,12 +205,11 @@ func TestSendFile_SpecialFiles(t *testing.T) {
 	}
 	requireRefusal(t, f.tool.Execute(chatCtx(), filesArg(map[string]any{"path": "files/pipe"})), "it is not a regular file")
 
-	// The reader's open itself: a FIFO opens without waiting for a writer.
-	pf, err := f.tool.reader.Open(fifo)
-	if err != nil {
-		t.Fatalf("Open(fifo) = %v, want it open without blocking", err)
+	// The reader's open itself refuses a FIFO without waiting for a writer.
+	if pf, err := f.tool.reader.Open(fifo); err == nil {
+		utils.CloseQuietly(pf)
+		t.Fatal("Open(fifo) succeeded, want a refusal")
 	}
-	utils.CloseQuietly(pf)
 }
 
 // Every path is checked with the agent's file-reading permission before

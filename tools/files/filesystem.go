@@ -719,18 +719,84 @@ func errResult(err error) *tools.ToolResult {
 }
 
 // hostFs is an unrestricted fileReadWriter that operates directly on the host filesystem.
-type hostFs struct{}
+type hostFs struct {
+	// beforeOpen, when set (tests only), runs after a read's checks and
+	// just before the open.
+	beforeOpen func(target string)
+}
+
+// notRegular refuses reading path, which is not a regular file (a folder,
+// FIFO, device or socket): reading one could block or never end.
+func notRegular(path string) error {
+	return tools.Refusal(fmt.Errorf("access denied: %s is not a regular file", path))
+}
+
+// regularOpen checks the file just opened for path: it must be a regular
+// file, and when checked is given, the same file. Otherwise it is closed
+// and refused.
+func regularOpen(f *os.File, path string, checked os.FileInfo) (*os.File, error) {
+	info, err := f.Stat()
+	switch {
+	case err != nil:
+		utils.CloseQuietly(f)
+		return nil, fmt.Errorf("failed to open file: %w", err)
+	case !info.Mode().IsRegular():
+		utils.CloseQuietly(f)
+		return nil, notRegular(path)
+	case checked != nil && !os.SameFile(checked, info):
+		utils.CloseQuietly(f)
+		return nil, tools.Refusal(fmt.Errorf("access denied: %s changed while it was being opened", path))
+	}
+	return f, nil
+}
+
+// openErr words a failed open or read of a file.
+func openErr(op string, err error) error {
+	switch {
+	case os.IsNotExist(err):
+		return fmt.Errorf("failed to %s file: file not found: %w", op, err)
+	case os.IsPermission(err) || strings.Contains(err.Error(), "permission denied"):
+		return fmt.Errorf("failed to %s file: access denied: %w", op, err)
+	}
+	return fmt.Errorf("failed to %s file: %w", op, err)
+}
+
+// openRegular opens path for reading: its links are resolved first, the
+// target must be a regular file (nothing else is opened), and it is opened
+// without following a link, without waiting and without becoming a
+// terminal, so a link swapped in at the last moment is refused; the open
+// file must be the file checked.
+func (h *hostFs) openRegular(op, path string) (*os.File, error) {
+	target, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return nil, openErr(op, err)
+	}
+	checked, err := os.Lstat(target)
+	if err != nil {
+		return nil, openErr(op, err)
+	}
+	if !checked.Mode().IsRegular() {
+		return nil, notRegular(path)
+	}
+	if h.beforeOpen != nil {
+		h.beforeOpen(target)
+	}
+	f, err := os.OpenFile(target, hostOpenFlags, 0)
+	if err != nil {
+		return nil, openErr(op, err)
+	}
+	return regularOpen(f, path, checked)
+}
 
 func (h *hostFs) ReadFile(path string) ([]byte, error) {
-	content, err := os.ReadFile(path) //nolint:gosec // hostFs is the unrestricted backend, selected by buildBaseFs only when restrict is false
+	f, err := h.openRegular("read", path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("failed to read file: file not found: %w", err)
-		}
-		if os.IsPermission(err) {
-			return nil, fmt.Errorf("failed to read file: access denied: %w", err)
-		}
-		return nil, fmt.Errorf("failed to read file: %w", err)
+		return nil, err
+	}
+	defer utils.CloseQuietly(f)
+	content, err := io.ReadAll(f)
+	if err != nil {
+		return nil, openErr("read", err)
 	}
 	return content, nil
 }
@@ -820,15 +886,9 @@ func (h *hostFs) Lstat(path string) (os.FileInfo, error) {
 }
 
 func (h *hostFs) Open(path string) (fs.File, error) {
-	f, err := os.OpenFile(path, readOpenFlags, 0) //nolint:gosec // hostFs is the unrestricted backend, selected by buildBaseFs only when restrict is false
+	f, err := h.openRegular("open", path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("failed to open file: file not found: %w", err)
-		}
-		if os.IsPermission(err) {
-			return nil, fmt.Errorf("failed to open file: access denied: %w", err)
-		}
-		return nil, fmt.Errorf("failed to open file: %w", err)
+		return nil, err
 	}
 	return f, nil
 }
@@ -875,21 +935,28 @@ func isRootEscape(err error) bool {
 func (r *sandboxFs) ReadFile(path string) ([]byte, error) {
 	var content []byte
 	err := r.execute(path, func(root *os.Root, relPath string) error {
-		fileContent, err := root.ReadFile(relPath)
+		f, err := r.openRegular(root, "read", path, relPath)
 		if err != nil {
-			if os.IsNotExist(err) {
-				return fmt.Errorf("failed to read file: file not found: %w", err)
-			}
-			if os.IsPermission(err) ||
-				strings.Contains(err.Error(), "permission denied") {
-				return fmt.Errorf("failed to read file: access denied: %w", err)
-			}
-			return fmt.Errorf("failed to read file: %w", err)
+			return err
 		}
-		content = fileContent
+		defer utils.CloseQuietly(f)
+		if content, err = io.ReadAll(f); err != nil {
+			return openErr("read", err)
+		}
 		return nil
 	})
 	return content, err
+}
+
+// openRegular opens relPath in root for reading without waiting (a FIFO
+// does not block) and without becoming a terminal, and refuses anything but
+// a regular file. os.Root keeps any link it follows inside the workspace.
+func (r *sandboxFs) openRegular(root *os.Root, op, path, relPath string) (*os.File, error) {
+	f, err := root.OpenFile(relPath, readOpenFlags, 0)
+	if err != nil {
+		return nil, openErr(op, err)
+	}
+	return regularOpen(f, r.abs(path), nil)
 }
 
 func (r *sandboxFs) WriteFile(path string, data []byte) error {
@@ -1096,16 +1163,9 @@ func (r *sandboxFs) isRoot(path string) bool {
 func (r *sandboxFs) Open(path string) (fs.File, error) {
 	var f fs.File
 	err := r.execute(path, func(root *os.Root, relPath string) error {
-		file, err := root.OpenFile(relPath, readOpenFlags, 0)
+		file, err := r.openRegular(root, "open", path, relPath)
 		if err != nil {
-			if os.IsNotExist(err) {
-				return fmt.Errorf("failed to open file: file not found: %w", err)
-			}
-			if os.IsPermission(err) ||
-				strings.Contains(err.Error(), "permission denied") {
-				return fmt.Errorf("failed to open file: access denied: %w", err)
-			}
-			return fmt.Errorf("failed to open file: %w", err)
+			return err
 		}
 		f = file
 		return nil

@@ -16,6 +16,10 @@
   the open outside what the agent may read. Forum sources,
   `msg_send_file` and task-model files now open the file through the same
   sandbox that checked it, and refuse it when it is not the file checked.
+  A host path (an agent not confined to its workspace, a path in
+  `tools.allow_read_paths`, the skills directory) is opened by its resolved
+  target without following a link, so a link swapped in at the last moment
+  is refused.
 
 ### Added
 
@@ -403,6 +407,13 @@
   `CLAW_AGENTS_DEFAULTS_VISION_MODEL` is removed.
 
 ### Fixed
+
+- **File tools no longer hang on a FIFO or read a device.** Reading,
+  editing, viewing, counting or attaching a path that is a FIFO (named
+  pipe), device or socket could wait forever for a writer. Every file read
+  now opens without waiting and refuses anything but a regular file:
+  "access denied: <path> is not a regular file". Searches skip such files
+  as before.
 
 - **A link in the workspace no longer reads what the agent may not
   read.** With the workspace read folders set (the default: `files/`,

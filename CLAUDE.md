@@ -630,10 +630,15 @@ production instance directly; test against a dev instance.
   simply part of the workspace then). `files.Reader` uses the same table, so
   `msg_send_file`, cogmem attachments, forum sources and task-model files follow the same
   rule. They check with `Resolve`/`Allowed` (named path and link target) and then open
-  with `Reader.Open`, through the same `os.Root` sandbox (workspace or allowed folder),
-  non-blocking, and compare the open file with the checked one (`os.SameFile`), so a
-  link swapped in after the check cannot escape; the forum gets this as
-  `ToolHost.OpenFile` / `LaunchOptions.OpenFile`. `Store.Update` refuses a new non-absolute path ("Alice's allowed folder "x" must
+  with `Reader.Open` and compare the open file with the checked one (`os.SameFile`);
+  the forum gets this as `ToolHost.OpenFile` / `LaunchOptions.OpenFile`. Every
+  file-tool read (`sandboxFs`/`hostFs` `Open` and `ReadFile`) opens non-blocking with
+  O_NOCTTY and refuses anything but a regular file after an fstat ("access denied:
+  <path> is not a regular file"), so a FIFO or device never hangs or is read. In the
+  workspace or an allowed folder the open is made in that `os.Root` (a swapped link
+  cannot leave it); a host path (unrestricted agent, allow-read pattern, skills dir,
+  `hostFs.openRegular`) has its links resolved first, must be a regular file before
+  anything is opened, and is opened with O_NOFOLLOW and compared (`os.SameFile`). `Store.Update` refuses a new non-absolute path ("Alice's allowed folder "x" must
   be an absolute path.") and a new note over `config.MaxAllowedFolderNoteChars` (100)
   characters ("Alice's note for "/srv/src" is longer than 100 characters.";
   `newLongFolderNotes`). The retired `mounts` list is migrated at load and on save
