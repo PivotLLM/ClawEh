@@ -404,6 +404,13 @@
 
 ### Fixed
 
+- **A CLI provider no longer keeps a stray `base_url`.** CLI providers
+  (`claude-cli`, `codex-cli`, `antigravity-cli`, `cursor-cli`) never use
+  `base_url`, but a value could stay behind, for example after switching a
+  provider's protocol to a CLI on the Providers page, and showed up in
+  `/status` and `claw status`. Any save of the configuration now removes it
+  from CLI providers; nothing else changes.
+
 - **New-file notices work for read-only folders and for every agent
   watching a folder.** The list of files already seen is now kept per agent
   in the agent's workspace (`state/folderwatch/`), not in a `.claw` file

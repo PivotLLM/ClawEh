@@ -364,6 +364,17 @@ var httpProtocols = map[string]struct{}{
 	"anthropic-messages": {},
 }
 
+// dropCLIBaseURLs clears base_url on every CLI-protocol provider. A CLI never
+// uses it (the factory builds a CLI from its command alone), so a value left
+// over from another protocol is not written back on save.
+func (c *Config) dropCLIBaseURLs() {
+	for i := range c.Providers {
+		if IsCLIProtocol(c.Providers[i].Protocol) {
+			c.Providers[i].BaseURL = ""
+		}
+	}
+}
+
 // IsCLIProtocol reports whether the protocol is a subprocess CLI provider,
 // which authenticates out-of-band and needs no API key.
 func IsCLIProtocol(protocol string) bool {

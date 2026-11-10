@@ -89,6 +89,50 @@ func TestStore_CurrentUpdateReload(t *testing.T) {
 	}
 }
 
+// A CLI provider never uses base_url, so a save drops one left in the file
+// (by an unrelated change too) or left over from a protocol switch; an HTTP
+// provider keeps its own.
+func TestStore_UpdateDropsCLIBaseURL(t *testing.T) {
+	s := newTestStore(t)
+	cfg, err := LoadConfig(s.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Providers = append(cfg.Providers,
+		Provider{Name: "Claude CLI", Protocol: "claude-cli", BaseURL: "https://api.openai.com/v1"},
+		Provider{Name: "Bob's API", Protocol: "openai-chat", BaseURL: "https://api.example.com/v1", APIKey: "sk-bob-0123456789"},
+	)
+	if err = SaveConfig(s.Path(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Current().Providers[1].BaseURL; got == "" {
+		t.Fatal("a load must not change the file's providers")
+	}
+
+	if err = s.Update(func(c *Config) error {
+		c.Agents.List[0].Name = "Alice"
+		c.Providers[2].Protocol = "codex-cli"
+		return nil
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	fromDisk, err := LoadConfig(s.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []*Config{s.Current(), fromDisk} {
+		if c.Providers[0].BaseURL != "https://api.openai.com/v1" {
+			t.Errorf("HTTP provider lost its base_url: %q", c.Providers[0].BaseURL)
+		}
+		if c.Providers[1].BaseURL != "" || c.Providers[2].BaseURL != "" {
+			t.Errorf("CLI providers kept base_url: %q, %q", c.Providers[1].BaseURL, c.Providers[2].BaseURL)
+		}
+	}
+}
+
 func TestStore_UpdateErrorLeavesEverythingUnchanged(t *testing.T) {
 	s := newTestStore(t)
 	before := s.Current()

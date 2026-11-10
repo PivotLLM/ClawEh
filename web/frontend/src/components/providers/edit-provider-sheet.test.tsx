@@ -1,7 +1,7 @@
-import { fireEvent, render, screen } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
 
-import type { ProviderInfo } from "@/api/providers"
+import { type ProviderInfo, updateProvider } from "@/api/providers"
 
 import { EditProviderSheet } from "./edit-provider-sheet"
 
@@ -71,6 +71,26 @@ describe("EditProviderSheet", () => {
     renderSheet({ protocol: "gemini-cli" })
     expect(screen.queryByText(ADVANCED_TOGGLE)).toBeNull()
     expect(screen.getByText("providers.field.command")).toBeTruthy()
+  })
+
+  // A CLI never uses base_url: the field is not shown and a save sends none,
+  // even when the stored provider still carries one from another protocol
+  // (the backend drops it on save).
+  it("gives a CLI provider no base URL", async () => {
+    renderSheet({ protocol: "claude-cli", base_url: "https://api.openai.com/v1" })
+    expect(screen.queryByText("providers.field.baseURL")).toBeNull()
+    expect(screen.queryByDisplayValue("https://api.openai.com/v1")).toBeNull()
+    fireEvent.click(screen.getByText("common.save"))
+    await waitFor(() => expect(updateProvider).toHaveBeenCalled())
+    const body = vi.mocked(updateProvider).mock.calls.at(-1)?.[1]
+    expect(body?.protocol).toBe("claude-cli")
+    expect(body?.base_url).toBeUndefined()
+  })
+
+  it("shows the base URL of an HTTP provider", () => {
+    renderSheet({ protocol: "openai-chat", base_url: "https://api.example/v1" })
+    expect(screen.getByText("providers.field.baseURL")).toBeTruthy()
+    expect(screen.getByDisplayValue("https://api.example/v1")).toBeTruthy()
   })
 
   it("still offers them for an HTTP provider", () => {

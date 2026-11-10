@@ -130,6 +130,8 @@ func (s *Store) Update(fn func(cfg *Config) error) error {
 	// A config submitted with the retired mounts list (PUT /api/config) is
 	// migrated as a load would migrate it.
 	next.migrateLegacyMounts()
+	// A CLI provider's base_url is unused; a stray one is dropped.
+	next.dropCLIBaseURLs()
 	// An agent whose classifiers switch is on with no model gets its first
 	// model (classifiers.go), before the model checks below see it.
 	refusals = append(refusals, completeClassifierModels(s.cur, next)...)
