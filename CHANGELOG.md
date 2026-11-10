@@ -404,6 +404,11 @@
 
 ### Fixed
 
+- **The Providers page's add and edit forms start with a protocol the
+  server accepts.** They started with `openai`, which is not a protocol,
+  so saving without picking one was refused as an unknown protocol. They
+  now start with `openai-chat`.
+
 - **Emptying a provider's Base URL or proxy on the Providers page clears
   it.** The edit form left an emptied field out of the save, and the
   stored value was kept. It now saves the empty value. A protocol that

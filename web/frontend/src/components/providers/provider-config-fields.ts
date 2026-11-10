@@ -23,6 +23,11 @@ export const PROTOCOL_OPTIONS = [
 
 export type Protocol = (typeof PROTOCOL_OPTIONS)[number]
 
+// DEFAULT_PROTOCOL is the protocol a provider form starts with. It and the
+// picker are checked against config/testdata/provider_protocols.json, which
+// the backend checks against the protocols it accepts.
+export const DEFAULT_PROTOCOL: Protocol = "openai-chat"
+
 // CLI_PROTOCOLS still includes the "gemini-cli" alias, unlike the picker: a
 // provider already carrying it must keep rendering as a CLI card, with a
 // command field rather than a base URL and API key.

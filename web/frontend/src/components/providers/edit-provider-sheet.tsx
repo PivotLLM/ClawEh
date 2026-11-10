@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next"
 
 import { type ProviderInfo, updateProvider } from "@/api/providers"
 import {
+  DEFAULT_PROTOCOL,
   PROTOCOL_OPTIONS,
   isCliProtocol,
   isHumanProtocol,
@@ -63,7 +64,7 @@ export function EditProviderSheet({
   const { t } = useTranslation()
   const [form, setForm] = useState<EditForm>({
     name: "",
-    protocol: "openai",
+    protocol: DEFAULT_PROTOCOL,
     baseURL: "",
     apiKey: "",
     proxy: "",

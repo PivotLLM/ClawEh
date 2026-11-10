@@ -1,0 +1,18 @@
+{
+  "protocols": [
+    "anthropic",
+    "anthropic-messages",
+    "antigravity-cli",
+    "azure",
+    "claude-cli",
+    "codex-cli",
+    "cursor-cli",
+    "elevenlabs",
+    "gemini",
+    "gemini-cli",
+    "human",
+    "openai-chat",
+    "openai-responses"
+  ],
+  "default_protocol": "openai-chat"
+}

@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next"
 
 import { addProvider } from "@/api/providers"
 import {
+  DEFAULT_PROTOCOL,
   PROTOCOL_OPTIONS,
   isCliProtocol,
   isHumanProtocol,
@@ -49,7 +50,7 @@ interface AddForm {
 
 const EMPTY_ADD_FORM: AddForm = {
   name: "",
-  protocol: "openai",
+  protocol: DEFAULT_PROTOCOL,
   baseURL: "",
   apiKey: "",
   proxy: "",
