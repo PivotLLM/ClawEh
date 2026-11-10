@@ -118,11 +118,14 @@ export function EditProviderSheet({
       await updateProvider(provider.index, {
         name: form.name.trim(),
         protocol: form.protocol,
-        base_url: noEndpoint ? undefined : form.baseURL.trim() || undefined,
+        // An emptied field is sent empty, which clears the stored value; an
+        // omitted one would keep it.
+        base_url: noEndpoint ? undefined : form.baseURL.trim(),
         // Empty api_key keeps the stored key (backend semantics).
         api_key: noEndpoint ? undefined : form.apiKey.trim() || undefined,
-        proxy: form.proxy.trim() || undefined,
-        command: cliProto ? form.command.trim() || undefined : undefined,
+        // A masked proxy sent back keeps the stored one (backend semantics).
+        proxy: form.proxy.trim(),
+        command: cliProto ? form.command.trim() : undefined,
         strict_compat: form.strictCompat,
         require_reasoning_content: form.requireReasoningContent,
         no_parallel_tool_calls: form.noParallelToolCalls,

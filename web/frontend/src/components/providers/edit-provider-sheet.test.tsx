@@ -93,6 +93,30 @@ describe("EditProviderSheet", () => {
     expect(screen.getByDisplayValue("https://api.example/v1")).toBeTruthy()
   })
 
+  // An omitted field keeps the stored value, so an emptied one is sent
+  // empty: that is what clears it.
+  it("sends an emptied base URL and proxy as empty", async () => {
+    renderSheet({
+      protocol: "gemini",
+      base_url: "https://speech.example/v1",
+      proxy: "http://proxy.example:3128",
+    })
+    fireEvent.change(screen.getByDisplayValue("https://speech.example/v1"), {
+      target: { value: "  " },
+    })
+    fireEvent.click(screen.getByText(ADVANCED_TOGGLE))
+    fireEvent.change(screen.getByDisplayValue("http://proxy.example:3128"), {
+      target: { value: "" },
+    })
+    fireEvent.click(screen.getByText("common.save"))
+    await waitFor(() => expect(updateProvider).toHaveBeenCalled())
+    const body = vi.mocked(updateProvider).mock.calls.at(-1)?.[1]
+    expect(body?.base_url).toBe("")
+    expect(body?.proxy).toBe("")
+    // A key left empty is still omitted: it keeps the stored key.
+    expect(body?.api_key).toBeUndefined()
+  })
+
   it("still offers them for an HTTP provider", () => {
     renderSheet({ protocol: "openai-chat", base_url: "https://api.example/v1" })
     fireEvent.click(screen.getByText(ADVANCED_TOGGLE))

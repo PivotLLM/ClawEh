@@ -404,6 +404,12 @@
 
 ### Fixed
 
+- **Emptying a provider's Base URL or proxy on the Providers page clears
+  it.** The edit form left an emptied field out of the save, and the
+  stored value was kept. It now saves the empty value. A protocol that
+  needs a base URL still refuses the save; an empty API key still keeps the
+  stored key.
+
 - **A CLI provider no longer keeps a stray `base_url`.** CLI providers
   (`claude-cli`, `codex-cli`, `antigravity-cli`, `cursor-cli`) never use
   `base_url`, but a value could stay behind, for example after switching a
