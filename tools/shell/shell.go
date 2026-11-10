@@ -139,7 +139,8 @@ func (t *ExecTool) Name() string {
 }
 
 func (t *ExecTool) Description() string {
-	return "Execute a shell command and return its output. Use with caution."
+	return "Run git, builds, tests and other programs: executes a shell command and returns its output. " +
+		"Not for finding or reading files: use file_glob, file_search_lines and file_read_lines."
 }
 
 func (t *ExecTool) Parameters() map[string]any {

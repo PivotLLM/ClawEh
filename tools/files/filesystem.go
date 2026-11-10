@@ -162,10 +162,9 @@ func (t *ReadFileTool) Name() string {
 
 func (t *ReadFileTool) Description() string {
 	if t.lineMode {
-		return "Read a file by LINE number. Pass `start_line` (1-based) and optional `line_count` to read a " +
-			"numbered slice; lines are returned with their numbers, and the status block tells you the next " +
-			"`start_line`. Best for text/code and for getting exact text to pass to file_edit. " +
-			"Line numbers from file_search_lines feed directly into this tool. " +
+		return "Read the lines you found: reads a file by line number from `start_line` (1-based; a line number " +
+			"from file_search_lines) for `line_count` lines. Lines come back numbered and the status block gives the " +
+			"next `start_line`. Use it to get the exact text before file_edit. " +
 			"(To page by raw bytes instead, use file_read_bytes.)"
 	}
 	return "Read a file by BYTE offset. Pass `offset` and optional `length` to read a byte range; the status " +
@@ -530,7 +529,8 @@ func (t *WriteFileTool) Name() string {
 }
 
 func (t *WriteFileTool) Description() string {
-	return "Write content to a file (parent directories created as needed). Refuses to replace an existing file unless overwrite is true."
+	return "Create a file, or replace a whole file: writes content (parent folders created as needed). " +
+		"Refuses to replace an existing file unless overwrite is true. To change part of a file, use file_edit."
 }
 
 func (t *WriteFileTool) Parameters() map[string]any {
@@ -619,7 +619,8 @@ func (t *ListDirTool) Name() string {
 }
 
 func (t *ListDirTool) Description() string {
-	return "List files and directories in a path. One level by default; set recursive=true to list the whole tree."
+	return "See what is in a folder: lists its files and subfolders, one level by default; recursive=true lists the whole tree. " +
+		"To find files by name, use file_glob."
 }
 
 func (t *ListDirTool) Parameters() map[string]any {

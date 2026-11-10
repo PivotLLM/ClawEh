@@ -59,6 +59,7 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 		count       *CountFileTool
 		searchLines *SearchFilesTool
 		searchBytes *SearchFilesTool
+		glob        *GlobTool
 		rangeTools  map[string]*rangeEditTool
 	)
 
@@ -110,6 +111,7 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 		count = NewCountFileTool(workspace, readRestrict, allowReadPaths)
 		searchLines = NewSearchLinesTool(workspace, readRestrict, allowReadPaths)
 		searchBytes = NewSearchBytesTool(workspace, readRestrict, allowReadPaths)
+		glob = NewGlobTool(workspace, readRestrict, allowReadPaths)
 		write = NewWriteFileToolScoped(workspace, restrict, writeSubdir, allowWritePaths)
 		list = NewListDirTool(workspace, readRestrict, allowReadPaths)
 		edit = NewEditFileToolScoped(workspace, restrict, writeSubdir, allowWritePaths)
@@ -223,6 +225,20 @@ func (globalFilesProvider) RegisterTools(deps global.Deps) []global.ToolDefiniti
 					return tools.ResultToGlobal(tools.ErrorResult("file search is not available")), nil
 				}
 				return tools.ResultToGlobal(searchLines.Execute(call.Ctx, call.Args)), nil
+			},
+		},
+		{
+			Name:        "glob",
+			Description: (&GlobTool{}).Description(),
+			RawSchema:   (&GlobTool{}).Parameters(),
+			Category:    "filesystem",
+			// Part of the coding tools; not in the default set.
+			DefaultAllow: global.Allow(false),
+			Handler: func(call *global.ToolCall) (*global.Result, error) {
+				if glob == nil {
+					return tools.ResultToGlobal(tools.ErrorResult("file glob is not available")), nil
+				}
+				return tools.ResultToGlobal(glob.Execute(call.Ctx, call.Args)), nil
 			},
 		},
 		{

@@ -38,7 +38,8 @@ func (t *EditFileTool) Name() string {
 }
 
 func (t *EditFileTool) Description() string {
-	return "Edit a file by replacing old_text with new_text. The old_text must exist exactly in the file."
+	return "Change text in a file: replaces old_text with new_text. old_text must appear exactly once, " +
+		"exactly as in the file (copy it from file_read_lines)."
 }
 
 func (t *EditFileTool) Parameters() map[string]any {

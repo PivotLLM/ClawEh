@@ -649,6 +649,7 @@ PY
       "file_delete_bytes",
       "file_append",
       "file_list",
+      "file_glob",
       "file_search_lines",
       "file_search_bytes",
       "file_copy",

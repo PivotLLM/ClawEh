@@ -46,15 +46,15 @@ func (t *rangeEditTool) backupDefault() bool { return t.op != "insert" }
 func (t *rangeEditTool) Description() string {
 	switch t.op + "_" + t.unit {
 	case "edit_lines":
-		return `Replace lines start..end (1-based) with ` + "`replace`" + `. Omit end to replace just the start line; pass end="end" for end of file. To remove lines use file_delete_lines.`
+		return `Change lines by number: replaces lines start..end (1-based) with ` + "`replace`" + `. Omit end to replace just the start line; pass end="end" for end of file. To remove lines use file_delete_lines.`
 	case "edit_bytes":
 		return `Replace bytes start..end (0-based, inclusive) with ` + "`replace`" + `. Omit end to replace just the start byte; pass end="end" for end of file. To remove bytes use file_delete_bytes.`
 	case "insert_lines":
-		return "Insert `text` after a line number (0 = top of file). Nothing is removed."
+		return "Add lines without removing any: inserts `text` after a line number (0 = top of file)."
 	case "insert_bytes":
 		return "Insert `text` at a byte offset (0 = top of file). Nothing is removed."
 	case "delete_lines":
-		return `Delete lines start..end (1-based). Omit end to delete just the start line; pass end="end" for end of file.`
+		return `Remove lines by number: deletes lines start..end (1-based). Omit end to delete just the start line; pass end="end" for end of file.`
 	case "delete_bytes":
 		return `Delete bytes start..end (0-based, inclusive). Omit end to delete just the start byte; pass end="end" for end of file.`
 	}
