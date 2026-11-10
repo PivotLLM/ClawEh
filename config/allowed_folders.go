@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/PivotLLM/ClawEh/fileutil"
 	"github.com/PivotLLM/ClawEh/logger"
@@ -63,21 +64,84 @@ func (c *Config) migrateLegacyMounts() {
 // paths, in config order, each once. A path that is not absolute (one a
 // migration left) is skipped: it names no folder.
 func (a *AgentConfig) AllowedFolderPaths() []string {
+	folders := a.CleanAllowedFolders()
+	out := make([]string, 0, len(folders))
+	for _, f := range folders {
+		out = append(out, f.Path)
+	}
+	return out
+}
+
+// CleanAllowedFolders returns the agent's allowed folders with clean absolute
+// paths, in config order, each path once (the first entry for a path wins).
+// A path that is not absolute (one a migration left) is skipped: it names no
+// folder. Notes are trimmed.
+func (a *AgentConfig) CleanAllowedFolders() []AllowedFolderConfig {
 	if a == nil {
 		return nil
 	}
-	var out []string
+	var (
+		out  []AllowedFolderConfig
+		seen []string
+	)
 	for _, f := range a.AllowedFolders {
 		p := strings.TrimSpace(f.Path)
 		if !filepath.IsAbs(p) {
 			continue
 		}
 		p = filepath.Clean(p)
-		if !slices.Contains(out, p) {
-			out = append(out, p)
+		if slices.Contains(seen, p) {
+			continue
+		}
+		seen = append(seen, p)
+		out = append(out, AllowedFolderConfig{Path: p, Notify: f.Notify, Note: strings.TrimSpace(f.Note)})
+	}
+	return out
+}
+
+// MaxAllowedFolderNoteChars is the longest note an allowed folder may carry,
+// in characters.
+const MaxAllowedFolderNoteChars = 100
+
+// longFolderNote is an allowed folder whose note is too long.
+type longFolderNote struct {
+	Agent string // agent id
+	Path  string // the path as configured
+	Note  string
+}
+
+func (p longFolderNote) key() string {
+	return NormalizeAgentID(p.Agent) + "|" + p.Path + "|" + p.Note
+}
+
+// longFolderNotes lists every allowed folder whose note is longer than
+// MaxAllowedFolderNoteChars characters, in config order.
+func (c *Config) longFolderNotes() []longFolderNote {
+	var out []longFolderNote
+	for i := range c.Agents.List {
+		a := &c.Agents.List[i]
+		for _, f := range a.AllowedFolders {
+			if utf8.RuneCountInString(strings.TrimSpace(f.Note)) > MaxAllowedFolderNoteChars {
+				out = append(out, longFolderNote{Agent: a.ID, Path: f.Path, Note: f.Note})
+			}
 		}
 	}
 	return out
+}
+
+// newLongFolderNotes returns, as errors, the allowed-folder notes longer than
+// MaxAllowedFolderNoteChars that next has and before does not. One already in
+// the file (a hand edit) is not refused, so it cannot block an unrelated save.
+func newLongFolderNotes(before, next *Config) []error {
+	return newProblems(before.longFolderNotes(), next.longFolderNotes(), longFolderNote.key,
+		func(p longFolderNote) error {
+			name := p.Agent
+			if ac := next.AgentByID(p.Agent); ac != nil {
+				name = ac.DisplayName()
+			}
+			return errors.New(name + "'s note for " + strconv.Quote(p.Path) + " is longer than " +
+				strconv.Itoa(MaxAllowedFolderNoteChars) + " characters.")
+		})
 }
 
 // allowedFolderProblem is an allowed folder whose path is not absolute.

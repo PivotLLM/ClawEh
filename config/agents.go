@@ -212,6 +212,9 @@ type AllowedFolderConfig struct {
 	// Notify watches the folder for new files and notifies the agent on its
 	// default channel (cron-style) when one appears.
 	Notify bool `json:"notify,omitempty"`
+	// Note is a short description shown to the agent after the folder in its
+	// prompt (at most MaxAllowedFolderNoteChars characters).
+	Note string `json:"note,omitempty"`
 }
 
 // MaestroDirName is the workspace folder that holds an agent's Maestro data.

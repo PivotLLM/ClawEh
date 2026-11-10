@@ -54,6 +54,82 @@ func TestStoreUpdate_AllowedFolderSaved(t *testing.T) {
 	}
 }
 
+// A note of up to 100 characters (counted as characters, not bytes) is saved;
+// a longer one is refused with one sentence naming the agent and the folder,
+// and nothing is written.
+func TestStoreUpdate_AllowedFolderNote(t *testing.T) {
+	dir := t.TempDir()
+	t.Run("at the limit", func(t *testing.T) {
+		s := newTestStore(t)
+		note := strings.Repeat("é", MaxAllowedFolderNoteChars)
+		if err := s.Update(func(c *Config) error {
+			c.Agents.List[0].AllowedFolders = []AllowedFolderConfig{{Path: dir, Note: note}}
+			return nil
+		}); err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+		if got := s.Current().Agents.List[0].AllowedFolders[0].Note; got != note {
+			t.Errorf("note = %q, want %q", got, note)
+		}
+	})
+	t.Run("too long", func(t *testing.T) {
+		s := newTestStore(t)
+		err := s.Update(func(c *Config) error {
+			c.Agents.List[0].AllowedFolders = []AllowedFolderConfig{{Path: dir, Note: strings.Repeat("a", MaxAllowedFolderNoteChars+1)}}
+			return nil
+		})
+		if verr, ok := errors.AsType[*ValidationError](err); !ok || verr == nil {
+			t.Fatalf("err = %v, want a ValidationError", err)
+		}
+		want := `Main's note for "` + dir + `" is longer than 100 characters.`
+		if err.Error() != want {
+			t.Errorf("err = %q, want %q", err.Error(), want)
+		}
+		if len(s.Current().Agents.List[0].AllowedFolders) != 0 {
+			t.Error("refused note became current")
+		}
+	})
+}
+
+// A too-long note already in the file (a hand edit) does not block an
+// unrelated save.
+func TestStoreUpdate_LongNoteInFileTolerated(t *testing.T) {
+	s := newTestStore(t)
+	dir := t.TempDir()
+	s.cur.Agents.List[0].AllowedFolders = []AllowedFolderConfig{{Path: dir, Note: strings.Repeat("a", 150)}}
+	if err := s.Update(func(c *Config) error {
+		c.Agents.List[0].Name = "Alice"
+		return nil
+	}); err != nil {
+		t.Fatalf("an unrelated save was refused: %v", err)
+	}
+}
+
+// CleanAllowedFolders keeps absolute paths once each, cleaned, with their
+// trimmed notes; AllowedFolderPaths follows it.
+func TestCleanAllowedFolders(t *testing.T) {
+	a := &AgentConfig{AllowedFolders: []AllowedFolderConfig{
+		{Path: "/opt/audio/in/", Note: "  inbound audio notes "},
+		{Path: "relative"},
+		{Path: "/opt/audio/in", Note: "second entry"},
+		{Path: " /srv/src", Notify: true},
+	}}
+	got := a.CleanAllowedFolders()
+	want := []AllowedFolderConfig{
+		{Path: "/opt/audio/in", Note: "inbound audio notes"},
+		{Path: "/srv/src", Notify: true},
+	}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("CleanAllowedFolders = %+v, want %+v", got, want)
+	}
+	if p := a.AllowedFolderPaths(); len(p) != 2 || p[0] != "/opt/audio/in" || p[1] != "/srv/src" {
+		t.Errorf("AllowedFolderPaths = %v", p)
+	}
+	if (*AgentConfig)(nil).CleanAllowedFolders() != nil {
+		t.Error("nil agent must have no folders")
+	}
+}
+
 // A config with the retired mounts list loads with each entry migrated to an
 // allowed folder (path and notify kept), one warning per entry naming the
 // agent and the path, and the next save writes allowed_folders only.

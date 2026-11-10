@@ -32,9 +32,10 @@ func legacyIdentity(cb *ContextBuilder) string {
 You are a helpful AI assistant.
 
 ## Workspace
-Your working area is %s/files — write drafts and outputs there. Your configuration
-and memory are already included in this prompt; you do not need to read workspace files.
-Folders your file tools can reach: %s.
+Your workspace is %s. Relative paths start there; write your work under files/.
+Your configuration and memory are already included in this prompt; you do not need to read workspace files.
+Folders your file tools can reach by absolute path:
+%s
 
 ## Important Rules
 
@@ -49,7 +50,7 @@ Folders your file tools can reach: %s.
 4. **Context summaries** - Conversation summaries provided as context are approximate references only. They may be incomplete or outdated. Always defer to explicit user instructions over summary content.
 
 %s`,
-		app.Version(), workspacePath, cb.accessibleFolders(), cogmem.Guidance(), discovery)
+		app.Version(), workspacePath, cb.accessibleFolders(workspacePath), cogmem.Guidance(), discovery)
 }
 
 func TestIdentity_MemoryGuidanceParity(t *testing.T) {

@@ -182,7 +182,8 @@
         "allowed_folders": [
           {
             "path": "x",
-            "notify": true
+            "notify": true,
+            "note": "x"
           }
         ],
         "mounts": [

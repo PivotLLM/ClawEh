@@ -143,6 +143,8 @@ func (s *Store) Update(fn func(cfg *Config) error) error {
 	refusals = append(refusals, newHumanProblems(s.cur, next)...)
 	// So is an allowed folder whose path is not absolute (allowed_folders.go).
 	refusals = append(refusals, newAllowedFolderProblems(s.cur, next)...)
+	// And an allowed-folder note that is too long (allowed_folders.go).
+	refusals = append(refusals, newLongFolderNotes(s.cur, next)...)
 	// And a character card on a human agent (character_card.go).
 	refusals = append(refusals, newCardsOnHumanAgents(s.cur, next)...)
 	// And a classifier model the agent cannot use (classifiers.go).

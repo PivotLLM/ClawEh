@@ -28,7 +28,7 @@ type ContextBuilder struct {
 	skillsLoader        *skills.SkillsLoader
 	skillsFilter        []string
 	memory              *MemoryStore
-	allowedFolders      []string
+	allowedFolders      []config.AllowedFolderConfig
 	toolDiscoveryActive bool
 	// maestroEnabled adds the Maestro identity rule (global.MaestroPromptRule).
 	maestroEnabled bool
@@ -130,33 +130,41 @@ func (cb *ContextBuilder) WithMemoryGuidance(text string) *ContextBuilder {
 	return cb
 }
 
-// WithAllowedFolders records the agent's allowed folders (absolute paths) so
-// the system prompt can tell the agent which folders its file tools can reach.
-func (cb *ContextBuilder) WithAllowedFolders(paths []string) *ContextBuilder {
-	cb.allowedFolders = paths
+// WithAllowedFolders records the agent's allowed folders (absolute paths, with
+// their notes) so the system prompt can tell the agent which folders its file
+// tools can reach.
+func (cb *ContextBuilder) WithAllowedFolders(folders []config.AllowedFolderConfig) *ContextBuilder {
+	cb.allowedFolders = folders
 	return cb
 }
 
-// accessibleFolders is the short list of folders the file tools can reach:
-// files/ and skills/ always, maestro/ with Maestro on, then each allowed
-// folder by its real path, marked read-only when the app's account cannot
-// write it (checked as the prompt is built).
-func (cb *ContextBuilder) accessibleFolders() string {
-	parts := []string{"files/ (read/write)", "skills/ (read-only)"}
-	if cb.maestroEnabled {
-		parts = append(parts, config.MaestroDirName+"/ (read/write)")
+// accessibleFolders lists, one "- " line each, every folder the file tools can
+// reach by absolute path: <workspace>/files and <workspace>/skills always,
+// <workspace>/maestro with Maestro on, then each allowed folder by its real
+// path, marked read-only when the app's account cannot write it (checked as
+// the prompt is built) and followed by its note.
+func (cb *ContextBuilder) accessibleFolders(workspacePath string) string {
+	lines := []string{
+		filepath.Join(workspacePath, "files") + " (read/write)",
+		filepath.Join(workspacePath, "skills") + " (read-only)",
 	}
-	for _, p := range cb.allowedFolders {
-		if info, err := os.Stat(p); err != nil || !info.IsDir() {
+	if cb.maestroEnabled {
+		lines = append(lines, config.MaestroDataDir(workspacePath)+" (read/write)")
+	}
+	for _, f := range cb.allowedFolders {
+		if info, err := os.Stat(f.Path); err != nil || !info.IsDir() {
 			continue // the file tools skip it too
 		}
-		if fileutil.Writable(p) {
-			parts = append(parts, p)
-		} else {
-			parts = append(parts, p+" (read-only)")
+		line := f.Path
+		if !fileutil.Writable(f.Path) {
+			line += " (read-only)"
 		}
+		if f.Note != "" {
+			line += ": " + f.Note
+		}
+		lines = append(lines, line)
 	}
-	return strings.Join(parts, ", ")
+	return "- " + strings.Join(lines, "\n- ")
 }
 
 // WithCharacterCard gives the agent the character card at path, rendered by
@@ -301,13 +309,14 @@ func (cb *ContextBuilder) getIdentity() string {
 %s
 
 ## Workspace
-Your working area is %s/files — write drafts and outputs there. Your configuration
-and memory are already included in this prompt; you do not need to read workspace files.
-Folders your file tools can reach: %s.
+Your workspace is %s. Relative paths start there; write your work under files/.
+Your configuration and memory are already included in this prompt; you do not need to read workspace files.
+Folders your file tools can reach by absolute path:
+%s
 
 ## Important Rules
 
-`, version, identity, workspacePath, cb.accessibleFolders())
+`, version, identity, workspacePath, cb.accessibleFolders(workspacePath))
 	for i, r := range rules {
 		if i > 0 {
 			b.WriteString("\n\n")

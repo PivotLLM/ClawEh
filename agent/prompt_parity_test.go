@@ -18,6 +18,7 @@ import (
 	"github.com/PivotLLM/ctxengine/session"
 
 	"github.com/PivotLLM/ClawEh/app"
+	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/providers"
 )
 
@@ -71,7 +72,7 @@ func parityContextBuilder(t *testing.T) *ContextBuilder {
 		WithSkillsFilter([]string{"*"}).
 		WithToolDiscovery(true).
 		WithMemoryGuidance("**Memory** - Retrieve before you assume.").
-		WithAllowedFolders([]string{notes})
+		WithAllowedFolders([]config.AllowedFolderConfig{{Path: notes, Note: "meeting notes"}})
 	cb.now = func() time.Time { return time.Date(2026, 9, 14, 8, 30, 0, 0, time.UTC) }
 	return cb
 }
