@@ -625,46 +625,34 @@ export function setTaskModelGrant(
   }
 }
 
-/** taskModelsFor lists the models ticked for use on the Task models page
- *  (`task_models.models`), in page order. Anything malformed is left out. */
+/** taskModelsFor lists the models in use's list on the Task models page
+ *  (`task_models.<use>`), in order. Anything malformed is left out. */
 export function taskModelsFor(taskModels: unknown, use: string): string[] {
   if (!taskModels || typeof taskModels !== "object") return []
-  const models = (taskModels as { models?: unknown }).models
-  if (!Array.isArray(models)) return []
-  return models
+  const list = (taskModels as Record<string, unknown>)[use]
+  if (!Array.isArray(list)) return []
+  return list
     .filter(
-      (m): m is Record<string, unknown> & { model: string } =>
+      (m): m is { model: string } =>
         !!m &&
         typeof m === "object" &&
-        typeof (m as { model?: unknown }).model === "string" &&
-        (m as Record<string, unknown>)[use] === true,
+        typeof (m as { model?: unknown }).model === "string",
     )
     .map((m) => m.model.trim())
     .filter((m) => m !== "")
 }
 
-/** classifyModels lists the models ticked Classify on the Task models page
- *  (`task_models.models`), in page order: the models a classifier model may
- *  be. Anything malformed is left out. */
+/** classifyModels lists the models in the Classification list on the Task
+ *  models page (`task_models.classify`), in order: the models a classifier
+ *  model may be. */
 export function classifyModels(taskModels: unknown): string[] {
-  if (!taskModels || typeof taskModels !== "object") return []
-  const models = (taskModels as { models?: unknown }).models
-  if (!Array.isArray(models)) return []
-  return models
-    .filter(
-      (m): m is { model: string; classify: true } =>
-        !!m &&
-        typeof m === "object" &&
-        typeof (m as { model?: unknown }).model === "string" &&
-        (m as { classify?: unknown }).classify === true,
-    )
-    .map((m) => m.model.trim())
-    .filter((m) => m !== "")
+  return taskModelsFor(taskModels, "classify")
 }
 
 /** toggleClassifiers turns the agent's classifiers switch over. Turning it
- *  on with no model set writes the first Classify model; turning it off
- *  drops the block. With no Classify model the server refuses the switch. */
+ *  on with no model set writes the first model in Classification; turning
+ *  it off drops the block. With an empty Classification list the server
+ *  refuses the switch. */
 export function toggleClassifiers(
   a: AgentEntry,
   classify: string[],

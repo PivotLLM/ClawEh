@@ -1048,15 +1048,15 @@ if (useGroup("F", "Agents — autosave and list realignment")) {
     }
   })
 
-  await check(14, "Allow classifiers writes the first Classify model, turning it off drops the block", async () => {
+  await check(14, "Allow classifiers writes the first model in Classification, turning it off drops the block", async () => {
     const ID = "e2e-cls"
     const before = await config()
     // A person's model would hide the switch: pick a model on any other protocol.
     const human = new Set((before.providers ?? []).filter((p) => p.protocol === "human").map((p) => p.name))
     const model = (before.models ?? []).find((m) => m.enabled && !human.has(m.provider))?.model_name
     if (!model) return "skipped, no enabled model for the agent"
-    const classify = (before.task_models?.models ?? []).find((m) => m.classify === true)?.model
-    if (!classify) return "skipped, no model is ticked Classify on the Task models page"
+    const classify = (before.task_models?.classify ?? [])[0]?.model
+    if (!classify) return "skipped, Classification is empty on the Task models page"
     const list = [...(before.agents.list ?? []), { id: ID, name: ID, models: [model], tools: [] }]
     const r = await api("/api/config", {
       method: "PATCH",
@@ -1377,190 +1377,210 @@ if (useGroup("G", "System page — load, edit, persist, restore, redirect, class
     return `restored to ${original ? "on" : "off"}`
   })
 
-  await check(8, "Images through is shown only for an Images model, saves and reverts", async () => {
-    const original = (await config())?.task_models?.models ?? []
-    if (original.length === 0) return "skipped, no task model on the page"
-    const row = original.find((m) => m.image === true) ?? original[0]
-    const name = row.model
-    const tickedBefore = row.image === true
-    const apiBefore = row.image_api === "images" ? "images" : "chat"
-    const other = apiBefore === "images" ? "chat" : "images"
-    const saved = async () => ((await config())?.task_models?.models ?? []).find((m) => m.model === name) ?? {}
+  await check(8, "Images through on a Generate images row saves on that entry and reverts", async () => {
+    const tmBlock = async () => (await api("/api/task-models")).json?.task_models ?? {}
+    const put = (block) => api("/api/task-models", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(block) })
+    const before = await tmBlock()
+    const original = before.image ?? []
+    let name = original[0]?.model
+    let addedHere = false
     const { close, page } = await open("/task-models")
     try {
-      const images = page.getByRole("checkbox", { name: `${name}: Images`, exact: true })
-      await images.waitFor({ timeout: 10000 })
-      const select = page.locator(`[data-testid="task-model-${name}"] select`)
-      if (!tickedBefore) {
-        assert((await select.count()) === 0, "Images through is shown for a model not ticked Images")
-        await images.click()
+      if (!name) {
+        const add = page.getByRole("combobox", { name: "Model to add to Generate images", exact: true })
+        if ((await add.count()) === 0) return "skipped, no enabled model to add"
+        name = await add.inputValue()
+        await page.getByRole("button", { name: "Add model to Generate images", exact: true }).click()
         await page.waitForTimeout(2000)
-        assert((await saved()).image === true, "ticking Images did not save")
+        addedHere = true
       }
-      assert((await select.count()) === 1, "no Images through select for an Images model")
+      const entry = async () => ((await tmBlock()).image ?? []).find((m) => m.model === name) ?? {}
+      const apiBefore = (await entry()).image_api === "images" ? "images" : "chat"
+      const other = apiBefore === "images" ? "chat" : "images"
+      const select = page.getByLabel(`Images through for ${name}`, { exact: true })
+      await select.waitFor({ timeout: 10000 })
       await select.selectOption(other)
       await page.waitForTimeout(2000)
-      const got = (await saved()).image_api ?? "chat"
+      const got = (await entry()).image_api ?? "chat"
       assert(got === other, `image_api = ${got}, expected ${other}`)
+      const now = await tmBlock()
+      for (const k of ["text", "tts", "stt", "vision", "classify"]) {
+        assert(JSON.stringify(now[k] ?? []) === JSON.stringify(before[k] ?? []), `task_models.${k} changed`)
+      }
       await select.selectOption(apiBefore)
       await page.waitForTimeout(2000)
-      if (!tickedBefore) {
-        await images.click()
+      if (addedHere) {
+        await page.getByRole("button", { name: `Remove ${name} from Generate images`, exact: true }).click()
         await page.waitForTimeout(2000)
-        assert((await select.count()) === 0, "Images through still shown after unticking Images")
       }
+      const after = (await tmBlock()).image ?? []
+      if (JSON.stringify(after) !== JSON.stringify(original)) {
+        await put({ ...(await tmBlock()), image: original })
+      }
+      assert(JSON.stringify(after) === JSON.stringify(original), `task_models.image = ${JSON.stringify(after)}, expected ${JSON.stringify(original)}`)
+      return `${name}: ${other}, restored to ${apiBefore}${addedHere ? " and removed" : ""}`
     } finally {
       await close()
     }
-    const after = await saved()
-    assert((after.image === true) === tickedBefore, `image = ${after.image}, expected ${tickedBefore}`)
-    assert((after.image_api ?? "chat") === apiBefore, `image_api = ${after.image_api}, expected ${apiBefore}`)
-    return `${name}: ${other}, restored to ${apiBefore}${tickedBefore ? "" : " and Images unticked"}`
   })
 }
 
 // U. Task models page. Writes: every check edits task_models (and U8 creates
 // a throwaway agent); the group reads the block first and puts it back at the
-// end, then waits for the reload. Transcription (STT) is only ever ticked on a
-// model whose provider serves speech and has an API key, so no check can raise
+// end, then waits for the reload. A model is only ever added to Transcription
+// when its provider serves speech and has an API key, so no check can raise
 // the "Speech backend not usable" alert.
-if (useGroup("U", "Task models page — add, uses, order, TTS defaults, limit, leave, remove, Agents and Check Up")) {
+if (useGroup("U", "Task models page — six lists: add, reorder, list settings, limit, leave, remove, Agents and Check Up")) {
   const JSON_HDR = { "Content-Type": "application/json" }
-  const LABELS = { text: "Text", image: "Images", tts: "Speech (TTS)", stt: "Transcription (STT)", vision: "Vision", classify: "Classify" }
-  const USES = Object.keys(LABELS)
+  const TITLES = {
+    text: "Generate text",
+    image: "Generate images",
+    tts: "Text to speech",
+    stt: "Transcription",
+    vision: "Describe images",
+    classify: "Classification",
+  }
+  const USES = Object.keys(TITLES)
   const tmGet = async () => (await api("/api/task-models")).json
   const tmPut = (block) => api("/api/task-models", { method: "PUT", headers: JSON_HDR, body: JSON.stringify(block) })
   const saved = async () => (await tmGet())?.task_models ?? {}
-  const rowOf = async (name) => ((await saved()).models ?? []).find((m) => m.model === name)
+  const namesIn = (block, use) => (block[use] ?? []).map((m) => m.model)
+  const entryOf = async (use, name) => ((await saved())[use] ?? []).find((m) => m.model === name)
   const settle = (page) => page.waitForTimeout(1800)
+  // addTo adds name to a list on the open page.
+  const addTo = async (page, use, name) => {
+    await page.getByRole("combobox", { name: `Model to add to ${TITLES[use]}`, exact: true }).selectOption(name)
+    await page.getByRole("button", { name: `Add model to ${TITLES[use]}`, exact: true }).click()
+    await settle(page)
+  }
+  const offered = (page, use) =>
+    page.getByRole("combobox", { name: `Model to add to ${TITLES[use]}`, exact: true }).locator("option").allTextContents().catch(() => [])
+  const shownRows = (page, use) =>
+    page.getByTestId(`task-list-${use}`).locator(`[data-testid^="task-model-${use}-"]`).evaluateAll((els, u) => els.map((e) => e.dataset.testid.slice(`task-model-${u}-`.length)), use)
 
   const initial = await tmGet()
   const snapshot = initial?.task_models ?? {}
-  const before = snapshot.models ?? []
   const cfg0 = await config()
   const keyed = new Set((cfg0.providers ?? []).filter((p) => p.api_key).map((p) => p.name))
   const providerOf = Object.fromEntries((cfg0.models ?? []).map((m) => [m.model_name, m.provider]))
-  const addable = (initial?.models ?? []).filter((o) => o.enabled && !before.some((m) => m.model === o.name))
-  // The model the checks tick uses on: one that can do speech (so STT may be
-  // ticked safely) when there is one, else the first addable.
-  const speech = addable.find((o) => o.support?.stt === "yes" && keyed.has(providerOf[o.name]))
-  const first = speech ?? addable[0]
-  const second = addable.find((o) => o !== first)
-  const added = []
+  const enabled = (initial?.models ?? []).filter((o) => o.enabled)
+  const notIn = (use) => enabled.filter((o) => !namesIn(snapshot, use).includes(o.name))
+  // A: a model not in Generate text, one that can do speech when there is one
+  // (so it may be added to Transcription safely). B: another model not in
+  // Generate images.
+  const isSpeech = (o) => o?.support?.stt === "yes" && keyed.has(providerOf[o.name])
+  const A = (notIn("text").find(isSpeech) ?? notIn("text")[0])?.name
+  const B = notIn("image").find((o) => o.name !== A)?.name
+  const added = {} // use -> names added by the page, removed again in U10
 
   try {
-    await check(1, "Add model appends the chosen model with no use ticked", async () => {
-      if (!first) return "skipped, every enabled model is already listed"
+    await check(1, "Add model appends to its own list only, in order", async () => {
+      if (!A) return "skipped, every enabled model is already in Generate text"
       const { close, page, problems } = await open("/task-models")
       try {
-        const select = page.getByRole("combobox", { name: "Model to add", exact: true })
-        for (const o of [first, second].filter(Boolean)) {
-          await select.selectOption(o.name)
-          await page.getByRole("button", { name: "Add model", exact: true }).click()
-          await settle(page)
-          added.push(o.name)
-          assert((await page.getByTestId(`task-model-${o.name}`).count()) === 1, `no row for ${o.name}`)
-          const opts = await select.locator("option").allTextContents().catch(() => [])
-          assert(!opts.includes(o.name), `${o.name} is still offered after adding it`)
+        await addTo(page, "text", A)
+        added.text = [A]
+        assert(!(await offered(page, "text")).includes(A), `${A} is still offered in Generate text`)
+        assert((await offered(page, "image")).includes(A) || namesIn(snapshot, "image").includes(A), `${A} is not offered in Generate images`)
+        added.image = []
+        for (const name of [A, B].filter((n) => n && !namesIn(snapshot, "image").includes(n))) {
+          await addTo(page, "image", name)
+          added.image.push(name)
+          assert(!(await offered(page, "image")).includes(name), `${name} is still offered in Generate images`)
         }
+        assert(JSON.stringify(await shownRows(page, "text")) === JSON.stringify([...namesIn(snapshot, "text"), A]), "Generate text rows on the page")
       } finally {
         await close()
       }
       assert(problems.length === 0, `console errors: ${problems[0]}`)
-      const rows = (await saved()).models ?? []
-      assert(
-        JSON.stringify(rows.map((m) => m.model)) === JSON.stringify([...before.map((m) => m.model), ...added]),
-        `models ${JSON.stringify(rows.map((m) => m.model))}`,
-      )
-      for (const name of added) {
-        const r = rows.find((m) => m.model === name)
-        assert(JSON.stringify(r) === JSON.stringify({ model: name }), `${name} saved as ${JSON.stringify(r)}`)
+      const s = await saved()
+      assert(JSON.stringify(namesIn(s, "text")) === JSON.stringify([...namesIn(snapshot, "text"), A]), `text ${JSON.stringify(namesIn(s, "text"))}`)
+      assert(JSON.stringify(namesIn(s, "image")) === JSON.stringify([...namesIn(snapshot, "image"), ...added.image]), `image ${JSON.stringify(namesIn(s, "image"))}`)
+      assert(JSON.stringify(await entryOf("text", A)) === JSON.stringify({ model: A }), `${A} saved in text as ${JSON.stringify(await entryOf("text", A))}`)
+      for (const name of added.image) {
+        assert(JSON.stringify(await entryOf("image", name)) === JSON.stringify({ model: name }), `${name} saved in image as ${JSON.stringify(await entryOf("image", name))}`)
       }
-      return added.join(", ")
+      for (const u of ["tts", "stt", "vision", "classify"]) {
+        assert(JSON.stringify(s[u] ?? []) === JSON.stringify(snapshot[u] ?? []), `task_models.${u} changed`)
+      }
+      return `text +${A}; image +${added.image.join(", +") || "nothing"}`
     })
 
-    await check(2, "each use's box saves that use alone; unticking every box leaves the bare entry", async () => {
-      if (!added.length) return "skipped, nothing added"
-      const name = added[0]
-      const uses = USES.filter((u) => u !== "stt" || name === speech?.name)
-      const { close, page } = await open("/task-models")
-      try {
-        const ticked = []
-        for (const u of uses) {
-          await page.getByRole("checkbox", { name: `${name}: ${LABELS[u]}`, exact: true }).click()
-          await settle(page)
-          ticked.push(u)
-          const r = await rowOf(name)
-          const got = USES.filter((x) => r?.[x] === true)
-          assert(JSON.stringify(got) === JSON.stringify(ticked), `after ticking ${LABELS[u]}: ${JSON.stringify(got)}`)
-        }
-        for (const u of uses) {
-          await page.getByRole("checkbox", { name: `${name}: ${LABELS[u]}`, exact: true }).click()
-          await page.waitForTimeout(150)
-        }
-        await settle(page)
-      } finally {
-        await close()
-      }
-      const r = await rowOf(name)
-      assert(JSON.stringify(r) === JSON.stringify({ model: name }), `after unticking: ${JSON.stringify(r)}`)
-      return `${name}: ${uses.map((u) => LABELS[u]).join(", ")}${uses.includes("stt") ? "" : " (STT left out: provider has no speech)"}`
-    })
-
-    await check(3, "Speech (TTS) shows Voice and Format, which save as tts_defaults and hide when unticked", async () => {
-      if (!added.length) return "skipped, nothing added"
-      const name = added[0]
-      const { close, page } = await open("/task-models")
-      try {
-        const row = page.getByTestId(`task-model-${name}`)
-        assert((await row.getByLabel("Voice", { exact: true }).count()) === 0, "Voice shown before ticking TTS")
-        const tts = page.getByRole("checkbox", { name: `${name}: Speech (TTS)`, exact: true })
-        await tts.click()
-        await page.waitForTimeout(300)
-        await row.getByLabel("Voice", { exact: true }).fill("alloy")
-        await row.getByLabel("Format", { exact: true }).fill("mp3")
-        await settle(page)
-        let r = await rowOf(name)
-        assert(r?.tts === true && JSON.stringify(r?.tts_defaults) === JSON.stringify({ voice: "alloy", format: "mp3" }), `saved ${JSON.stringify(r)}`)
-        await row.getByLabel("Format", { exact: true }).fill("")
-        await settle(page)
-        r = await rowOf(name)
-        assert(JSON.stringify(r?.tts_defaults) === JSON.stringify({ voice: "alloy" }), `a blank Format saved ${JSON.stringify(r?.tts_defaults)}`)
-        await tts.click()
-        await settle(page)
-        assert((await row.getByLabel("Voice", { exact: true }).count()) === 0, "Voice still shown after unticking TTS")
-        r = await rowOf(name)
-        assert(JSON.stringify(r) === JSON.stringify({ model: name }), `after unticking TTS: ${JSON.stringify(r)}`)
-      } finally {
-        await close()
-      }
-      return `${name}: voice alloy, format mp3, then cleared`
-    })
-
-    await check(4, "Move up and down reorder the rows and the saved order; the ends are disabled", async () => {
-      const rows = (await saved()).models ?? []
-      if (rows.length < 2) return "skipped, fewer than two task models"
-      const names = rows.map((m) => m.model)
+    await check(2, "Move up and down reorder one list and its saved order; the ends are disabled", async () => {
+      const names = namesIn(await saved(), "image")
+      if (names.length < 2) return "skipped, fewer than two models in Generate images"
+      const textBefore = namesIn(await saved(), "text")
       const last = names[names.length - 1]
+      const t = TITLES.image
       const { close, page } = await open("/task-models")
       try {
-        assert(await page.getByRole("button", { name: `Move ${names[0]} up`, exact: true }).isDisabled(), "the first row's Move up is enabled")
-        assert(await page.getByRole("button", { name: `Move ${last} down`, exact: true }).isDisabled(), "the last row's Move down is enabled")
-        await page.getByRole("button", { name: `Move ${last} up`, exact: true }).click()
+        assert(await page.getByRole("button", { name: `Move ${names[0]} up in ${t}`, exact: true }).isDisabled(), "the first row's Move up is enabled")
+        assert(await page.getByRole("button", { name: `Move ${last} down in ${t}`, exact: true }).isDisabled(), "the last row's Move down is enabled")
+        await page.getByRole("button", { name: `Move ${last} up in ${t}`, exact: true }).click()
         await settle(page)
-        const moved = ((await saved()).models ?? []).map((m) => m.model)
         const want = [...names.slice(0, -2), last, names[names.length - 2]]
-        assert(JSON.stringify(moved) === JSON.stringify(want), `after Move up: ${JSON.stringify(moved)}`)
-        const shown = await page.locator('[data-testid^="task-model-"]:not([data-testid^="task-model-unsupported-"])').evaluateAll((els) => els.map((e) => e.dataset.testid.slice("task-model-".length)))
-        assert(JSON.stringify(shown) === JSON.stringify(want), `page order ${JSON.stringify(shown)}`)
-        await page.getByRole("button", { name: `Move ${last} down`, exact: true }).click()
+        const s = await saved()
+        assert(JSON.stringify(namesIn(s, "image")) === JSON.stringify(want), `after Move up: ${JSON.stringify(namesIn(s, "image"))}`)
+        assert(JSON.stringify(namesIn(s, "text")) === JSON.stringify(textBefore), "Generate text changed with Generate images")
+        assert(JSON.stringify(await shownRows(page, "image")) === JSON.stringify(want), "page order after Move up")
+        await page.getByRole("button", { name: `Move ${last} down in ${t}`, exact: true }).click()
         await settle(page)
       } finally {
         await close()
       }
-      const back = ((await saved()).models ?? []).map((m) => m.model)
+      const back = namesIn(await saved(), "image")
       assert(JSON.stringify(back) === JSON.stringify(names), `after Move down: ${JSON.stringify(back)}`)
       return `${last} up and back`
+    })
+
+    await check(3, "Images through is on Generate images rows only and saves on the image entry", async () => {
+      if (!added.image?.includes(A)) return "skipped, A was not added to Generate images"
+      const { close, page } = await open("/task-models")
+      try {
+        const rows = (await saved()).image ?? []
+        assert((await page.getByLabel(/^Images through for /).count()) === rows.length, "Images through is not on every Generate images row alone")
+        const select = page.getByLabel(`Images through for ${A}`, { exact: true })
+        await select.selectOption("images")
+        await settle(page)
+        let e = await entryOf("image", A)
+        assert(JSON.stringify(e) === JSON.stringify({ model: A, image_api: "images" }), `image entry ${JSON.stringify(e)}`)
+        assert(JSON.stringify(await entryOf("text", A)) === JSON.stringify({ model: A }), "the text entry took image_api")
+        await select.selectOption("chat")
+        await settle(page)
+        e = await entryOf("image", A)
+        assert(JSON.stringify(e) === JSON.stringify({ model: A }), `after chat: ${JSON.stringify(e)}`)
+      } finally {
+        await close()
+      }
+      return `${A}: images, then chat`
+    })
+
+    await check(4, "Voice and Format on Text to speech save as that entry's tts_defaults", async () => {
+      if (!A) return "skipped, no model A"
+      const ttsBefore = (await saved()).tts ?? []
+      if (namesIn({ tts: ttsBefore }, "tts").includes(A)) return `skipped, ${A} is already in Text to speech`
+      const { close, page } = await open("/task-models")
+      try {
+        await addTo(page, "tts", A)
+        assert((await page.getByLabel(`Voice for ${A}`, { exact: true }).count()) === 1, "Voice is not on A's Text to speech row alone")
+        assert((await page.getByLabel(/^Voice for /).count()) === ttsBefore.length + 1, "Voice is shown outside Text to speech")
+        await page.getByLabel(`Voice for ${A}`, { exact: true }).fill("alloy")
+        await page.getByLabel(`Format for ${A}`, { exact: true }).fill("mp3")
+        await settle(page)
+        let e = await entryOf("tts", A)
+        assert(JSON.stringify(e?.tts_defaults) === JSON.stringify({ voice: "alloy", format: "mp3" }), `saved ${JSON.stringify(e)}`)
+        await page.getByLabel(`Format for ${A}`, { exact: true }).fill("")
+        await settle(page)
+        e = await entryOf("tts", A)
+        assert(JSON.stringify(e?.tts_defaults) === JSON.stringify({ voice: "alloy" }), `a blank Format saved ${JSON.stringify(e?.tts_defaults)}`)
+        await page.getByRole("button", { name: `Remove ${A} from ${TITLES.tts}`, exact: true }).click()
+        await settle(page)
+      } finally {
+        await close()
+      }
+      const after = (await saved()).tts ?? []
+      assert(JSON.stringify(after) === JSON.stringify(ttsBefore), `task_models.tts = ${JSON.stringify(after)} after the removal`)
+      return `${A}: voice alloy, format mp3, then removed`
     })
 
     await check(5, "Text in results: the default as placeholder, a bad value refused, a number saved, blank saves the default", async () => {
@@ -1603,10 +1623,10 @@ if (useGroup("U", "Task models page — add, uses, order, TTS defaults, limit, l
       return "4321 saved on leaving"
     })
 
-    await check(7, "Echo transcription warns while no model is ticked Transcription (STT)", async () => {
-      const name = speech && added.includes(speech.name) ? speech.name : null
-      const hasSTT = () => (saved().then((s) => (s.models ?? []).some((m) => m.stt === true)))
-      const warn = "No model is ticked Transcription (STT), so nothing is transcribed."
+    await check(7, "Echo transcription warns while Transcription is empty", async () => {
+      const speechA = isSpeech(enabled.find((o) => o.name === A)) ? A : null
+      const empty = async () => ((await saved()).stt ?? []).length === 0
+      const warn = "No model in Transcription, so nothing is transcribed."
       const { close, page } = await open("/task-models")
       try {
         const echo = page.getByRole("switch", { name: "Echo transcription", exact: true })
@@ -1615,24 +1635,26 @@ if (useGroup("U", "Task models page — add, uses, order, TTS defaults, limit, l
           await settle(page)
         }
         const shown = await page.getByText(warn, { exact: true }).count()
-        assert(shown === ((await hasSTT()) ? 0 : 1), `warning shown ${shown} times with STT ${await hasSTT()}`)
-        if (name && !(await hasSTT())) {
-          await page.getByRole("checkbox", { name: `${name}: Transcription (STT)`, exact: true }).click()
+        assert(shown === ((await empty()) ? 1 : 0), `warning shown ${shown} times with Transcription empty ${await empty()}`)
+        const emptyLine = await page.getByTestId("task-list-empty-stt").count()
+        assert(emptyLine === ((await empty()) ? 1 : 0), `empty Transcription line shown ${emptyLine} times`)
+        if (speechA && (await empty())) {
+          assert((await page.getByTestId("task-list-empty-stt").textContent()) === "No models. Voice messages are not transcribed.", "empty Transcription line text")
+          await addTo(page, "stt", speechA)
+          assert((await page.getByText(warn, { exact: true }).count()) === 0, "warning still shown with a model in Transcription")
+          await page.getByRole("button", { name: `Remove ${speechA} from ${TITLES.stt}`, exact: true }).click()
           await settle(page)
-          assert((await page.getByText(warn, { exact: true }).count()) === 0, "warning still shown with an STT model ticked")
-          await page.getByRole("checkbox", { name: `${name}: Transcription (STT)`, exact: true }).click()
-          await settle(page)
-          assert((await page.getByText(warn, { exact: true }).count()) === 1, "warning not back after unticking STT")
+          assert((await page.getByText(warn, { exact: true }).count()) === 1, "warning not back after emptying Transcription")
         }
       } finally {
         await close()
       }
       const r = await tmPut({ ...(await saved()), echo_transcription: snapshot.echo_transcription === true })
       assert(r.status === 200, `restoring echo = ${r.status}`)
-      return name ? `toggled STT on ${name}` : "STT already ticked or no speech model; warning state checked"
+      return speechA && (await empty()) ? `added and removed ${speechA} in Transcription` : "Transcription not empty or A is no speech model; warning state checked"
     })
 
-    await check(8, "Agents page: Allow task models notes kinds with no model and a missing agent_spawn; all four boxes save", async () => {
+    await check(8, "Agents page: Allow task models names each empty list and a missing agent_spawn; all four boxes save", async () => {
       const ID = "e2e-tmk"
       const human = new Set((cfg0.providers ?? []).filter((p) => p.protocol === "human").map((p) => p.name))
       const model = (cfg0.models ?? []).find((m) => m.enabled && !human.has(m.provider))?.model_name
@@ -1641,9 +1663,13 @@ if (useGroup("U", "Task models page — add, uses, order, TTS defaults, limit, l
       let r = await api("/api/config", { method: "PATCH", headers: JSON_HDR, body: JSON.stringify({ agents: { list: [...(c.agents.list ?? []), { id: ID, name: ID, models: [model], tools: [] }] } }) })
       assert(r.status === 200, `creating ${ID} = ${r.status}`)
       const grants = ["text", "image", "tts", "stt"]
+      const boxes = { text: "Text", image: "Images", tts: "Speech (TTS)", stt: "Transcription (STT)" }
       const notes = async (page) => {
         const out = {}
-        for (const k of grants) out[k] = (await page.getByTestId(`task-grant-no-model-${k}`).count()) === 1
+        for (const k of grants) {
+          const note = page.getByTestId(`task-grant-no-model-${k}`)
+          out[k] = (await note.count()) === 1 ? await note.textContent() : null
+        }
         return out
       }
       const select = async (page) => {
@@ -1654,36 +1680,37 @@ if (useGroup("U", "Task models page — add, uses, order, TTS defaults, limit, l
         let { close, page } = await open("/agents")
         await select(page)
         const s = await saved()
-        const want = Object.fromEntries(grants.map((k) => [k, !(s.models ?? []).some((m) => m[k] === true)]))
+        const want = Object.fromEntries(grants.map((k) => [k, (s[k] ?? []).length === 0 ? `No model in ${TITLES[k]}. Add one on Task models.` : null]))
         const got = await notes(page)
         const noSpawn = await page.getByTestId("task-models-no-spawn").count()
         const noClassify = await page.getByTestId("classifier-no-classify-models").count()
         const links = await page.getByTestId("task-model-grants").getByRole("link", { name: "Task models" }).evaluateAll((els) => els.map((e) => e.getAttribute("href")))
-        // Every box, ticked and saved.
         for (const k of grants) {
-          await page.getByRole("checkbox", { name: `Allow task models: ${{ text: "Text", image: "Images", tts: "Speech (TTS)", stt: "Transcription (STT)" }[k]}`, exact: true }).click()
+          await page.getByRole("checkbox", { name: `Allow task models: ${boxes[k]}`, exact: true }).click()
           await page.waitForTimeout(1500)
         }
         await close()
         assert(JSON.stringify(got) === JSON.stringify(want), `no-model notes ${JSON.stringify(got)}, expected ${JSON.stringify(want)}`)
         assert(links.every((h) => h === "/task-models"), `note links ${JSON.stringify(links)}`)
         assert(noSpawn === 1, "no 'Needs the agent_spawn tool.' note for an agent without it")
-        assert(noClassify === ((s.models ?? []).some((m) => m.classify === true) ? 0 : 1), `classify note shown ${noClassify} times`)
+        assert(noClassify === ((s.classify ?? []).length > 0 ? 0 : 1), `Classification note shown ${noClassify} times`)
         const a = (await config()).agents.list.find((x) => x.id === ID)
         const tm = a?.task_models ?? {}
         assert(Object.keys(tm).length === 4 && grants.every((k) => tm[k] === true), `task_models = ${JSON.stringify(a?.task_models)}`)
 
-        // Ticking Text on a task model clears that kind's note.
-        if (added.length && want.text) {
-          r = await tmPut({ ...s, models: (s.models ?? []).map((m) => (m.model === added[0] ? { ...m, text: true } : m)) })
-          assert(r.status === 200, `ticking Text = ${r.status}`)
+        // Adding a model to an empty list clears that kind's note. Transcription
+        // only takes a speech model.
+        const kind = grants.find((k) => want[k] && A && (k !== "stt" || isSpeech(enabled.find((o) => o.name === A))))
+        if (kind) {
+          r = await tmPut({ ...s, [kind]: [{ model: A }] })
+          assert(r.status === 200, `adding ${A} to ${kind} = ${r.status}`)
           ;({ close, page } = await open("/agents"))
           await select(page)
           const after = await notes(page)
           await close()
           r = await tmPut(s)
-          assert(r.status === 200, `unticking Text = ${r.status}`)
-          assert(after.text === false, "the Text note is still shown with a Text model ticked")
+          assert(r.status === 200, `taking ${A} off ${kind} = ${r.status}`)
+          assert(after[kind] === null, `the ${TITLES[kind]} note is still shown with a model in it`)
         }
       } finally {
         const c2 = await config()
@@ -1692,50 +1719,56 @@ if (useGroup("U", "Task models page — add, uses, order, TTS defaults, limit, l
       return `${ID}: all four granted`
     })
 
-    await check(9, "Check Up says 'No model.' for Speech to text and Vision exactly when none is ticked", async () => {
+    await check(9, "Check Up names the empty Transcription and Describe images lists, each from its own list", async () => {
       const rowsFor = async () => {
         const j = (await api("/api/report/assessment")).json
         return (j?.assessment ?? []).filter((r) => r.item === "Speech to text" || r.item === "Vision")
       }
-      const noModel = (rows, item) => rows.some((r) => r.item === item && r.status === "No model.")
+      const status = { "Speech to text": "No model in Transcription.", Vision: "No model in Describe images." }
+      const says = (rows, item) => rows.some((r) => r.item === item && r.status === status[item])
       const s = await saved()
       const rows = await rowsFor()
       for (const [item, use] of [["Speech to text", "stt"], ["Vision", "vision"]]) {
-        const none = !(s.models ?? []).some((m) => m[use] === true)
-        assert(noModel(rows, item) === none, `${item}: "No model." ${noModel(rows, item)}, ticked ${!none}`)
+        const none = (s[use] ?? []).length === 0
+        assert(says(rows, item) === none, `${item}: "${status[item]}" ${says(rows, item)}, list empty ${none}`)
       }
-      if (added.length && !(s.models ?? []).some((m) => m.vision === true)) {
-        let r = await tmPut({ ...s, models: (s.models ?? []).map((m) => (m.model === added[0] ? { ...m, vision: true } : m)) })
-        assert(r.status === 200, `ticking Vision = ${r.status}`)
-        const ticked = await rowsFor()
+      if (A && (s.vision ?? []).length === 0) {
+        let r = await tmPut({ ...s, vision: [{ model: A }] })
+        assert(r.status === 200, `adding ${A} to Describe images = ${r.status}`)
+        const withVision = await rowsFor()
         r = await tmPut(s)
-        assert(r.status === 200, `unticking Vision = ${r.status}`)
-        assert(!noModel(ticked, "Vision"), "Vision still 'No model.' with a model ticked")
-        assert(noModel(await rowsFor(), "Vision"), "Vision not 'No model.' again after unticking")
+        assert(r.status === 200, `taking ${A} off Describe images = ${r.status}`)
+        assert(!says(withVision, "Vision"), "Vision still names the empty list with a model in it")
+        assert(says(withVision, "Speech to text") === ((s.stt ?? []).length === 0), "Speech to text followed Describe images")
+        assert(says(await rowsFor(), "Vision"), "Vision does not name the empty list again")
       }
       const { close, text, problems } = await open("/report")
       const body = await text()
       await close()
       assert(problems.length === 0, `console errors: ${problems[0]}`)
       for (const r of rows) assert(body.includes(r.item), `Check Up page lacks the ${r.item} row`)
-      return rows.map((r) => `${r.item}: ${r.status}`).join("; ") || "both have a usable model"
+      return rows.map((r) => `${r.item}: ${r.status}`).join("; ") || "both lists have a usable model"
     })
 
-    await check(10, "Remove drops the row and its entry", async () => {
-      if (!added.length) return "skipped, nothing added"
+    await check(10, "Remove drops each added row from its own list", async () => {
+      const pairs = Object.entries(added).flatMap(([use, names]) => names.map((n) => [use, n]))
+      if (!pairs.length) return "skipped, nothing added"
       const { close, page } = await open("/task-models")
       try {
-        for (const name of [...added]) {
-          await page.getByRole("button", { name: `Remove ${name}`, exact: true }).click()
+        for (const [use, name] of pairs) {
+          await page.getByRole("button", { name: `Remove ${name} from ${TITLES[use]}`, exact: true }).click()
           await settle(page)
-          assert((await page.getByTestId(`task-model-${name}`).count()) === 0, `${name} still shown`)
-          added.splice(added.indexOf(name), 1)
+          assert((await page.getByTestId(`task-model-${use}-${name}`).count()) === 0, `${name} still shown in ${TITLES[use]}`)
+          added[use].splice(added[use].indexOf(name), 1)
         }
       } finally {
         await close()
       }
-      const names = ((await saved()).models ?? []).map((m) => m.model)
-      assert(JSON.stringify(names) === JSON.stringify(before.map((m) => m.model)), `models ${JSON.stringify(names)}`)
+      const s = await saved()
+      for (const u of USES) {
+        assert(JSON.stringify(namesIn(s, u)) === JSON.stringify(namesIn(snapshot, u)), `${u}: ${JSON.stringify(namesIn(s, u))}`)
+      }
+      return pairs.map(([u, n]) => `${n} from ${TITLES[u]}`).join(", ")
     })
 
     await check(11, "the page scrolls in a short window and its cards keep clear of the sidebar", async () => {
@@ -2655,42 +2688,36 @@ if (useGroup("K", "Logs, MCP, memory, task models, report")) {
     return `${json.assessment.length} rows`
   })
 
-  await check(9, "the Task models page lists the configured models on first load", async () => {
+  await check(9, "the Task models page shows each configured list on first load", async () => {
     // Before any click: the rows must come from the saved block, never an
     // empty list that the first edit would save over the configuration.
     const data = (await api("/api/task-models")).json ?? {}
-    const want = data.task_models?.models ?? []
+    const tm = data.task_models ?? {}
     const options = data.models ?? []
     const uses = ["text", "image", "tts", "stt", "vision", "classify"]
-    const labels = { text: "Text", image: "Images", tts: "Speech (TTS)", stt: "Transcription (STT)", vision: "Vision", classify: "Classify" }
+    const titles = ["Generate text", "Generate images", "Text to speech", "Transcription", "Describe images", "Classification"]
     const { close, page, problems } = await open("/task-models")
     await page.getByText("Text in results (characters)").waitFor({ timeout: 10000 })
-    const rows = page.locator('[data-testid^="task-model-"]:not([data-testid^="task-model-unsupported-"])')
-    const names = await rows.evaluateAll((els) => els.map((e) => e.dataset.testid.slice("task-model-".length)))
-    const ticks = []
-    for (const m of want) {
-      const row = []
-      for (const u of uses) {
-        const state = await page.getByRole("checkbox", { name: `${m.model}: ${labels[u]}`, exact: true }).getAttribute("data-state")
-        row.push((state === "checked") === (m[u] === true))
-      }
-      ticks.push(row.every(Boolean))
-    }
-    const marked = await page.locator('[data-testid^="task-model-unsupported-"]').evaluateAll((els) =>
-      els.map((e) => e.dataset.testid.slice("task-model-unsupported-".length)),
+    const shownTitles = await page.locator('[data-testid^="task-list-"]:not([data-testid^="task-list-empty-"])').evaluateAll((els) =>
+      els.map((e) => e.querySelector('[data-slot="card-title"]')?.textContent),
     )
-    const empty = await page.getByText("No task models.", { exact: true }).count()
+    const mismatches = []
+    for (const use of uses) {
+      const want = (tm[use] ?? []).map((m) => m.model)
+      const section = page.getByTestId(`task-list-${use}`)
+      const rows = await section.locator(`[data-testid^="task-model-${use}-"]`).evaluateAll((els, u) => els.map((e) => e.dataset.testid.slice(`task-model-${u}-`.length)), use)
+      if (JSON.stringify(rows) !== JSON.stringify(want)) mismatches.push(`${use}: rows ${JSON.stringify(rows)}, config ${JSON.stringify(want)}`)
+      const empty = await page.getByTestId(`task-list-empty-${use}`).count()
+      if (empty !== (want.length === 0 ? 1 : 0)) mismatches.push(`${use}: empty line shown ${empty} times with ${want.length} configured`)
+      const marked = await section.locator(`[data-testid^="task-model-unsupported-${use}-"]`).evaluateAll((els, u) => els.map((e) => e.dataset.testid.slice(`task-model-unsupported-${u}-`.length)), use)
+      const wantMarked = want.filter((m) => options.find((o) => o.name === m)?.support?.[use] === "no")
+      if (JSON.stringify(marked) !== JSON.stringify(wantMarked)) mismatches.push(`${use}: marked ${JSON.stringify(marked)}, expected ${JSON.stringify(wantMarked)}`)
+    }
     await close()
     assert(problems.length === 0, `console errors: ${problems[0]}`)
-    assert(JSON.stringify(names) === JSON.stringify(want.map((m) => m.model)), `rows ${JSON.stringify(names)}, config ${JSON.stringify(want.map((m) => m.model))}`)
-    assert(ticks.every(Boolean), `a checkbox does not match the config: ${JSON.stringify(ticks)}`)
-    assert(empty === (want.length === 0 ? 1 : 0), `empty state shown ${empty} times with ${want.length} configured`)
-    // A ticked use the provider cannot serve is marked; nothing else is.
-    const wantMarked = want
-      .filter((m) => uses.some((u) => m[u] === true && options.find((o) => o.name === m.model)?.support?.[u] === "no"))
-      .map((m) => m.model)
-    assert(JSON.stringify(marked) === JSON.stringify(wantMarked), `marked ${JSON.stringify(marked)}, expected ${JSON.stringify(wantMarked)}`)
-    return want.length ? want.map((m) => m.model).join(", ") : "none configured — empty state shown"
+    assert(JSON.stringify(shownTitles) === JSON.stringify(titles), `sections ${JSON.stringify(shownTitles)}`)
+    assert(mismatches.length === 0, mismatches.join("; "))
+    return uses.map((u) => `${u} ${(tm[u] ?? []).length}`).join(", ")
   })
 
   await check(10, "the MCP Servers, MCP Config and System pages show the configuration when reached from another page", async () => {

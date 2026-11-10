@@ -97,7 +97,7 @@ export interface AgentCardProps {
   classifierModels?: string[]
   /** The agent's task-model grant (agent_spawn kinds). */
   taskModelGrant?: TaskModelGrant
-  /** The kinds that have at least one model ticked on Task models. */
+  /** The kinds whose list on Task models has at least one model. */
   taskKindsWithModels?: TaskGrantKind[]
   onTaskModelGrantChange?: (kind: TaskGrantKind, on: boolean) => void
   /** A grant change is being saved: the boxes wait for it, so a second
@@ -243,7 +243,7 @@ export function AgentCard({
   // operator sees the value where it lives rather than in a log.
   const cardMissing =
     characterCard !== "" && !availableCards.some((c) => c.id === characterCard)
-  // A classifier model that is not ticked Classify stays selectable, marked.
+  // A classifier model that is not in Classification stays selectable, marked.
   const classifierModelUnusable =
     classifierModel !== "" && !classifierModels.includes(classifierModel)
 
@@ -921,7 +921,9 @@ export function AgentCard({
                       data-testid={`task-grant-no-model-${kind}`}
                       className="pl-6 text-xs text-amber-600 dark:text-amber-400"
                     >
-                      {t("agents.taskKindNoModel")}{" "}
+                      {t("agents.taskKindNoModel", {
+                        list: t(`agents.taskList.${kind}`),
+                      })}{" "}
                       <Link to="/task-models" className="underline">
                         {t("navigation.task_models")}
                       </Link>

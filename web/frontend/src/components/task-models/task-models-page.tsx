@@ -6,8 +6,12 @@ import { toast } from "sonner"
 
 import {
   TASK_USES,
-  type TaskModel,
+  type TaskModelEntry,
+  type TaskModelLists,
+  type TaskModelOption,
   type TaskModelsResponse,
+  type TaskUse,
+  emptyLists,
   getTaskModels,
   saveTaskModels,
 } from "@/api/task-models"
@@ -20,21 +24,21 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 
 import {
-  USE_LABELS,
+  EMPTY_NOTES,
+  LIST_DESCRIPTIONS,
+  LIST_TITLES,
   addModel,
   availableModels,
-  modelsFor,
   moveRow,
   parseResultChars,
-  setUse,
+  removeRow,
   taskModelsPayload,
-  unsupportedUses,
+  unsupported,
 } from "./task-models-model"
 
 export const TASK_MODELS_QUERY_KEY = ["task-models"]
@@ -42,19 +46,25 @@ export const TASK_MODELS_QUERY_KEY = ["task-models"]
 type SaveStatus = "saving" | "saved" | "error" | null
 
 interface PageState {
-  rows: TaskModel[]
+  lists: TaskModelLists
   resultChars: string
   echo: boolean
 }
 
 function stateOf(data: TaskModelsResponse | undefined): PageState {
   const tm = data?.task_models
+  const lists = emptyLists()
+  for (const use of TASK_USES) lists[use] = tm?.[use] ?? []
   return {
-    rows: tm?.models ?? [],
+    lists,
     resultChars: tm?.result_text_chars ? String(tm.result_text_chars) : "",
     echo: tm?.echo_transcription === true,
   }
 }
+
+const warnClass = "text-xs text-amber-600 dark:text-amber-400"
+const selectClass =
+  "border-input bg-background h-9 rounded-md border px-3 text-sm"
 
 export function TaskModelsPage() {
   const queryClient = useQueryClient()
@@ -92,7 +102,7 @@ export function TaskModelsPage() {
 
   // doSave writes the whole block. It does not refetch the page, so a field
   // being typed is not replaced mid-edit; the Agents page, whose classifier
-  // models follow the Classify ticks, is refreshed.
+  // models follow the Classification list, is refreshed.
   const doSave = async () => {
     pendingSave.current = false
     const s = stateRef.current
@@ -100,7 +110,7 @@ export function TaskModelsPage() {
     if (chars === null) return // the field shows why
     setStatus("saving")
     try {
-      await saveTaskModels(taskModelsPayload(s.rows, chars, s.echo))
+      await saveTaskModels(taskModelsPayload(s.lists, chars, s.echo))
       setStatus("saved")
       clearTimeout(savedTimer.current)
       savedTimer.current = setTimeout(() => setStatus(null), 2000)
@@ -135,15 +145,10 @@ export function TaskModelsPage() {
     setState(fn)
     scheduleSave()
   }
-  const changeRow = (i: number, fn: (r: TaskModel) => TaskModel) =>
-    change((s) => ({
-      ...s,
-      rows: s.rows.map((r, idx) => (idx === i ? fn(r) : r)),
-    }))
-
-  const addable = availableModels(state.rows, options)
-  const [toAdd, setToAdd] = useState("")
-  const addChoice = addable.includes(toAdd) ? toAdd : (addable[0] ?? "")
+  const changeList = (
+    use: TaskUse,
+    fn: (list: TaskModelEntry[]) => TaskModelEntry[],
+  ) => change((s) => ({ ...s, lists: { ...s.lists, [use]: fn(s.lists[use]) } }))
 
   return (
     <div className="flex h-full flex-col">
@@ -164,8 +169,12 @@ export function TaskModelsPage() {
       <div className="min-h-0 flex-1 overflow-y-auto px-4 sm:px-6">
         <div className="flex flex-col gap-6 pt-2 pb-6">
           <p className="text-muted-foreground text-sm">
-            Models used for single calls without tools. Each use tries its
-            models from the top down.
+            Models used for single calls without tools. Each list is tried from
+            the top down. Add models on the{" "}
+            <Link to="/models" className="underline">
+              Models
+            </Link>{" "}
+            page first.
           </p>
 
           {query.error && (
@@ -180,242 +189,15 @@ export function TaskModelsPage() {
           before would save over it. */}
           {query.data && (
             <>
-              <Card>
-                <CardHeader>
-                  <CardTitle>Models</CardTitle>
-                  <CardDescription>
-                    Add models from the{" "}
-                    <Link to="/models" className="underline">
-                      Models
-                    </Link>{" "}
-                    page and tick what each is used for.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="flex flex-col gap-4">
-                  {state.rows.length === 0 && (
-                    <p className="text-muted-foreground text-sm">
-                      No task models.
-                    </p>
-                  )}
-                  {state.rows.map((row, i) => {
-                    const option = options.find((o) => o.name === row.model)
-                    const unsupported = unsupportedUses(row, option)
-                    return (
-                      <div
-                        key={row.model}
-                        data-testid={`task-model-${row.model}`}
-                        className="flex flex-col gap-3 rounded-md border p-4"
-                      >
-                        <div className="flex items-center justify-between gap-3">
-                          <span className="text-sm font-medium">
-                            {row.model}
-                          </span>
-                          <div className="flex items-center gap-1">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              aria-label={`Move ${row.model} up`}
-                              disabled={i === 0}
-                              onClick={() =>
-                                change((s) => ({
-                                  ...s,
-                                  rows: moveRow(s.rows, i, -1),
-                                }))
-                              }
-                            >
-                              <IconArrowUp className="size-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              aria-label={`Move ${row.model} down`}
-                              disabled={i === state.rows.length - 1}
-                              onClick={() =>
-                                change((s) => ({
-                                  ...s,
-                                  rows: moveRow(s.rows, i, 1),
-                                }))
-                              }
-                            >
-                              <IconArrowDown className="size-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              aria-label={`Remove ${row.model}`}
-                              onClick={() =>
-                                change((s) => ({
-                                  ...s,
-                                  rows: s.rows.filter((_, idx) => idx !== i),
-                                }))
-                              }
-                            >
-                              <IconTrash className="size-4" />
-                            </Button>
-                          </div>
-                        </div>
-
-                        <div className="flex flex-wrap gap-x-5 gap-y-2">
-                          {TASK_USES.map((use) => {
-                            const id = `task-${i}-${use}`
-                            return (
-                              <div
-                                key={use}
-                                className="flex items-center gap-2"
-                              >
-                                <Checkbox
-                                  id={id}
-                                  checked={row[use] === true}
-                                  onCheckedChange={(v) =>
-                                    changeRow(i, (r) =>
-                                      setUse(r, use, v === true),
-                                    )
-                                  }
-                                  aria-label={`${row.model}: ${USE_LABELS[use]}`}
-                                />
-                                <Label
-                                  htmlFor={id}
-                                  className="text-sm font-normal"
-                                >
-                                  {USE_LABELS[use]}
-                                </Label>
-                              </div>
-                            )
-                          })}
-                        </div>
-
-                        {!option && (
-                          <p className="text-xs text-amber-600 dark:text-amber-400">
-                            Not on the Models page, so it is not used.
-                          </p>
-                        )}
-                        {option && !option.enabled && (
-                          <p className="text-xs text-amber-600 dark:text-amber-400">
-                            Disabled on the{" "}
-                            <Link to="/models" className="underline">
-                              Models
-                            </Link>{" "}
-                            page, so it is not used.
-                          </p>
-                        )}
-                        {unsupported.length > 0 && (
-                          <p
-                            data-testid={`task-model-unsupported-${row.model}`}
-                            className="text-xs text-amber-600 dark:text-amber-400"
-                          >
-                            {row.model}&apos;s provider can&apos;t do{" "}
-                            {unsupported.map((u) => USE_LABELS[u]).join(", ")}.
-                          </p>
-                        )}
-
-                        {row.image === true && (
-                          <div className="flex max-w-sm flex-col gap-1.5">
-                            <Label htmlFor={`task-${i}-image-api`}>
-                              Images through
-                            </Label>
-                            <select
-                              id={`task-${i}-image-api`}
-                              className="border-input bg-background h-9 rounded-md border px-3 text-sm"
-                              value={
-                                row.image_api === "images" ? "images" : "chat"
-                              }
-                              onChange={(e) =>
-                                changeRow(i, (r) => ({
-                                  ...r,
-                                  image_api:
-                                    e.target.value === "images"
-                                      ? "images"
-                                      : undefined,
-                                }))
-                              }
-                            >
-                              <option value="chat">Chat (image output)</option>
-                              <option value="images">Images API</option>
-                            </select>
-                          </div>
-                        )}
-
-                        {row.tts === true && (
-                          <div className="grid gap-3 sm:grid-cols-2">
-                            <div className="flex flex-col gap-1.5">
-                              <Label htmlFor={`task-${i}-voice`}>Voice</Label>
-                              <Input
-                                id={`task-${i}-voice`}
-                                value={row.tts_defaults?.voice ?? ""}
-                                placeholder="The model's default"
-                                onChange={(e) =>
-                                  changeRow(i, (r) => ({
-                                    ...r,
-                                    tts_defaults: {
-                                      ...r.tts_defaults,
-                                      voice: e.target.value,
-                                    },
-                                  }))
-                                }
-                              />
-                            </div>
-                            <div className="flex flex-col gap-1.5">
-                              <Label htmlFor={`task-${i}-format`}>Format</Label>
-                              <Input
-                                id={`task-${i}-format`}
-                                value={row.tts_defaults?.format ?? ""}
-                                placeholder="The model's default"
-                                onChange={(e) =>
-                                  changeRow(i, (r) => ({
-                                    ...r,
-                                    tts_defaults: {
-                                      ...r.tts_defaults,
-                                      format: e.target.value,
-                                    },
-                                  }))
-                                }
-                              />
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })}
-
-                  <div className="flex flex-wrap items-center gap-3">
-                    {addable.length > 0 ? (
-                      <>
-                        <select
-                          aria-label="Model to add"
-                          className="border-input bg-background h-9 rounded-md border px-3 text-sm"
-                          value={addChoice}
-                          onChange={(e) => setToAdd(e.target.value)}
-                        >
-                          {addable.map((name) => (
-                            <option key={name} value={name}>
-                              {name}
-                            </option>
-                          ))}
-                        </select>
-                        <Button
-                          variant="outline"
-                          onClick={() =>
-                            change((s) => ({
-                              ...s,
-                              rows: addModel(s.rows, addChoice),
-                            }))
-                          }
-                        >
-                          Add model
-                        </Button>
-                      </>
-                    ) : (
-                      <span className="text-muted-foreground text-sm">
-                        Every model is listed. Add more on the{" "}
-                        <Link to="/models" className="underline">
-                          Models
-                        </Link>{" "}
-                        page.
-                      </span>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
+              {TASK_USES.map((use) => (
+                <ListSection
+                  key={use}
+                  use={use}
+                  list={state.lists[use]}
+                  options={options}
+                  onChange={(fn) => changeList(use, fn)}
+                />
+              ))}
 
               <Card>
                 <CardHeader>
@@ -461,10 +243,9 @@ export function TaskModelsPage() {
                       }
                     />
                   </div>
-                  {state.echo && modelsFor(state.rows, "stt").length === 0 && (
-                    <p className="text-xs text-amber-600 dark:text-amber-400">
-                      No model is ticked Transcription (STT), so nothing is
-                      transcribed.
+                  {state.echo && state.lists.stt.length === 0 && (
+                    <p data-testid="task-echo-no-model" className={warnClass}>
+                      No model in Transcription, so nothing is transcribed.
                     </p>
                   )}
                 </CardContent>
@@ -474,5 +255,207 @@ export function TaskModelsPage() {
         </div>
       </div>
     </div>
+  )
+}
+
+interface ListSectionProps {
+  use: TaskUse
+  list: TaskModelEntry[]
+  options: TaskModelOption[]
+  onChange: (fn: (list: TaskModelEntry[]) => TaskModelEntry[]) => void
+}
+
+/** ListSection is one use's list: its rows in fallback order, each with
+ *  Move up / Move down / Remove and the list's own settings, and the list's
+ *  own Model to add. Accessible names carry the list's title so they stay
+ *  unique on the page. */
+function ListSection({ use, list, options, onChange }: ListSectionProps) {
+  const title = LIST_TITLES[use]
+  const addable = availableModels(list, options)
+  const [toAdd, setToAdd] = useState("")
+  const addChoice = addable.includes(toAdd) ? toAdd : (addable[0] ?? "")
+  const changeEntry = (i: number, fn: (e: TaskModelEntry) => TaskModelEntry) =>
+    onChange((l) => l.map((e, idx) => (idx === i ? fn(e) : e)))
+
+  return (
+    <Card data-testid={`task-list-${use}`}>
+      <CardHeader>
+        <CardTitle>{title}</CardTitle>
+        <CardDescription>{LIST_DESCRIPTIONS[use]}</CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        {list.length === 0 && (
+          <p
+            data-testid={`task-list-empty-${use}`}
+            className="text-muted-foreground text-sm"
+          >
+            {EMPTY_NOTES[use]}
+          </p>
+        )}
+        {list.map((entry, i) => {
+          const option = options.find((o) => o.name === entry.model)
+          const idBase = `task-${use}-${i}`
+          return (
+            <div
+              key={entry.model}
+              data-testid={`task-model-${use}-${entry.model}`}
+              className="flex flex-col gap-3 rounded-md border p-4"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-sm font-medium">{entry.model}</span>
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label={`Move ${entry.model} up in ${title}`}
+                    disabled={i === 0}
+                    onClick={() => onChange((l) => moveRow(l, i, -1))}
+                  >
+                    <IconArrowUp className="size-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label={`Move ${entry.model} down in ${title}`}
+                    disabled={i === list.length - 1}
+                    onClick={() => onChange((l) => moveRow(l, i, 1))}
+                  >
+                    <IconArrowDown className="size-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label={`Remove ${entry.model} from ${title}`}
+                    onClick={() => onChange((l) => removeRow(l, i))}
+                  >
+                    <IconTrash className="size-4" />
+                  </Button>
+                </div>
+              </div>
+
+              {!option && (
+                <p className={warnClass}>
+                  Not on the Models page, so it is not used.
+                </p>
+              )}
+              {option && !option.enabled && (
+                <p className={warnClass}>
+                  Disabled on the{" "}
+                  <Link to="/models" className="underline">
+                    Models
+                  </Link>{" "}
+                  page, so it is not used.
+                </p>
+              )}
+              {unsupported(use, option) && (
+                <p
+                  data-testid={`task-model-unsupported-${use}-${entry.model}`}
+                  className={warnClass}
+                >
+                  {entry.model}&apos;s provider can&apos;t do this.
+                </p>
+              )}
+
+              {use === "image" && (
+                <div className="flex max-w-sm flex-col gap-1.5">
+                  <Label htmlFor={`${idBase}-image-api`}>Images through</Label>
+                  <select
+                    id={`${idBase}-image-api`}
+                    aria-label={`Images through for ${entry.model}`}
+                    className={selectClass}
+                    value={entry.image_api === "images" ? "images" : "chat"}
+                    onChange={(e) =>
+                      changeEntry(i, (r) => ({
+                        ...r,
+                        image_api:
+                          e.target.value === "images" ? "images" : undefined,
+                      }))
+                    }
+                  >
+                    <option value="chat">Chat (image output)</option>
+                    <option value="images">Images API</option>
+                  </select>
+                </div>
+              )}
+
+              {use === "tts" && (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor={`${idBase}-voice`}>Voice</Label>
+                    <Input
+                      id={`${idBase}-voice`}
+                      aria-label={`Voice for ${entry.model}`}
+                      value={entry.tts_defaults?.voice ?? ""}
+                      placeholder="The model's default"
+                      onChange={(e) =>
+                        changeEntry(i, (r) => ({
+                          ...r,
+                          tts_defaults: {
+                            ...r.tts_defaults,
+                            voice: e.target.value,
+                          },
+                        }))
+                      }
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor={`${idBase}-format`}>Format</Label>
+                    <Input
+                      id={`${idBase}-format`}
+                      aria-label={`Format for ${entry.model}`}
+                      value={entry.tts_defaults?.format ?? ""}
+                      placeholder="The model's default"
+                      onChange={(e) =>
+                        changeEntry(i, (r) => ({
+                          ...r,
+                          tts_defaults: {
+                            ...r.tts_defaults,
+                            format: e.target.value,
+                          },
+                        }))
+                      }
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          )
+        })}
+
+        <div className="flex flex-wrap items-center gap-3">
+          {addable.length > 0 ? (
+            <>
+              <select
+                aria-label={`Model to add to ${title}`}
+                className={selectClass}
+                value={addChoice}
+                onChange={(e) => setToAdd(e.target.value)}
+              >
+                {addable.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+              <Button
+                variant="outline"
+                aria-label={`Add model to ${title}`}
+                onClick={() => onChange((l) => addModel(l, addChoice))}
+              >
+                Add model
+              </Button>
+            </>
+          ) : (
+            <span className="text-muted-foreground text-sm">
+              Every enabled model is in this list. Add more on the{" "}
+              <Link to="/models" className="underline">
+                Models
+              </Link>{" "}
+              page.
+            </span>
+          )}
+        </div>
+      </CardContent>
+    </Card>
   )
 }

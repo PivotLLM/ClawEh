@@ -2,80 +2,92 @@
 // without rendering.
 import {
   TASK_USES,
-  type TaskModel,
+  type TaskModelEntry,
+  type TaskModelLists,
   type TaskModelOption,
   type TaskModelsConfig,
   type TaskUse,
+  emptyLists,
 } from "@/api/task-models"
 
-/** The checkbox label of each use, in page order. */
-export const USE_LABELS: Record<TaskUse, string> = {
-  text: "Text",
-  image: "Images",
-  tts: "Speech (TTS)",
-  stt: "Transcription (STT)",
-  vision: "Vision",
-  classify: "Classify",
+/** Each list's section title, in page order (config.TaskUse.Label). */
+export const LIST_TITLES: Record<TaskUse, string> = {
+  text: "Generate text",
+  image: "Generate images",
+  tts: "Text to speech",
+  stt: "Transcription",
+  vision: "Describe images",
+  classify: "Classification",
 }
 
-/** usesOf lists the uses a row is ticked for, in page order. */
-export function usesOf(row: TaskModel): TaskUse[] {
-  return TASK_USES.filter((u) => row[u] === true)
+/** Each list's one-line description: what goes in and what comes out. */
+export const LIST_DESCRIPTIONS: Record<TaskUse, string> = {
+  text: "Writes text from a prompt.",
+  image: "Makes or edits images from a prompt.",
+  tts: "Speaks text aloud.",
+  stt: "Turns voice messages and audio into text.",
+  vision: "Describes images in text for agents whose model can't see them.",
+  classify: "Picks a category for each item a classifier handles.",
 }
 
-/** setUse ticks or unticks one use; unticking Speech (TTS) keeps its
- *  defaults so ticking it again brings them back until the page is left. */
-export function setUse(row: TaskModel, use: TaskUse, on: boolean): TaskModel {
-  const next = { ...row }
-  if (on) next[use] = true
-  else delete next[use]
-  return next
+/** What an empty list means, where ClawEh itself relies on it. */
+export const EMPTY_NOTES: Record<TaskUse, string> = {
+  text: "No models.",
+  image: "No models.",
+  tts: "No models.",
+  stt: "No models. Voice messages are not transcribed.",
+  vision: "No models. Images are not described.",
+  classify: "No models. Classifiers can't run.",
 }
 
-/** addModel appends a model with no use ticked, unless it is already on the
- *  page (a model is listed at most once). */
-export function addModel(rows: TaskModel[], name: string): TaskModel[] {
-  if (!name || rows.some((r) => r.model === name)) return rows
-  return [...rows, { model: name }]
+/** addModel appends a model to a list, unless it is already in it (a
+ *  model is in a list at most once). */
+export function addModel(
+  list: TaskModelEntry[],
+  name: string,
+): TaskModelEntry[] {
+  if (!name || list.some((e) => e.model === name)) return list
+  return [...list, { model: name }]
 }
 
-/** moveRow moves row i one place up (-1) or down (+1); out of range is a
+/** moveRow moves entry i one place up (-1) or down (+1); out of range is a
  *  no-op. */
 export function moveRow(
-  rows: TaskModel[],
+  list: TaskModelEntry[],
   i: number,
   dir: -1 | 1,
-): TaskModel[] {
+): TaskModelEntry[] {
   const j = i + dir
-  if (i < 0 || i >= rows.length || j < 0 || j >= rows.length) return rows
-  const next = [...rows]
+  if (i < 0 || i >= list.length || j < 0 || j >= list.length) return list
+  const next = [...list]
   ;[next[i], next[j]] = [next[j], next[i]]
   return next
 }
 
-/** availableModels are the Models page names not yet on the page. */
+/** removeRow drops entry i. */
+export function removeRow(list: TaskModelEntry[], i: number): TaskModelEntry[] {
+  return list.filter((_, idx) => idx !== i)
+}
+
+/** availableModels are the enabled Models page names not yet in the list,
+ *  sorted by name ignoring case. */
 export function availableModels(
-  rows: TaskModel[],
+  list: TaskModelEntry[],
   options: TaskModelOption[],
 ): string[] {
   return options
+    .filter((o) => o.enabled)
     .map((o) => o.name)
-    .filter((n) => !rows.some((r) => r.model === n))
+    .filter((n) => !list.some((e) => e.model === n))
     .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }))
 }
 
-/** unsupportedUses are the ticked uses the model's provider cannot serve. */
-export function unsupportedUses(
-  row: TaskModel,
+/** unsupported reports whether the model's provider cannot serve use. */
+export function unsupported(
+  use: TaskUse,
   option: TaskModelOption | undefined,
-): TaskUse[] {
-  if (!option) return []
-  return usesOf(row).filter((u) => option.support[u] === "no")
-}
-
-/** modelsFor lists the models ticked for use, in page order. */
-export function modelsFor(rows: TaskModel[], use: TaskUse): string[] {
-  return rows.filter((r) => r[use] === true).map((r) => r.model)
+): boolean {
+  return option?.support[use] === "no"
 }
 
 /** parseResultChars reads the "Text in results" field: blank is the default
@@ -87,30 +99,35 @@ export function parseResultChars(text: string): number | null {
   return Number(t)
 }
 
-/** taskModelsPayload is the block the page saves: TTS defaults only on a
- *  model ticked Speech (TTS) and only when one is set, image_api only when
- *  Images is ticked and it is not the default (chat), the limit left out
- *  when it is the default. */
-export function taskModelsPayload(
-  rows: TaskModel[],
-  resultTextChars: number,
-  echoTranscription: boolean,
-): TaskModelsConfig {
-  const models = rows.map((r) => {
-    const out: TaskModel = { model: r.model }
-    for (const u of usesOf(r)) out[u] = true
-    if (r.image === true && r.image_api === "images") out.image_api = "images"
-    const voice = r.tts_defaults?.voice?.trim() ?? ""
-    const format = r.tts_defaults?.format?.trim() ?? ""
-    if (r.tts === true && (voice || format)) {
+/** entryPayload is one entry as its list saves it: image_api only on image
+ *  entries and only when it is not the default (chat), tts_defaults only on
+ *  tts entries and only what is set. */
+function entryPayload(use: TaskUse, e: TaskModelEntry): TaskModelEntry {
+  const out: TaskModelEntry = { model: e.model }
+  if (use === "image" && e.image_api === "images") out.image_api = "images"
+  if (use === "tts") {
+    const voice = e.tts_defaults?.voice?.trim() ?? ""
+    const format = e.tts_defaults?.format?.trim() ?? ""
+    if (voice || format) {
       out.tts_defaults = {
         ...(voice ? { voice } : {}),
         ...(format ? { format } : {}),
       }
     }
-    return out
-  })
-  const block: TaskModelsConfig = { models }
+  }
+  return out
+}
+
+/** taskModelsPayload is the block the page saves: every list, in order,
+ *  with only the settings that list has; the limit left out when it is the
+ *  default, echo only when on. */
+export function taskModelsPayload(
+  lists: TaskModelLists,
+  resultTextChars: number,
+  echoTranscription: boolean,
+): TaskModelsConfig {
+  const block: TaskModelsConfig = emptyLists()
+  for (const u of TASK_USES) block[u] = lists[u].map((e) => entryPayload(u, e))
   if (resultTextChars > 0) block.result_text_chars = resultTextChars
   if (echoTranscription) block.echo_transcription = true
   return block

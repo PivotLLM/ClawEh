@@ -276,20 +276,20 @@ describe("AgentCard classifiers", () => {
     expect(screen.queryByText("Classifier model")).toBeNull()
   })
 
-  it("marks a model that is not a Classify model where it is set", () => {
+  it("marks a model that is not in Classification where it is set", () => {
     renderCard(withSwitch(true, "gone"))
     expect(screen.getByTestId("classifier-model-unusable").textContent).toBe(
-      "Not a Classify model, so its classifiers fail. Pick another.",
+      "Not in Classification, so its classifiers fail. Pick another.",
     )
-    expect(screen.queryByText("gone (not a Classify model)")).not.toBeNull()
+    expect(screen.queryByText("gone (not in Classification)")).not.toBeNull()
     expect(screen.queryByTestId("classifier-no-classify-models")).toBeNull()
   })
 
-  it("links to Task models when no model is ticked Classify", () => {
+  it("links to Task models when Classification is empty", () => {
     renderCard({ ...withSwitch(false, ""), classifierModels: [] })
     const note = screen.getByTestId("classifier-no-classify-models")
     expect(note.textContent).toBe(
-      "No model is ticked Classify. Tick one on Task models.",
+      "No model in Classification. Add one on Task models.",
     )
     expect(note.querySelector("a")?.getAttribute("href")).toBe("/task-models")
   })
@@ -694,14 +694,20 @@ describe("AgentCard task models", () => {
     expect(screen.queryByTestId("task-grant-no-model-text")).toBeNull()
   })
 
-  it("links to Task models for a kind with no model ticked", () => {
+  it("links to Task models for a kind whose list is empty, naming the list", () => {
     renderCard({ ...allSettings, taskKindsWithModels: ["text"] })
     expect(screen.queryByTestId("task-grant-no-model-text")).toBeNull()
     const note = screen.getByTestId("task-grant-no-model-stt")
     expect(note.textContent).toBe(
-      "No model is ticked for this. Tick one on Task models.",
+      "No model in Transcription. Add one on Task models.",
     )
     expect(note.querySelector("a")?.getAttribute("href")).toBe("/task-models")
+    expect(screen.getByTestId("task-grant-no-model-image").textContent).toBe(
+      "No model in Generate images. Add one on Task models.",
+    )
+    expect(screen.getByTestId("task-grant-no-model-tts").textContent).toBe(
+      "No model in Text to speech. Add one on Task models.",
+    )
   })
 })
 

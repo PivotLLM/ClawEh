@@ -963,12 +963,13 @@ exported; it exits 2 with a hint otherwise.
   throwaway agent whose May message it ticks, in F14 one whose
   classifiers switch it toggles and in F15 one whose Images task-model
   grant it toggles, in F16 one whose allowed-folder note it sets and in F17–F20 one
-  (`e2e-code`) whose tools it sets with the Coding tools and Default tools buttons and the `shell_exec` box, G edits three config fields and, in G8, one task
-  model's Images settings on the Task models page, N
+  (`e2e-code`) whose tools it sets with the Coding tools and Default tools buttons and the `shell_exec` box, G edits three config fields and, in G8, the Images through
+  setting of a Generate images entry on the Task models page, N
   creates a memory domain and curates inside it, S5 creates a throwaway agent
   and toggles one of its tools, T imports a card and creates a throwaway agent
-  it attaches the card to, U adds two task models, ticks and reorders
-  them, edits the Task models settings and creates a throwaway agent
+  it attaches the card to, U adds models to two of the six task-model
+  lists, reorders one, edits Images through and a Text to speech entry's
+  Voice/Format, edits the Task models settings and creates a throwaway agent
   `e2e-tmk` whose four grants it ticks, then writes the block back; I12 adds a temporary model only when no model's
   request timeout exceeds the turn timeout). All of them revert what they
   change. The runner refuses port 18790 unless `--allow-prod` is given.

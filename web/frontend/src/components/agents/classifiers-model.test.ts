@@ -36,25 +36,23 @@ describe("classifiersFromRaw", () => {
 })
 
 describe("classifyModels", () => {
-  it("lists the models ticked Classify, in page order", () => {
+  it("lists the models in Classification, in its order", () => {
     expect(
       classifyModels({
-        models: [
-          { model: "slow", classify: true },
-          { model: "fast", text: true },
-          { model: " cheap ", classify: true, stt: true },
-        ],
+        text: [{ model: "fast" }],
+        classify: [{ model: "slow" }, { model: " cheap " }],
+        stt: [{ model: "cheap" }],
       }),
     ).toEqual(["slow", "cheap"])
   })
 
   it("reads anything malformed as none", () => {
-    for (const v of [undefined, null, 1, "x", {}, { models: "x" }]) {
+    for (const v of [undefined, null, 1, "x", {}, { classify: "x" }]) {
       expect(classifyModels(v)).toEqual([])
     }
     expect(
       classifyModels({
-        models: [null, { classify: true }, { model: "", classify: true }],
+        classify: [null, { classify: true }, { model: "" }],
       }),
     ).toEqual([])
   })
@@ -64,7 +62,7 @@ describe("toggleClassifiers", () => {
   const bob = (extra: Partial<AgentEntry> = {}): AgentEntry =>
     parseAgent({ id: "bob", ...extra })
 
-  it("turns on with no model to pick when no model is ticked Classify", () => {
+  it("turns on with no model to pick when Classification is empty", () => {
     const on = toggleClassifiers(bob({ models: ["slow"] }), [])
     expect(on.classifiers).toEqual({ enabled: true, model: undefined })
     // The payload writes the switch without a model key.
@@ -78,7 +76,7 @@ describe("toggleClassifiers", () => {
     expect(before).toEqual(snapshot)
   })
 
-  it("turns on with the first Classify model, not the agent's own", () => {
+  it("turns on with the first model in Classification, not the agent's own", () => {
     const on = toggleClassifiers(bob({ models: ["slow"] }), ["fast", "cheap"])
     expect(on.classifiers).toEqual({ enabled: true, model: "fast" })
   })
@@ -134,13 +132,10 @@ describe("task model grant", () => {
     expect(agentPayload(loaded).task_models).toEqual({ stt: true })
   })
 
-  it("lists the models ticked for a use, in page order", () => {
+  it("lists the models in a use's list, in its order", () => {
     const tm = {
-      models: [
-        { model: "a", tts: true },
-        { model: "b", text: true },
-        { model: " c ", tts: true },
-      ],
+      tts: [{ model: "a" }, { model: " c " }],
+      text: [{ model: "b" }, { model: "a" }],
     }
     expect(taskModelsFor(tm, "tts")).toEqual(["a", "c"])
     expect(taskModelsFor(tm, "image")).toEqual([])

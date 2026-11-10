@@ -1,5 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import type { TaskModelsResponse } from "@/api/task-models"
@@ -16,16 +22,21 @@ vi.mock("@tanstack/react-router", () => ({
 const configured: TaskModelsResponse = {
   task_models: {
     result_text_chars: 2000,
-    models: [
-      { model: "whisper", stt: true },
-      { model: "sonnet", vision: true, stt: true },
-      { model: "gone", text: true },
-    ],
+    text: [{ model: "gone" }],
+    image: [{ model: "sonnet", image_api: "images" }],
+    tts: [],
+    stt: [{ model: "whisper" }, { model: "sonnet" }],
+    vision: [{ model: "sonnet" }],
+    classify: [],
   },
   defaults: { result_text_chars: 8000 },
   models: [
     { name: "whisper", enabled: true, support: { stt: "yes" } },
-    { name: "sonnet", enabled: true, support: { stt: "no", vision: "yes" } },
+    {
+      name: "sonnet",
+      enabled: true,
+      support: { stt: "no", vision: "yes", image: "unknown" },
+    },
     { name: "tts-1", enabled: true, support: {} },
     { name: "off", enabled: false, support: {} },
   ],
@@ -60,32 +71,46 @@ function mockFetch() {
   return { fetchMock, puts }
 }
 
+const rowsOf = (use: string) =>
+  within(screen.getByTestId(`task-list-${use}`))
+    .queryAllByTestId(new RegExp(`^task-model-${use}-`))
+    .map((el) => el.dataset.testid?.slice(`task-model-${use}-`.length))
+
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.useRealTimers()
 })
 
 describe("TaskModelsPage", () => {
-  it("lists the task models in page order with their ticks, without saving", async () => {
+  it("shows the six lists in order, each with its rows in order, without saving", async () => {
     const { fetchMock } = mockFetch()
     renderPage(newClient())
+    await screen.findByTestId("task-list-stt")
 
-    const stt = await screen.findByLabelText("whisper: Transcription (STT)")
-    expect(stt.getAttribute("data-state")).toBe("checked")
-    expect(
-      screen.getByLabelText("sonnet: Vision").getAttribute("data-state"),
-    ).toBe("checked")
-    expect(
-      screen.getByLabelText("sonnet: Text").getAttribute("data-state"),
-    ).toBe("unchecked")
-    const order = screen
-      .getAllByTestId(/^task-model-(whisper|sonnet|gone)$/)
-      .map((el) => el.dataset.testid)
-    expect(order).toEqual([
-      "task-model-whisper",
-      "task-model-sonnet",
-      "task-model-gone",
+    const titles = screen
+      .getAllByTestId(/^task-list-(text|image|tts|stt|vision|classify)$/)
+      .map((el) => el.querySelector("[data-slot=card-title]")?.textContent)
+    expect(titles).toEqual([
+      "Generate text",
+      "Generate images",
+      "Text to speech",
+      "Transcription",
+      "Describe images",
+      "Classification",
     ])
+    expect(
+      screen.getByText("Turns voice messages and audio into text."),
+    ).toBeTruthy()
+    expect(rowsOf("stt")).toEqual(["whisper", "sonnet"])
+    expect(rowsOf("vision")).toEqual(["sonnet"])
+    expect(rowsOf("tts")).toEqual([])
+    expect(screen.getByTestId("task-list-empty-tts").textContent).toBe(
+      "No models.",
+    )
+    expect(screen.getByTestId("task-list-empty-classify").textContent).toBe(
+      "No models. Classifiers can't run.",
+    )
+    expect(screen.queryByTestId("task-list-empty-stt")).toBeNull()
     expect(
       (
         screen.getByLabelText(
@@ -96,60 +121,135 @@ describe("TaskModelsPage", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
-  it("marks a use the provider can't serve and a model not on the Models page", async () => {
+  it("disables Move up on the first row and Move down on the last, per list", async () => {
     mockFetch()
     renderPage(newClient())
-    const note = await screen.findByTestId("task-model-unsupported-sonnet")
-    expect(note.textContent).toBe(
-      "sonnet's provider can't do Transcription (STT).",
-    )
-    expect(screen.queryByTestId("task-model-unsupported-whisper")).toBeNull()
+    const up = await screen.findByRole("button", {
+      name: "Move whisper up in Transcription",
+    })
+    expect((up as HTMLButtonElement).disabled).toBe(true)
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Move sonnet down in Transcription",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true)
+    // sonnet is alone in Describe images: both ends.
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Move sonnet up in Describe images",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true)
+  })
+
+  it("marks a model whose provider can't serve that list, and only there", async () => {
+    mockFetch()
+    renderPage(newClient())
+    const note = await screen.findByTestId("task-model-unsupported-stt-sonnet")
+    expect(note.textContent).toBe("sonnet's provider can't do this.")
+    expect(
+      screen.queryByTestId("task-model-unsupported-vision-sonnet"),
+    ).toBeNull()
+    expect(
+      screen.queryByTestId("task-model-unsupported-image-sonnet"),
+    ).toBeNull()
+    expect(
+      screen.queryByTestId("task-model-unsupported-stt-whisper"),
+    ).toBeNull()
     expect(
       screen.getByText("Not on the Models page, so it is not used."),
     ).toBeTruthy()
   })
 
-  it("offers only models not on the page", async () => {
+  it("offers each list the enabled models it does not hold, sorted", async () => {
     mockFetch()
     renderPage(newClient())
-    const select = (await screen.findByLabelText(
-      "Model to add",
-    )) as HTMLSelectElement
-    // Sorted by name, not in config order.
-    expect([...select.options].map((o) => o.value)).toEqual(["off", "tts-1"])
+    const options = async (title: string) =>
+      [
+        ...(
+          (await screen.findByLabelText(
+            `Model to add to ${title}`,
+          )) as HTMLSelectElement
+        ).options,
+      ].map((o) => o.value)
+    expect(await options("Transcription")).toEqual(["tts-1"])
+    expect(await options("Describe images")).toEqual(["tts-1", "whisper"])
+    expect(await options("Text to speech")).toEqual([
+      "sonnet",
+      "tts-1",
+      "whisper",
+    ])
   })
 
-  it("saves the whole block after an edit: tick, reorder, add, TTS defaults", async () => {
+  it("shows Images through only on Generate images and Voice/Format only on Text to speech", async () => {
+    mockFetch()
+    renderPage(newClient())
+    const api = (await screen.findByLabelText(
+      "Images through for sonnet",
+    )) as HTMLSelectElement
+    expect(api.value).toBe("images")
+    expect(screen.getAllByLabelText(/^Images through for/)).toHaveLength(1)
+    expect(screen.queryByLabelText(/^Voice for/)).toBeNull()
+  })
+
+  it("saves every list after edits: add to two lists, reorder, settings, remove", async () => {
     const { puts } = mockFetch()
     renderPage(newClient())
-    await screen.findByLabelText("whisper: Transcription (STT)")
+    await screen.findByTestId("task-list-stt")
 
-    fireEvent.click(screen.getByLabelText("Move sonnet up"))
-    fireEvent.change(screen.getByLabelText("Model to add"), {
+    fireEvent.click(
+      screen.getByRole("button", { name: "Move sonnet up in Transcription" }),
+    )
+    fireEvent.change(screen.getByLabelText("Model to add to Text to speech"), {
       target: { value: "tts-1" },
     })
-    fireEvent.click(screen.getByRole("button", { name: "Add model" }))
-    fireEvent.click(screen.getByLabelText("tts-1: Speech (TTS)"))
-    fireEvent.change(await screen.findByLabelText("Voice"), {
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add model to Text to speech" }),
+    )
+    fireEvent.change(await screen.findByLabelText("Voice for tts-1"), {
       target: { value: "alloy" },
     })
-    fireEvent.click(screen.getByLabelText("Remove gone"))
+    fireEvent.change(screen.getByLabelText("Format for tts-1"), {
+      target: { value: "mp3" },
+    })
+    fireEvent.change(screen.getByLabelText("Model to add to Generate images"), {
+      target: { value: "tts-1" },
+    })
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add model to Generate images" }),
+    )
+    fireEvent.change(screen.getByLabelText("Images through for sonnet"), {
+      target: { value: "chat" },
+    })
+    fireEvent.change(screen.getByLabelText("Images through for tts-1"), {
+      target: { value: "images" },
+    })
+    fireEvent.click(
+      screen.getByRole("button", { name: "Remove gone from Generate text" }),
+    )
 
     await waitFor(() => expect(puts.length).toBe(1), { timeout: 3000 })
     expect(puts[0]).toEqual({
       result_text_chars: 2000,
-      models: [
-        { model: "sonnet", stt: true, vision: true },
-        { model: "whisper", stt: true },
-        { model: "tts-1", tts: true, tts_defaults: { voice: "alloy" } },
+      text: [],
+      image: [{ model: "sonnet" }, { model: "tts-1", image_api: "images" }],
+      tts: [
+        { model: "tts-1", tts_defaults: { voice: "alloy", format: "mp3" } },
       ],
+      stt: [{ model: "sonnet" }, { model: "whisper" }],
+      vision: [{ model: "sonnet" }],
+      classify: [],
     })
+    expect(await screen.findByText("Saved ✓")).toBeTruthy()
   })
 
   it("does not save a limit that is not a whole number", async () => {
     const { puts } = mockFetch()
     renderPage(newClient())
-    await screen.findByLabelText("whisper: Transcription (STT)")
+    await screen.findByTestId("task-list-stt")
     const field = screen.getByLabelText("Text in results (characters)")
     fireEvent.change(field, { target: { value: "-4" } })
     expect(
@@ -159,20 +259,23 @@ describe("TaskModelsPage", () => {
     expect(puts).toEqual([])
   })
 
-  it("notes that echo does nothing without a Transcription model", async () => {
+  it("notes that echo does nothing while Transcription is empty", async () => {
     const { puts } = mockFetch()
     renderPage(newClient())
-    await screen.findByLabelText("whisper: Transcription (STT)")
-    fireEvent.click(screen.getByLabelText("whisper: Transcription (STT)"))
-    fireEvent.click(screen.getByLabelText("sonnet: Transcription (STT)"))
+    await screen.findByTestId("task-list-stt")
     fireEvent.click(screen.getByRole("switch", { name: "Echo transcription" }))
-    expect(
-      screen.getByText(
-        "No model is ticked Transcription (STT), so nothing is transcribed.",
-      ),
-    ).toBeTruthy()
+    expect(screen.queryByTestId("task-echo-no-model")).toBeNull()
+    fireEvent.click(
+      screen.getByRole("button", { name: "Remove whisper from Transcription" }),
+    )
+    fireEvent.click(
+      screen.getByRole("button", { name: "Remove sonnet from Transcription" }),
+    )
+    expect(screen.getByTestId("task-echo-no-model").textContent).toBe(
+      "No model in Transcription, so nothing is transcribed.",
+    )
     await waitFor(() => expect(puts.length).toBe(1), { timeout: 3000 })
-    expect(puts[0]).toMatchObject({ echo_transcription: true })
+    expect(puts[0]).toMatchObject({ echo_transcription: true, stt: [] })
   })
 })
 
@@ -180,20 +283,22 @@ describe("TaskModelsPage leaving with an edit pending", () => {
   it("saves the edit at once instead of dropping it", async () => {
     const { puts } = mockFetch()
     const view = renderPage(newClient())
-    await screen.findByLabelText("whisper: Transcription (STT)")
-    fireEvent.click(screen.getByLabelText("whisper: Text"))
+    await screen.findByTestId("task-list-stt")
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add model to Classification" }),
+    )
     expect(puts).toEqual([])
     view.unmount()
     await waitFor(() => expect(puts.length).toBe(1))
-    expect(
-      (puts[0] as { models: { model: string; text?: boolean }[] }).models[0],
-    ).toEqual({ model: "whisper", text: true, stt: true })
+    expect((puts[0] as { classify: unknown }).classify).toEqual([
+      { model: "sonnet" },
+    ])
   })
 
   it("saves nothing when there is no pending edit", async () => {
     const { puts } = mockFetch()
     const view = renderPage(newClient())
-    await screen.findByLabelText("whisper: Transcription (STT)")
+    await screen.findByTestId("task-list-stt")
     view.unmount()
     await new Promise((r) => setTimeout(r, 50))
     expect(puts).toEqual([])

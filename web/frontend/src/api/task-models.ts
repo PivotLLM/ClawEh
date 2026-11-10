@@ -1,8 +1,8 @@
 // API client for the Task models page: the models ClawEh uses for single
-// calls without tools, each ticked for the uses it serves.
+// calls without tools, in one ordered list per use.
 import { errorMessage } from "./error-message"
 
-/** One use a task model can be ticked for, in the page's checkbox order. */
+/** The uses, one list each, in the page's order. */
 export const TASK_USES = [
   "text",
   "image",
@@ -18,30 +18,36 @@ export interface TTSDefaults {
   format?: string
 }
 
-/** One row of the page: a model_name and its ticked uses. */
-export type TaskModel = {
+/** One entry of a list: a model_name, and the settings its list has
+ *  (image_api on image, tts_defaults on tts). */
+export interface TaskModelEntry {
   model: string
-  tts_defaults?: TTSDefaults
-  /** How an Images model is called: "chat" (default) or "images". */
+  /** How a model in Generate images is called: "chat" (default) or
+   *  "images". */
   image_api?: "chat" | "images"
-} & Partial<Record<TaskUse, boolean>>
-
-export interface TaskModelsConfig {
-  result_text_chars?: number
-  echo_transcription?: boolean
-  models: TaskModel[]
+  tts_defaults?: TTSDefaults
 }
 
-// TASK_MODEL_DEFAULTS mirrors config.DefaultTaskResultTextChars in the
-// backend. Both are checked against config/testdata/task_model_defaults.json.
+/** The six lists, each in fallback order. */
+export type TaskModelLists = Record<TaskUse, TaskModelEntry[]>
+
+export type TaskModelsConfig = {
+  result_text_chars?: number
+  echo_transcription?: boolean
+} & TaskModelLists
+
+// TASK_MODEL_DEFAULTS mirrors config.DefaultTaskResultTextChars and the list
+// order (config.TaskUses) in the backend. Both are checked against
+// config/testdata/task_model_defaults.json.
 export const TASK_MODEL_DEFAULTS = {
   result_text_chars: 8000,
-} as const
+  lists: [...TASK_USES],
+}
 
 /** Whether a model's provider can serve a use, judged from its protocol. */
 export type UseSupport = "yes" | "no" | "unknown"
 
-/** A model on the Models page, as the Task models page may add it. */
+/** A model on the Models page, as a list may add it. */
 export interface TaskModelOption {
   name: string
   enabled: boolean
@@ -62,16 +68,28 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json() as Promise<T>
 }
 
-// getTaskModels normalises the lists at the boundary: Go may encode an empty
-// slice as null, and every consumer expects an array.
+/** emptyLists is every list, empty. */
+export function emptyLists(): TaskModelLists {
+  return Object.fromEntries(
+    TASK_USES.map((u) => [u, [] as TaskModelEntry[]]),
+  ) as TaskModelLists
+}
+
+// getTaskModels normalises the lists at the boundary: a missing or null list
+// is an empty one, and every consumer expects an array.
 export const getTaskModels = async (): Promise<TaskModelsResponse> => {
   const data = await request<Partial<TaskModelsResponse>>("/api/task-models")
+  const tm = (data.task_models ?? {}) as Partial<TaskModelsConfig>
+  const lists = emptyLists()
+  for (const use of TASK_USES) {
+    const list = tm[use]
+    if (Array.isArray(list)) lists[use] = list
+  }
   return {
-    task_models: {
-      ...data.task_models,
-      models: data.task_models?.models ?? [],
+    task_models: { ...tm, ...lists },
+    defaults: data.defaults ?? {
+      result_text_chars: TASK_MODEL_DEFAULTS.result_text_chars,
     },
-    defaults: data.defaults ?? { ...TASK_MODEL_DEFAULTS },
     models: (data.models ?? []).map((m) => ({
       ...m,
       support: m.support ?? {},

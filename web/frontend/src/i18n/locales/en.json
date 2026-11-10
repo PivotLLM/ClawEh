@@ -50,9 +50,9 @@
     "classifiersHint": "Lets this agent sort items from its tools into categories with one model call each.",
     "classifierModel": "Classifier model",
     "classifierModelNone": "None set",
-    "classifierModelUnusableOption": "{{model}} (not a Classify model)",
-    "classifierModelUnusable": "Not a Classify model, so its classifiers fail. Pick another.",
-    "classifierNoClassifyModels": "No model is ticked Classify. Tick one on",
+    "classifierModelUnusableOption": "{{model}} (not in Classification)",
+    "classifierModelUnusable": "Not in Classification, so its classifiers fail. Pick another.",
+    "classifierNoClassifyModels": "No model in Classification. Add one on",
     "taskModels": "Allow task models",
     "taskModelsHint": "Lets this agent call task models through agent_spawn, for the kinds ticked. Input files also need a file-reading tool.",
     "taskModelsNoSpawn": "Needs the agent_spawn tool.",
@@ -62,7 +62,13 @@
       "tts": "Speech (TTS)",
       "stt": "Transcription (STT)"
     },
-    "taskKindNoModel": "No model is ticked for this. Tick one on",
+    "taskKindNoModel": "No model in {{list}}. Add one on",
+    "taskList": {
+      "text": "Generate text",
+      "image": "Generate images",
+      "tts": "Text to speech",
+      "stt": "Transcription"
+    },
     "forum": "Allow forum",
     "forumHint": "Lets this agent hold forums with the other agents it may message.",
     "characterCard": "Character card",

@@ -1,69 +1,94 @@
 import { describe, expect, it } from "vitest"
 
-import { TASK_MODEL_DEFAULTS, type TaskModel } from "@/api/task-models"
+import {
+  TASK_MODEL_DEFAULTS,
+  TASK_USES,
+  type TaskModelEntry,
+  emptyLists,
+} from "@/api/task-models"
 
 import defaults from "../../../../../config/testdata/task_model_defaults.json"
 import {
+  EMPTY_NOTES,
+  LIST_DESCRIPTIONS,
+  LIST_TITLES,
   addModel,
   availableModels,
-  modelsFor,
   moveRow,
   parseResultChars,
-  setUse,
+  removeRow,
   taskModelsPayload,
-  unsupportedUses,
-  usesOf,
+  unsupported,
 } from "./task-models-model"
 
 // config/task_models_test.go checks the same file against
-// config.DefaultTaskResultTextChars.
+// config.DefaultTaskResultTextChars and config.TaskUses.
 describe("TASK_MODEL_DEFAULTS", () => {
-  it("matches the server's task_models defaults", () => {
+  it("matches the server's task_models defaults and list order", () => {
     expect(TASK_MODEL_DEFAULTS).toEqual(defaults)
+    expect([...TASK_USES]).toEqual(defaults.lists)
   })
 })
 
-describe("rows", () => {
-  const rows: TaskModel[] = [
-    { model: "a", stt: true },
-    { model: "b", vision: true, stt: true },
+describe("list labels", () => {
+  it("names every list, in sentence case, with a description", () => {
+    expect(TASK_USES.map((u) => LIST_TITLES[u])).toEqual([
+      "Generate text",
+      "Generate images",
+      "Text to speech",
+      "Transcription",
+      "Describe images",
+      "Classification",
+    ])
+    for (const u of TASK_USES) {
+      expect(LIST_DESCRIPTIONS[u]).toMatch(/^[A-Z].*\.$/)
+      expect(EMPTY_NOTES[u]).toMatch(/^No models\./)
+    }
+    expect(EMPTY_NOTES.stt).toBe(
+      "No models. Voice messages are not transcribed.",
+    )
+  })
+})
+
+describe("a list", () => {
+  const list: TaskModelEntry[] = [
+    { model: "a" },
+    { model: "b", image_api: "images" },
     { model: "c" },
   ]
 
-  it("adds a model once, with nothing ticked", () => {
-    expect(addModel(rows, "d")).toEqual([...rows, { model: "d" }])
-    expect(addModel(rows, "a")).toBe(rows)
-    expect(addModel(rows, "")).toBe(rows)
+  it("adds a model once, with no settings", () => {
+    expect(addModel(list, "d")).toEqual([...list, { model: "d" }])
+    expect(addModel(list, "a")).toBe(list)
+    expect(addModel(list, "")).toBe(list)
   })
 
-  it("moves a row one place and ignores moves off the ends", () => {
-    expect(moveRow(rows, 1, -1).map((r) => r.model)).toEqual(["b", "a", "c"])
-    expect(moveRow(rows, 1, 1).map((r) => r.model)).toEqual(["a", "c", "b"])
-    expect(moveRow(rows, 0, -1)).toBe(rows)
-    expect(moveRow(rows, 2, 1)).toBe(rows)
+  it("moves an entry one place, keeping its settings, and ignores moves off the ends", () => {
+    expect(moveRow(list, 1, -1)).toEqual([
+      { model: "b", image_api: "images" },
+      { model: "a" },
+      { model: "c" },
+    ])
+    expect(moveRow(list, 1, 1).map((e) => e.model)).toEqual(["a", "c", "b"])
+    expect(moveRow(list, 0, -1)).toBe(list)
+    expect(moveRow(list, 2, 1)).toBe(list)
   })
 
-  it("lists each use's models in page order", () => {
-    expect(modelsFor(rows, "stt")).toEqual(["a", "b"])
-    expect(modelsFor(moveRow(rows, 1, -1), "stt")).toEqual(["b", "a"])
-    expect(modelsFor(rows, "classify")).toEqual([])
+  it("removes an entry", () => {
+    expect(removeRow(list, 1).map((e) => e.model)).toEqual(["a", "c"])
   })
 
-  it("ticks and unticks a use without touching the others", () => {
-    const on = setUse(rows[2], "classify", true)
-    expect(usesOf(on)).toEqual(["classify"])
-    const off = setUse(rows[1], "stt", false)
-    expect(usesOf(off)).toEqual(["vision"])
-    expect(off).not.toHaveProperty("stt")
-  })
-
-  it("offers only the models not on the page", () => {
-    const options = ["a", "x", "c", "y"].map((name) => ({
-      name,
-      enabled: true,
-      support: {},
-    }))
-    expect(availableModels(rows, options)).toEqual(["x", "y"])
+  it("offers only the enabled models not in this list", () => {
+    const options = [
+      { name: "a", enabled: true, support: {} },
+      { name: "x", enabled: true, support: {} },
+      { name: "off", enabled: false, support: {} },
+      { name: "c", enabled: true, support: {} },
+      { name: "y", enabled: true, support: {} },
+    ]
+    expect(availableModels(list, options)).toEqual(["x", "y"])
+    // Another list is offered the same models it does not hold itself.
+    expect(availableModels([{ model: "x" }], options)).toEqual(["a", "c", "y"])
   })
 
   it("offers the models sorted by name, ignoring case", () => {
@@ -80,14 +105,16 @@ describe("rows", () => {
     ])
   })
 
-  it("names the ticked uses the provider cannot serve", () => {
+  it("says when the provider cannot serve the list's use", () => {
     const option = {
       name: "b",
       enabled: true,
-      support: { stt: "no", vision: "yes", text: "no" } as const,
+      support: { stt: "no", vision: "yes" } as const,
     }
-    expect(unsupportedUses(rows[1], option)).toEqual(["stt"])
-    expect(unsupportedUses(rows[1], undefined)).toEqual([])
+    expect(unsupported("stt", option)).toBe(true)
+    expect(unsupported("vision", option)).toBe(false)
+    expect(unsupported("image", option)).toBe(false)
+    expect(unsupported("stt", undefined)).toBe(false)
   })
 })
 
@@ -102,54 +129,36 @@ describe("parseResultChars", () => {
 })
 
 describe("taskModelsPayload", () => {
-  it("keeps TTS defaults only on a TTS model and leaves defaults out", () => {
-    const payload = taskModelsPayload(
-      [
-        {
-          model: "tts",
-          tts: true,
-          tts_defaults: { voice: " alloy ", format: "" },
-        },
-        { model: "was-tts", text: true, tts_defaults: { voice: "x" } },
-        { model: "blank", tts: true, tts_defaults: { voice: " " } },
+  it("writes every list in order, each entry with only its list's settings", () => {
+    const lists = emptyLists()
+    lists.text = [{ model: "b" }, { model: "a", image_api: "images" }]
+    lists.image = [
+      { model: "a", image_api: "images" },
+      { model: "b", image_api: "chat" },
+    ]
+    lists.tts = [
+      { model: "tts", tts_defaults: { voice: " alloy ", format: "" } },
+      { model: "blank", tts_defaults: { voice: " " } },
+    ]
+    lists.stt = [{ model: "a", tts_defaults: { voice: "x" } }]
+    expect(taskModelsPayload(lists, 0, false)).toEqual({
+      text: [{ model: "b" }, { model: "a" }],
+      image: [{ model: "a", image_api: "images" }, { model: "b" }],
+      tts: [
+        { model: "tts", tts_defaults: { voice: "alloy" } },
+        { model: "blank" },
       ],
-      0,
-      false,
-    )
-    expect(payload).toEqual({
-      models: [
-        { model: "tts", tts: true, tts_defaults: { voice: "alloy" } },
-        { model: "was-tts", text: true },
-        { model: "blank", tts: true },
-      ],
+      stt: [{ model: "a" }],
+      vision: [],
+      classify: [],
     })
   })
 
   it("writes the limit and echo when they are set", () => {
-    expect(taskModelsPayload([], 500, true)).toEqual({
-      models: [],
+    expect(taskModelsPayload(emptyLists(), 500, true)).toEqual({
+      ...emptyLists(),
       result_text_chars: 500,
       echo_transcription: true,
     })
-  })
-})
-
-describe("image_api", () => {
-  it("is saved only for an Images model on the images API", () => {
-    expect(
-      taskModelsPayload(
-        [
-          { model: "a", image: true, image_api: "images" },
-          { model: "b", image: true, image_api: "chat" },
-          { model: "c", text: true, image_api: "images" },
-        ],
-        0,
-        false,
-      ).models,
-    ).toEqual([
-      { model: "a", image: true, image_api: "images" },
-      { model: "b", image: true },
-      { model: "c", text: true },
-    ])
   })
 })
