@@ -1,10 +1,94 @@
 # ClawEh: Yet another claw - Canadian style
 
-**ClawEh is a small, fast, self-hosted runtime for personal AI assistants.**
+**ClawEh is a self-hosted Go runtime for long-running AI assistants: several agents, each with its own models, tools, memory and channels, managed from one web interface.**
 
-Written in Go, it can run one or more agents, each with its own workspace, tools, and persistent memory. Agents can connect to Telegram, Slack, Discord, Matrix, Signal (via an additional daemon), the built-in web interface, and external devices such as the Rabbit R1 and compatible voice apps.
+## Features
 
-Although the conversation context can be reset at any time, ClawEh is designed primarily for long-running assistants that maintain continuity over time. Its development emphasizes efficient context management, practical persistent memory, security, and a stable, dependable core.
+- **Multiple agents** with their own workspaces, models, tools, memory and routing
+- **API and CLI models**: cloud APIs, OpenRouter, Amazon Bedrock, local models, and CLI agents such as Claude Code, Codex, Antigravity and Cursor, with fallback chains and cooldowns
+- **Coding harness tools**: find, search, read and edit code, and run commands, with access to source trees outside the workspace
+- **Maestro workflow orchestration**: projects, task lists run by worker sub-agents, reusable playbooks and reports
+- **Forums**: structured discussions among agents, run to a final report
+- **MCPFusion hub and configuration-defined MCP servers**: REST APIs described in a file become tools, and ClawEh serves its tools over MCP and connects to other MCP servers
+- **Speech and image conversion**: transcription, text to speech, image generation and image descriptions through task models
+- **IM integration**: Telegram, Slack, Discord, Matrix, Signal and the built-in web chat
+- **Devices and the message API**: the Rabbit R1, voice apps, and other applications that send messages to an agent
+- **Cognitive memory and context management** that keep long-running conversations useful and within model limits
+- **Sub-agents** that take on work for an agent, and messages between agents
+- **Human agents**: a person who answers questions from agents in their own chat
+- **Classifiers with MCP integration**: sort email, files or tickets from any tool or MCP server an agent can use, and act on each category
+- **Character cards** in the Character Card V3 format
+- **Scheduled jobs** and reminders
+- **Security Check Up and configuration report**, plus HTTPS, sign-in, per-agent grants, an audit log, alerts and nightly backups
+- **Web UI and user manual** for managing everything without editing JSON
+
+### Multiple agents
+
+Run several named agents side by side. Each has its own workspace, models, tools, system prompt, memory and channel bindings, and only the tools you grant it. One agent can be your personal assistant on Telegram while another does security reviews from Slack. See [Creating and editing agents](manual/agents/creating.md).
+
+### API and CLI models
+
+Use cloud APIs (Anthropic, OpenAI, Google, x.ai and others), [OpenRouter](manual/providers/openrouter.md), [Amazon Bedrock](manual/providers/bedrock.md) or [local models](manual/providers/local-models.md) through their APIs, or run [CLI agents](manual/providers/cli-providers.md) such as Claude Code, Codex, Antigravity and Cursor as an agent's model. Each agent has an ordered list of models. When one fails or runs into rate limits, ClawEh falls back to the next and keeps the failed one in cooldown. See [Providers, models and fallback](manual/providers/concepts.md).
+
+### Coding harness tools
+
+Agents on API models get the tools a modern coding harness provides: `file_glob` to find files by name, `file_search_lines` to search code (regular expressions, file filters, context lines, `.gitignore` respected), line-based reading and editing, and `shell_exec` for git, builds and tests. **Allow coding tools** on the Agents page grants the whole set. [Allowed folders](manual/agents/allowed-folders.md) give an agent's file tools a source tree outside its workspace by its real path, read-only when the file permissions say so. See [Tools and skills](manual/agents/tools-and-skills.md).
+
+### Maestro workflow orchestration
+
+[Maestro](manual/maestro.md) gives an agent a project manager's toolkit for work that outgrows one conversation: projects, item lists, task sets run in parallel by worker sub-agents with retries and quality checks, reusable playbooks, and generated reports. Progress is kept on disk, so a long job can be resumed.
+
+### Forums
+
+A [forum](manual/forums/index.md) is a structured discussion among agents that one agent sets up and ClawEh runs to the end: independent opinions from several models, a critique-and-revise cycle for a document, or a review panel for a proposal. Built-in templates cover common setups, and responses can be anonymous so that participants judge the content, not the author.
+
+### MCPFusion hub and configuration-defined MCP servers
+
+[MCPFusion](manual/mcpfusion.md) turns a REST API described in a JSON file into tools, with each agent signing in to the service on its own: Microsoft 365, Google Workspace, Trello, weather services and similar APIs. ClawEh also speaks [MCP](manual/mcp.md) in both directions: it serves its tools to CLI agents and other MCP clients, and connects to external MCP servers whose tools you grant agent by agent.
+
+### Speech and image conversion
+
+[Task models](manual/providers/task-models.md) handle single conversions: transcribing incoming [voice messages](manual/channels/voice.md), turning text into speech, generating images, and describing images for models that cannot see them. You pick the models and their fallback order for each use, and agents can call them too.
+
+### IM integration
+
+Connect agents to [Telegram](manual/channels/telegram.md) (several bots), [Slack](manual/channels/slack.md), [Discord](manual/channels/discord.md), [Matrix](manual/channels/matrix.md), Signal through [SecMsg](manual/channels/secmsg.md), and the built-in [web chat](manual/channels/webui-chat.md). [Routing and bindings](manual/channels/routing.md) decide which agent answers in which chat.
+
+### Devices and the message API
+
+A built-in [device listener](manual/channels/devices.md) lets the Rabbit R1 and voice apps such as Claw to Talk pair with ClawEh and talk to your agents. The [message API](manual/channels/message-api.md) lets other applications, such as an alarm panel or a monitoring check, send a message to an agent over HTTP.
+
+### Cognitive memory and context management
+
+Each agent has one conversation shared by every chat that reaches it, and a long-term [memory](manual/agents/memory.md) that distils conversations into de-duplicated facts and recalls the relevant ones for each new message. Summarisation, compaction and the eviction of stale tool output keep long-running conversations within the model's context.
+
+### Sub-agents
+
+An agent can hand a task to a [sub-agent](manual/agents/subagents.md), a temporary copy of itself or of another agent that works on it in the background and reports back. Agents can also send [messages to each other](manual/agents/messaging.md) and wait for the answer.
+
+### Human agents
+
+A [human agent](manual/agents/human-agents.md) lets a person take part as an agent. When an agent asks it something, the question is posted to the person's chat, and their reply is the answer. No model runs for it.
+
+### Classifiers with MCP integration
+
+A [classifier](manual/agents/classifiers.md) sorts the items any of an agent's tools can list, including MCP servers and MCPFusion services such as Microsoft 365 mail, files or a ticket system. It reads each new item, asks a model which category it belongs to, and runs the action set for that category. The model that classifies never has tools.
+
+### Character cards
+
+[Character cards](manual/agents/character-cards.md) give an agent, a sub-agent or a forum participant a character to play, from a library of Character Card V3 files that can be imported from and exported to other tools.
+
+### Scheduled jobs
+
+Agents can set [reminders and recurring jobs](manual/agents/scheduling.md), and handle each one as a message when it fires.
+
+### Security Check Up and configuration report
+
+The [Check Up](manual/admin/checkup.md) page lists the settings that most need attention, and its **Full report** button downloads a PDF of everything the install can do: listeners, providers, channels, each agent's tools and folder access, external services and devices. Neither ever shows a credential. HTTPS and [sign-in](manual/admin/login.md) are on by default, every tool is granted per agent, and ClawEh keeps an [audit log](manual/admin/audit.md), sends [alerts](manual/admin/alerts.md) on failures and makes nightly [backups](manual/admin/backup.md).
+
+### Web UI and user manual
+
+Manage agents, providers, models, channels, MCP connections, memory and settings from the web interface, without editing JSON. The user manual is built in: open **Manual** in the sidebar.
 
 ## Documentation
 
@@ -20,24 +104,6 @@ Changes in each release are listed in [CHANGELOG.md](CHANGELOG.md).
 ## Development Status
 
 Version 0.6.0 represents a significant evolution toward a more secure business-class product. HTTPS is now enabled by default, and authentication is required to access the web interface. An overview of the more important security-related configuration items is displayed on the **Check Up** page and a detailed PDF report can be downloaded for review. Remaining legacy code from the original fork has also been removed and rewritten.
-
-## Features
-
-- **Multi-agent architecture** — Run multiple named agents, each with its own workspace, models, tools, system prompt, memory, and channel bindings.
-- **Self-hosted** — Workspace sandboxing, per-agent tool allowlists, and loopback-bound services, delivered as MIT-licensed Go software that you run on your own infrastructure.
-- **Strong security posture** — Only essential features are enabled by default, with fine-grained access controls for tools, files, agents, and external services.
-- **Broad LLM support** — Connect to OpenRouter, Anthropic, OpenAI, Google Gemini, AWS, x.ai, and others, or use CLI agents such as Claude Code, Codex, Antigravity, and Cursor CLI. Configurable fallback chains and cooldowns improve availability.
-- **Messaging channels** — Connect agents to Telegram, Slack, Discord, Matrix, Signal, and the built-in web interface, with configurable per-agent routing.
-- **Cognitive memory** — Each agent can maintain persistent memory that updates in the background, distilling conversations into structured, de-duplicated facts and automatically recalling relevant information for future prompts.
-- **Smart context management** — Automatic summarization and compaction, combined with per-turn eviction of stale tool output, keep long-running conversations responsive and within model context limits.
-- **External voice/hardware devices** — A built-in device listener speaks the OpenClaw Gateway WebSocket protocol, so hardware and voice clients can pair and talk to your agents. Tested with the **Rabbit R1** and the **"Claw to Talk" voice app**.
-- **Forums** — Structured discussions among agents, run by ClawEh from a template: independent opinions, debate, and a final report.
-- **Character cards** — Give an agent, a sub-agent or a forum participant a character to play from a library of Character Card V3 files, imported from and exported to other tools.
-- **Maestro built-in** — Orchestrate complex, multi-step work using projects, playbooks, and resumable task lists.
-- **MCP server and client** — ClawEh provides its tools directly to API-based LLMs and exposes them through MCP to CLI agents. It can also connect to upstream MCP servers over stdio or HTTP, with granular control over which tools each agent may use.
-- **Files, allowed folders and scheduled jobs** — Sandboxed file tools, extra host folders allowed per agent, and reminders and recurring jobs.
-- **Message API** — Named tokens let other applications send a message to a chosen agent.
-- **Web UI** — Manage agents, providers, channels, MCP connections, memory, and configuration without editing JSON.
 
 ## Installation
 
