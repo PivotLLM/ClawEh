@@ -66,6 +66,20 @@ describe("rows", () => {
     expect(availableModels(rows, options)).toEqual(["x", "y"])
   })
 
+  it("offers the models sorted by name, ignoring case", () => {
+    const options = ["or zeta", "Bob", "alice", "OR Alpha"].map((name) => ({
+      name,
+      enabled: true,
+      support: {},
+    }))
+    expect(availableModels([], options)).toEqual([
+      "alice",
+      "Bob",
+      "OR Alpha",
+      "or zeta",
+    ])
+  })
+
   it("names the ticked uses the provider cannot serve", () => {
     const option = {
       name: "b",

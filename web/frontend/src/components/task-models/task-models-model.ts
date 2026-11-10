@@ -61,6 +61,7 @@ export function availableModels(
   return options
     .map((o) => o.name)
     .filter((n) => !rows.some((r) => r.model === n))
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }))
 }
 
 /** unsupportedUses are the ticked uses the model's provider cannot serve. */

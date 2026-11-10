@@ -417,6 +417,10 @@
 
 ### Fixed
 
+- **The Task models page lists the models to add by name.** The **Model to
+  add** list was in the order of the Models page, which made a model hard to
+  find; it is now sorted alphabetically, ignoring case.
+
 - **The device channel no longer warns that nobody can connect.** With
   `channels.device.allow_from` empty, any paired device may talk to the
   agents (devices are let in by token and pairing approval), so the start-up

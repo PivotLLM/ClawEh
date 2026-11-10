@@ -115,7 +115,8 @@ describe("TaskModelsPage", () => {
     const select = (await screen.findByLabelText(
       "Model to add",
     )) as HTMLSelectElement
-    expect([...select.options].map((o) => o.value)).toEqual(["tts-1", "off"])
+    // Sorted by name, not in config order.
+    expect([...select.options].map((o) => o.value)).toEqual(["off", "tts-1"])
   })
 
   it("saves the whole block after an edit: tick, reorder, add, TTS defaults", async () => {
@@ -124,6 +125,9 @@ describe("TaskModelsPage", () => {
     await screen.findByLabelText("whisper: Transcription (STT)")
 
     fireEvent.click(screen.getByLabelText("Move sonnet up"))
+    fireEvent.change(screen.getByLabelText("Model to add"), {
+      target: { value: "tts-1" },
+    })
     fireEvent.click(screen.getByRole("button", { name: "Add model" }))
     fireEvent.click(screen.getByLabelText("tts-1: Speech (TTS)"))
     fireEvent.change(await screen.findByLabelText("Voice"), {
