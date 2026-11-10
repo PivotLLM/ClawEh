@@ -40,14 +40,14 @@ func TestUpdateProvider_EmptyBaseURLClears(t *testing.T) {
 		return cfg.Providers[1].BaseURL
 	}
 
-	if rec := putProvider(t, mux, "1", `{"name": "Speech", "protocol": "gemini"}`); rec.Code != http.StatusOK {
+	if rec = putProvider(t, mux, "1", `{"name": "Speech", "protocol": "gemini"}`); rec.Code != http.StatusOK {
 		t.Fatalf("PUT without base_url = %d: %s", rec.Code, rec.Body.String())
 	}
 	if got := baseURL(); got != "https://speech.example/v1" {
 		t.Fatalf("omitted base_url: stored %q, want it kept", got)
 	}
 
-	if rec := putProvider(t, mux, "1", `{"name": "Speech", "protocol": "gemini", "base_url": ""}`); rec.Code != http.StatusOK {
+	if rec = putProvider(t, mux, "1", `{"name": "Speech", "protocol": "gemini", "base_url": ""}`); rec.Code != http.StatusOK {
 		t.Fatalf("PUT with empty base_url = %d: %s", rec.Code, rec.Body.String())
 	}
 	if got := baseURL(); got != "" {
