@@ -663,7 +663,7 @@ func (e *svcEnv) opts() LaunchOptions {
 			if !strings.HasPrefix(abs, e.workspace+string(filepath.Separator)) {
 				return nil, errors.New("outside the workspace")
 			}
-			return os.Open(abs) //nolint:gosec // test fixture inside the workspace
+			return os.Open(abs)
 		},
 	}
 }

@@ -318,7 +318,7 @@ func cfgtFileEnv(t *testing.T) (preflightEnv, string, string) {
 		if err := env.ReadAllowed(p); err != nil {
 			return nil, err
 		}
-		return os.Open(p) //nolint:gosec // test fixture inside the workspace
+		return os.Open(p)
 	}
 	return env, ws, outside
 }

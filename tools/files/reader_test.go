@@ -298,9 +298,9 @@ func TestReaderOpen_LinkSwappedAfterCheck(t *testing.T) {
 			t.Fatal(err)
 		}
 		if f, err := r.Open(abs); err == nil {
-			data, _ := io.ReadAll(f)
+			data, rerr := io.ReadAll(f)
 			utils.CloseQuietly(f)
-			t.Errorf("Open(%q) after the swap read %q, want a refusal", abs, data)
+			t.Errorf("Open(%q) after the swap read %q (%v), want a refusal", abs, data, rerr)
 		}
 	}
 }

@@ -47,7 +47,7 @@ func (h *svcToolHost) OpenFile(agentID, abs string) (*os.File, error) {
 	if err := h.ReadAllowed(agentID, abs); err != nil {
 		return nil, err
 	}
-	return os.Open(abs) //nolint:gosec // test fixture inside the workspace
+	return os.Open(abs)
 }
 
 // ResolveFile resolves a reference against the workspace; "denied/..." is

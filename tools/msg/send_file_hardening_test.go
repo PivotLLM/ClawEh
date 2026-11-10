@@ -110,10 +110,16 @@ func TestSendFile_LinkSwappedBeforeOpen(t *testing.T) {
 		target func(f *sendFixture) string
 		want   string
 	}{
-		{"outside", func(f *sendFixture) string { return filepath.Join(f.outside, "secret.txt") },
-			"you can't read it, or it does not exist"},
-		{"inside", func(*sendFixture) string { return "chart.png" },
-			"it changed while it was being checked"},
+		{
+			name:   "outside",
+			target: func(f *sendFixture) string { return filepath.Join(f.outside, "secret.txt") },
+			want:   "you can't read it, or it does not exist",
+		},
+		{
+			name:   "inside",
+			target: func(*sendFixture) string { return "chart.png" },
+			want:   "it changed while it was being checked",
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newSendFixture(t, 0)
