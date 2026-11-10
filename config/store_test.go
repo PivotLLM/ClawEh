@@ -133,6 +133,51 @@ func TestStore_UpdateDropsCLIBaseURL(t *testing.T) {
 	}
 }
 
+// command and bypass_restrictions are read only for a CLI provider, so a
+// save drops them from any other (one switched away from a CLI, or one left
+// in the file) and keeps them on a CLI.
+func TestStore_UpdateDropsCLIFieldsFromOtherProtocols(t *testing.T) {
+	s := newTestStore(t)
+	cfg, err := LoadConfig(s.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Providers[0].Command = "/usr/bin/stray"
+	cfg.Providers = append(cfg.Providers,
+		Provider{Name: "Claude CLI", Protocol: "claude-cli", Command: "/usr/local/bin/claude", BypassRestrictions: true},
+		Provider{Name: "Codex CLI", Protocol: "codex-cli", Command: "/usr/local/bin/codex", BypassRestrictions: true},
+	)
+	if err = SaveConfig(s.Path(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Reload(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err = s.Update(func(c *Config) error {
+		c.Providers[2].Protocol = "openai-chat"
+		c.Providers[2].BaseURL = "https://api.example.com/v1"
+		c.Providers[2].APIKey = "sk-alice-0123456789"
+		return nil
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	fromDisk, err := LoadConfig(s.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []*Config{s.Current(), fromDisk} {
+		for _, i := range []int{0, 2} {
+			if p := c.Providers[i]; p.Command != "" || p.BypassRestrictions {
+				t.Errorf("%s kept CLI fields: command %q, bypass %v", p.Name, p.Command, p.BypassRestrictions)
+			}
+		}
+		if p := c.Providers[1]; p.Command != "/usr/local/bin/claude" || !p.BypassRestrictions {
+			t.Errorf("CLI provider lost its fields: command %q, bypass %v", p.Command, p.BypassRestrictions)
+		}
+	}
+}
+
 func TestStore_UpdateErrorLeavesEverythingUnchanged(t *testing.T) {
 	s := newTestStore(t)
 	before := s.Current()

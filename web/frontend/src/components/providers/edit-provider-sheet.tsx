@@ -177,7 +177,15 @@ export function EditProviderSheet({
             >
               <Select
                 value={form.protocol}
-                onValueChange={(v) => setForm((f) => ({ ...f, protocol: v }))}
+                onValueChange={(v) =>
+                  // The command belongs to a CLI only; it is not carried
+                  // over to another protocol.
+                  setForm((f) => ({
+                    ...f,
+                    protocol: v,
+                    command: isCliProtocol(v) ? f.command : "",
+                  }))
+                }
               >
                 <SelectTrigger className="w-full">
                   <SelectValue />

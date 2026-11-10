@@ -364,13 +364,19 @@ var httpProtocols = map[string]struct{}{
 	"anthropic-messages": {},
 }
 
-// dropCLIBaseURLs clears base_url on every CLI-protocol provider. A CLI never
-// uses it (the factory builds a CLI from its command alone), so a value left
-// over from another protocol is not written back on save.
-func (c *Config) dropCLIBaseURLs() {
+// dropOtherProtocolFields clears the fields a provider's protocol never
+// uses, so a value left over from another protocol is not written back on
+// save: base_url on a CLI provider (the factory builds a CLI from its
+// command alone), and command and bypass_restrictions, which only a CLI
+// reads, on any other.
+func (c *Config) dropOtherProtocolFields() {
 	for i := range c.Providers {
-		if IsCLIProtocol(c.Providers[i].Protocol) {
-			c.Providers[i].BaseURL = ""
+		p := &c.Providers[i]
+		if IsCLIProtocol(p.Protocol) {
+			p.BaseURL = ""
+		} else {
+			p.Command = ""
+			p.BypassRestrictions = false
 		}
 	}
 }

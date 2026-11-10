@@ -410,6 +410,13 @@
   needs a base URL still refuses the save; an empty API key still keeps the
   stored key.
 
+- **A provider switched away from a CLI no longer keeps its CLI
+  settings.** `command` and `bypass_restrictions` are read only for CLI
+  providers, but stayed in the configuration after a provider's protocol
+  was changed to an HTTP one. A save now removes them from any provider
+  that is not a CLI, and the Providers page clears the command when the
+  protocol is switched.
+
 - **A CLI provider no longer keeps a stray `base_url`.** CLI providers
   (`claude-cli`, `codex-cli`, `antigravity-cli`, `cursor-cli`) never use
   `base_url`, but a value could stay behind, for example after switching a

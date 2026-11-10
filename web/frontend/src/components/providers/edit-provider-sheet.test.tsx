@@ -87,6 +87,25 @@ describe("EditProviderSheet", () => {
     expect(body?.base_url).toBeUndefined()
   })
 
+  // The command belongs to a CLI: switching to an HTTP protocol drops it
+  // from the form, and the save sends none.
+  it("drops the command when switching a CLI provider to HTTP", async () => {
+    renderSheet({ protocol: "claude-cli", command: "/usr/bin/claude" })
+    fireEvent.keyDown(screen.getByRole("combobox"), { key: "ArrowDown" })
+    fireEvent.click(screen.getByRole("option", { name: "openai-chat" }))
+    expect(screen.queryByText("providers.field.command")).toBeNull()
+    fireEvent.click(screen.getByText("common.save"))
+    await waitFor(() => expect(updateProvider).toHaveBeenCalled())
+    const body = vi.mocked(updateProvider).mock.calls.at(-1)?.[1]
+    expect(body?.protocol).toBe("openai-chat")
+    expect(body?.command).toBeUndefined()
+
+    // Switching back to a CLI does not bring the old command back.
+    fireEvent.keyDown(screen.getByRole("combobox"), { key: "ArrowDown" })
+    fireEvent.click(screen.getByRole("option", { name: "codex-cli" }))
+    expect(screen.queryByDisplayValue("/usr/bin/claude")).toBeNull()
+  })
+
   it("shows the base URL of an HTTP provider", () => {
     renderSheet({ protocol: "openai-chat", base_url: "https://api.example/v1" })
     expect(screen.getByText("providers.field.baseURL")).toBeTruthy()
