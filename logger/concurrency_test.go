@@ -16,9 +16,7 @@ func TestLogWhileReconfiguring(t *testing.T) {
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
 	for range 4 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			l := NewLogger("test")
 			for {
 				select {
@@ -28,7 +26,7 @@ func TestLogWhileReconfiguring(t *testing.T) {
 					l.Infof("line from alice")
 				}
 			}
-		}()
+		})
 	}
 
 	for i := range 200 {
