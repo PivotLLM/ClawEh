@@ -452,7 +452,11 @@
   the folders and are no longer used; delete them if you like. The alert
   is now "Allowed folder file list not saved" and is raised only when the
   agent's workspace cannot hold the list; it names the agent and the
-  folder.
+  folder, and says whether notices for the folder are not sent at all (no
+  list could ever be saved) or the same files may be reported again (a
+  later save failed). A folder that is removed and added again, or whose
+  notices are turned off and on, starts with a new list instead of
+  announcing everything added meanwhile.
 
 - **A classifier run cut short by a shutdown says so.** Its last run was
   sometimes recorded as "the classifier was stopped", as if the classifier

@@ -45,7 +45,10 @@ type gatewayServices struct {
 	CronService   *cron.CronService
 	CronTool      *toolschedule.CronTool
 	FolderWatcher *folderwatch.Watcher
-	MediaStore    media.MediaStore
+	// folderState is shared by every FolderWatcher of the process, so one a
+	// reload builds knows which folders the previous one watched.
+	folderState *folderwatch.State
+	MediaStore  media.MediaStore
 	// mediaCleanup is what MediaStore was started with; a reload replaces
 	// the store only when it changes, since every channel holds the store.
 	mediaCleanup media.MediaCleanerConfig
@@ -99,7 +102,7 @@ func setupAndStartServices(
 	store *config.Store,
 	fatal *fatalNotifier,
 ) (*gatewayServices, error) {
-	services := &gatewayServices{fatal: fatal, store: store}
+	services := &gatewayServices{fatal: fatal, store: store, folderState: folderwatch.NewState()}
 
 	ensureCommonDir(cfg)
 
@@ -108,7 +111,7 @@ func setupAndStartServices(
 	}
 
 	// Watch notify-enabled allowed folders for new files (cron-style notices).
-	services.FolderWatcher = folderwatch.New(agentLoop.GetConfig, msgBus, 0, agentLoop.Alerter())
+	services.FolderWatcher = folderwatch.New(agentLoop.GetConfig, msgBus, 0, agentLoop.Alerter(), services.folderState)
 	services.FolderWatcher.Start()
 	logger.InfoC("folderwatch", "Allowed folder watcher started")
 
@@ -673,7 +676,7 @@ func restartServices(
 	// Re-create the folder watcher. stopAndCleanupServices stopped the old one, so
 	// without this a reload would silently end new-file notifications for the rest of
 	// the process's life — and every service around it is rebuilt the same way.
-	services.FolderWatcher = folderwatch.New(al.GetConfig, msgBus, 0, al.Alerter())
+	services.FolderWatcher = folderwatch.New(al.GetConfig, msgBus, 0, al.Alerter(), services.folderState)
 	services.FolderWatcher.Start() //nolint:contextcheck,nolintlint // background poller whose lifetime is Stop(), not the run context
 	logger.InfoC("folderwatch", "Allowed folder watcher restarted")
 

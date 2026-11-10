@@ -65,7 +65,7 @@ In `config.json`:
 
 With **Notify on new files** ticked, ClawEh checks the folder every 10 seconds. When a new file appears, the agent gets a message naming the agent, the folder and the file, such as "New file in Alice's allowed folder /srv/src: /srv/src/sub/x.md", in its default channel, as if it had been sent there, and handles it like any other message. Files that are only changed do not count. The agent needs a **Default Channel** for this; without one the notice is skipped and logged.
 
-ClawEh keeps the list of files each agent has seen in that agent's own folder (`state/folderwatch/` in its workspace), so a read-only folder gets notices too, and two agents watching the same folder are each told. The first check of a folder only records what is already there. Versions before 0.6.4 kept this list in a `.claw` file in the folder; it is no longer used and can be deleted.
+ClawEh keeps the list of files each agent has seen in that agent's own folder (`state/folderwatch/` in its workspace), so a read-only folder gets notices too, and two agents watching the same folder are each told. The first check of a folder only records what is already there, and so does the first check after a folder is added again or its notices are turned back on. Versions before 0.6.4 kept this list in a `.claw` file in the folder; it is no longer used and can be deleted.
 
 ### Folders set as mounts before 0.6.4
 

@@ -31,8 +31,8 @@ func TestWriteSeen_ConfiguredMode(t *testing.T) {
 	}
 	folder := t.TempDir()
 	marker := markerPath(ws, "alice", folder)
-	w := New(func() *config.Config { return cfg }, nil, 0, nil)
-	w.writeSeen("alice", "Alice", folder, marker, []string{"a.txt"})
+	w := New(func() *config.Config { return cfg }, nil, 0, nil, nil)
+	w.writeSeen("alice", "Alice", folder, marker, []string{"a.txt"}, true)
 
 	for _, dir := range []string{filepath.Join(ws, "state"), filepath.Join(ws, markerDir)} {
 		fi, err := os.Stat(dir)
