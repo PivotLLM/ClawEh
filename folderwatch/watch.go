@@ -203,8 +203,8 @@ func (w *Watcher) tick() {
 
 // realDir is dir with its links resolved, or cleaned when it does not exist.
 func realDir(dir string) string {
-	if real, err := filepath.EvalSymlinks(dir); err == nil {
-		return real
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		return resolved
 	}
 	return filepath.Clean(dir)
 }

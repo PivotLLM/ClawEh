@@ -512,6 +512,7 @@ func TestTick_SharedWorkspaceSpelledTwoWays(t *testing.T) {
 	}{
 		{"trailing slash", func(_ *testing.T, ws string) string { return ws + "/" }},
 		{"linked alias", func(t *testing.T, ws string) string {
+			t.Helper()
 			link := filepath.Join(t.TempDir(), "alias")
 			if err := os.Symlink(ws, link); err != nil {
 				t.Fatal(err)
