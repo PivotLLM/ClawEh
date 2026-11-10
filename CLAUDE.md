@@ -644,8 +644,10 @@ production instance directly; test against a dev instance.
   W_OK) says no, then ": <note>". With Maestro on, each existing allowed folder is also a
   Maestro reference directory (`referenceDirsFromAllowedFolders`, tools/maestro/host.go:
   last path component reduced to `[A-Za-z0-9_-]`, clashes `-2`, `-3`… in config order,
-  names given before missing folders are skipped; part of `runnerSpec`, so a change
-  rebuilds an idle runner).
+  names given before missing folders are skipped, Maestro's own top-level reference
+  entries, `reference.BuiltinNames(maestro.EmbeddedReference)`, count as taken; part of
+  `runnerSpec`, so a change rebuilds an idle runner). Maestro (0.5.9+) serves them through
+  `os.Root`, so a link leading out of a folder is not listed or read.
   New-file notices: `folderwatch` (notify on; `.claw` marker with a header line, a
   headerless pre-0.6.4 marker baselines).
 - **File search tools** (`tools/files/search.go`, `glob.go`): `file_glob` (doublestar
@@ -655,7 +657,13 @@ production instance directly; test against a dev instance.
   `maxSearchContextLines` 10, a context result at most `maxSearchOutputLines` 2000 lines;
   `output` lines/files/count; `.gitignore` files in the searched tree via go-git's
   `plumbing/format/gitignore`, `walkLines`, only regular files up to 64 KiB,
-  `readGitignore`). Patterns and `include` go through `checkGlobPattern` (512
+  `readGitignore`; above a searched folder, `parentGitignores` reads those of its
+  parents up to the nearest one holding `.git`, anchored there, stopping at the first
+  parent the agent may not read; none without `.git`, and none when they ignore the
+  named folder itself). Without `path` both search `defaultSearchRoots` (the read
+  scope's folders plus allowed folders inside the workspace, maestro/; "." without a
+  read scope; never outside allowed folders), with paths and patterns from the
+  workspace. Patterns and `include` go through `checkGlobPattern` (512
   characters, 10 `{` groups), and every walk stops on a cancelled context. Both read through
   `buildFs` like the other reading tools. `file_search_bytes` keeps its own `walk` and
   has none of these but the cancellation check.

@@ -197,12 +197,6 @@ func TestSearchLines_Gitignore(t *testing.T) {
 		}
 	}
 
-	// A search rooted below a .gitignore does not read the one above it.
-	out = searchLines(t, ws, map[string]any{"query": "needle", "path": "files/build"})
-	if !strings.Contains(out, "files/build/out.go:") {
-		t.Errorf("search of build/ read the parent .gitignore:\n%s", out)
-	}
-
 	// file_search_bytes is unchanged: it does not read .gitignore.
 	res := NewSearchBytesTool(ws, true).Execute(context.Background(), map[string]any{"query": "needle", "path": "files", "max_results": 200})
 	if !strings.Contains(res.ForLLM, "files/debug.log: bytes") {

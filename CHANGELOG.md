@@ -16,7 +16,10 @@
 - **`file_glob` finds files by name pattern.** A new file tool: `pattern`
   (`*` within one folder, `**` across folders, `?`, `{a,b}`) and an optional
   `path`, the folder to search under (relative to the workspace or
-  absolute; default the workspace). It returns the matching file paths
+  absolute). Without `path` it searches every workspace folder the agent
+  may read (`files/`, `skills/`, `maestro/` when Maestro is on, and the
+  always-readable folders such as `tasks/`), not the allowed folders, and
+  matches the pattern from the workspace (`files/**/*.md`). It returns the matching file paths
   newest first, at most 200 with a note when there are more, skips folders
   whose name starts with a dot (`.git`), and reaches only what the other
   file-reading tools reach (the workspace read scope and the allowed
@@ -30,10 +33,15 @@
   (0 to 10; a result then shows at most 2,000 lines, with a note when cut);
   `output` is `lines` (the default, as before), `files` (only the paths of
   the files that match) or `count` (matching lines per file). `include`
-  follows `file_glob`'s pattern limits. The `.gitignore` files in the
-  searched folder and below are applied as git applies them (nested files,
-  `!` patterns); one above the searched folder is not read, nor one that is
-  a link or not a regular file, nor one over 64 KiB. `file_search_bytes` is
+  follows `file_glob`'s pattern limits. Without `path` it searches the same
+  folders as `file_glob` does, and an `include` with `/` matches from the
+  workspace. The `.gitignore` files in the searched folder and below are
+  applied as git applies them (nested files, `!` patterns), and so are those
+  of its parent folders up to the repository root (the nearest folder above
+  holding `.git`), as far up as the agent may read; with no `.git` found,
+  parent folders are not read. A folder the agent names is searched even when
+  a parent `.gitignore` ignores it. A `.gitignore` that is a link or not a
+  regular file, or over 64 KiB, is not read. `file_search_bytes` is
   unchanged.
 - **A note per allowed folder.** `agents.list[].allowed_folders[].note`, at
   most 100 characters (a save with a longer one is refused, naming the agent
@@ -263,8 +271,13 @@
   folder that exists is in the library under its last path component as one
   word (letters, digits, `_` and `-`; any other run of characters becomes
   `-`), with `-2`, `-3`, … added in config order when two folders share a
-  name: `/srv/src` is `src/…`, `/opt/audio/in` is `in/…`. Maestro reads them
+  name: `/srv/src` is `src/…`, `/opt/audio/in` is `in/…`. The names of
+  Maestro's own reference entries count as taken, so a folder never hides
+  Maestro's guide (`/srv/templates` is `templates-2/…`). Maestro reads them
   only.
+- **Maestro is updated to 0.5.9.** A link inside an allowed folder that
+  leads outside it is no longer listed, searched or read through Maestro's
+  reference library, matching what the file tools allow.
 - **BREAKING: an agent whose `tools` list has `"*"` also gets the new
   `file_glob`.** To keep it from such an agent, add `file_glob` to its
   `deny_tools`.

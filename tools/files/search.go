@@ -51,8 +51,9 @@ const gitignoreFile = ".gitignore"
 // Line mode also takes include, context and output, and skips what the
 // .gitignore files in the searched tree ignore; byte mode has none of these.
 type SearchFilesTool struct {
-	sysFs    fileSystem
-	byteMode bool
+	sysFs     fileSystem
+	byteMode  bool
+	workspace string // for the default folders (defaultSearchRoots)
 }
 
 // NewSearchLinesTool builds the line-addressed search tool (file_search_lines).
@@ -70,7 +71,7 @@ func newSearchTool(byteMode bool, workspace string, restrict bool, allowPaths ..
 	if len(allowPaths) > 0 {
 		patterns = allowPaths[0]
 	}
-	return &SearchFilesTool{sysFs: buildFs(workspace, restrict, patterns), byteMode: byteMode}
+	return &SearchFilesTool{sysFs: buildFs(workspace, restrict, patterns), byteMode: byteMode, workspace: workspace}
 }
 
 func (t *SearchFilesTool) Name() string {
@@ -89,7 +90,8 @@ func (t *SearchFilesTool) Description() string {
 	}
 	return "Find text in files: returns matching lines with their path and line number, like grep. " +
 		"Then read around a match with file_read_lines (start_line = the line number). " +
-		"Searches one file or a folder and everything below it, skipping files .gitignore ignores. " +
+		"Searches one file or a folder and everything below it (default: all workspace folders you can read), " +
+		"skipping files .gitignore ignores. " +
 		"Literal, case-insensitive by default; regex=true for a regular expression. " +
 		"To find files by name, use file_glob."
 }
@@ -117,6 +119,11 @@ func (t *SearchFilesTool) Parameters() map[string]any {
 		},
 	}
 	if !t.byteMode {
+		props["path"] = map[string]any{
+			"type": "string",
+			"description": "File or folder to search (folders are searched recursively), relative to the workspace or absolute. " +
+				"Default: all workspace folders you can read.",
+		}
 		props["max_results"] = map[string]any{
 			"type":        "integer",
 			"description": "Maximum matches to return, or files with output=files or count (default 50, max 200).",
@@ -125,7 +132,7 @@ func (t *SearchFilesTool) Parameters() map[string]any {
 		props["include"] = map[string]any{
 			"type": "string",
 			"description": "Only search files whose path matches this glob, e.g. *.go or src/**/*.ts. " +
-				"A pattern without / matches the file name in any folder.",
+				"A pattern without / matches the file name in any folder; with no path, one with / matches paths from the workspace (files/**/*.go).",
 		}
 		props["context"] = map[string]any{
 			"type": "integer",
@@ -203,7 +210,8 @@ func (t *SearchFilesTool) Execute(ctx context.Context, args map[string]any) *too
 		return tools.ErrorResult("query is required")
 	}
 	root, ok := args["path"].(string)
-	if !ok || strings.TrimSpace(root) == "" {
+	explicit := ok && strings.TrimSpace(root) != ""
+	if !explicit {
 		root = "."
 	}
 	useRegex := getBoolArg(args, "regex", false)
@@ -236,12 +244,22 @@ func (t *SearchFilesTool) Execute(ctx context.Context, args map[string]any) *too
 		}
 	}
 
+	if !t.byteMode && !explicit {
+		// No path: every workspace folder the agent may read.
+		roots := defaultSearchRoots(t.sysFs, t.workspace)
+		if len(roots) == 1 && roots[0] == "." {
+			if _, err := t.sysFs.Stat("."); err != nil {
+				return errResult(err)
+			}
+		}
+		return t.searchLines(ctx, query, roots, rootsLabel(roots), false, true, re, int(maxResults), opts)
+	}
 	info, statErr := t.sysFs.Stat(root)
 	if statErr != nil {
 		return errResult(statErr)
 	}
 	if !t.byteMode {
-		return t.searchLines(ctx, query, root, info.IsDir(), re, int(maxResults), opts)
+		return t.searchLines(ctx, query, []string{root}, root, true, info.IsDir(), re, int(maxResults), opts)
 	}
 
 	var (
@@ -285,10 +303,12 @@ func (t *SearchFilesTool) Execute(ctx context.Context, args map[string]any) *too
 	return tools.NewToolResult(header + "\n\n" + strings.Join(out, "\n"))
 }
 
-// searchLines is file_search_lines: the matches, files or counts under root
-// (a folder when isDir), at most limit of them (matches in lines mode, files
-// otherwise).
-func (t *SearchFilesTool) searchLines(ctx context.Context, query, root string, isDir bool, re *regexp.Regexp, limit int, opts lineOptions) *tools.ToolResult {
+// searchLines is file_search_lines: the matches, files or counts under roots
+// (folders when isDir; a single file otherwise), at most limit of them
+// (matches in lines mode, files otherwise). root names them in the result.
+// With explicit (the agent named the path) include matches paths below the
+// searched folder; otherwise (the default folders) paths below the workspace.
+func (t *SearchFilesTool) searchLines(ctx context.Context, query string, roots []string, root string, explicit, isDir bool, re *regexp.Regexp, limit int, opts lineOptions) *tools.ToolResult {
 	var (
 		out       []string // one entry per match block, file or count
 		found     int      // matches (lines mode) or files (files/count)
@@ -341,12 +361,21 @@ func (t *SearchFilesTool) searchLines(ctx context.Context, query, root string, i
 		return scanned < maxSearchFilesScanned
 	}
 
-	if isDir {
-		t.walkLines(root, nil, nil, visit)
-	} else {
-		// A single file is matched by the path as given (by its name for a
-		// pattern without "/").
-		visit(root, root)
+	for _, r := range roots {
+		if !isDir {
+			// A single file is matched by the path as given (by its name for
+			// a pattern without "/").
+			visit(r, r)
+			break
+		}
+		shown := ""
+		if !explicit && r != "." {
+			shown = r
+		}
+		ignores, below := t.parentGitignores(r)
+		if !t.walkLines(r, below, shown, ignores, visit) {
+			break
+		}
 	}
 	if err := ctx.Err(); err != nil {
 		return errResult(fmt.Errorf("search stopped: %w", err))
@@ -410,11 +439,13 @@ func (t *SearchFilesTool) walk(dir string, visit func(string) bool) {
 }
 
 // walkLines is walk for file_search_lines: it also passes each file's path
-// relative to the searched folder (slash-separated) and skips what the
-// .gitignore files in the searched tree ignore. rel is dir's path below the
-// searched folder; ignores holds the patterns read so far, each scoped to the
-// folder its file is in. It returns false once visit asked to stop.
-func (t *SearchFilesTool) walkLines(dir string, rel []string, ignores []gitignore.Pattern, visit func(p, rel string) bool) bool {
+// for include (shown joined with the path below dir, slash-separated) and
+// skips what the .gitignore files ignore. rel is dir's path as gitignore
+// components, below the repository root when parentGitignores found one,
+// else below the searched folder; ignores holds the patterns read so far, each
+// scoped to the folder its file is in. It returns false once visit asked to
+// stop.
+func (t *SearchFilesTool) walkLines(dir string, rel []string, shown string, ignores []gitignore.Pattern, visit func(p, rel string) bool) bool {
 	entries, err := t.sysFs.ReadDir(dir)
 	if err != nil {
 		return true
@@ -433,13 +464,17 @@ func (t *SearchFilesTool) walkLines(dir string, rel []string, ignores []gitignor
 			continue
 		}
 		child := path.Join(dir, name)
+		childShown := name
+		if shown != "" {
+			childShown = shown + "/" + name
+		}
 		if e.IsDir() {
-			if !t.walkLines(child, childRel, ignores, visit) {
+			if !t.walkLines(child, childRel, childShown, ignores, visit) {
 				return false
 			}
 			continue
 		}
-		if !visit(child, strings.Join(childRel, "/")) {
+		if !visit(child, childShown) {
 			return false
 		}
 	}

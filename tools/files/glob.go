@@ -47,7 +47,8 @@ func checkGlobPattern(what, pattern string) error {
 // file-system layers as the other file-reading tools, so it reaches exactly
 // what they reach: the workspace read scope and the allowed folders.
 type GlobTool struct {
-	sysFs fileSystem
+	sysFs     fileSystem
+	workspace string // for the default folders (defaultSearchRoots)
 }
 
 // NewGlobTool builds file_glob.
@@ -56,14 +57,14 @@ func NewGlobTool(workspace string, restrict bool, allowPaths ...[]*regexp.Regexp
 	if len(allowPaths) > 0 {
 		patterns = allowPaths[0]
 	}
-	return &GlobTool{sysFs: buildFs(workspace, restrict, patterns)}
+	return &GlobTool{sysFs: buildFs(workspace, restrict, patterns), workspace: workspace}
 }
 
 func (t *GlobTool) Name() string { return "file_glob" }
 
 func (t *GlobTool) Description() string {
 	return fmt.Sprintf("Find files by name pattern, e.g. **/*.go or src/**/test_*.py. "+
-		"Returns matching file paths, newest first, at most %d. "+
+		"Searches under path (default: all workspace folders you can read). Returns matching file paths, newest first, at most %d. "+
 		"Folders whose name starts with a dot (.git) are skipped. "+
 		"To find text inside files, use file_search_lines.", maxGlobResults)
 }
@@ -78,9 +79,9 @@ func (t *GlobTool) Parameters() map[string]any {
 					"** any number of folders (**/*.go finds Go files everywhere), ? one character, {a,b} either.",
 			},
 			"path": map[string]any{
-				"type":        "string",
-				"description": "Folder to search under, relative to the workspace or absolute. Defaults to the workspace.",
-				"default":     ".",
+				"type": "string",
+				"description": "Folder to search under, relative to the workspace or absolute. " +
+					"Default: all workspace folders you can read, with the pattern matched from the workspace (files/**/*.md).",
 			},
 		},
 		"required": []string{"pattern"},
@@ -102,16 +103,23 @@ func (t *GlobTool) Execute(ctx context.Context, args map[string]any) *tools.Tool
 	if err := checkGlobPattern("pattern", pattern); err != nil {
 		return errResult(err)
 	}
-	root, ok := args["path"].(string)
-	if !ok || strings.TrimSpace(root) == "" {
-		root = "."
+	root, explicit := args["path"].(string)
+	// With a path the pattern matches paths below it; without one it matches
+	// paths below the workspace, in every workspace folder the agent may read.
+	roots := []string{root}
+	if !explicit || strings.TrimSpace(root) == "" {
+		roots = defaultSearchRoots(t.sysFs, t.workspace)
+		root = rootsLabel(roots)
+		explicit = false
 	}
-	info, err := t.sysFs.Stat(root)
-	if err != nil {
-		return errResult(err)
-	}
-	if !info.IsDir() {
-		return tools.ErrorResult(root + " is not a folder")
+	for _, r := range roots {
+		info, err := t.sysFs.Stat(r)
+		if err != nil {
+			return errResult(err)
+		}
+		if !info.IsDir() {
+			return tools.ErrorResult(r + " is not a folder")
+		}
 	}
 
 	var (
@@ -161,7 +169,13 @@ func (t *GlobTool) Execute(ctx context.Context, args map[string]any) *tools.Tool
 			matches = append(matches, globMatch{path: child, mtime: fi.ModTime()})
 		}
 	}
-	walk(root, "")
+	for _, r := range roots {
+		rel := ""
+		if !explicit && r != "." {
+			rel = r
+		}
+		walk(r, rel)
+	}
 	if err := ctx.Err(); err != nil {
 		return errResult(fmt.Errorf("file_glob stopped: %w", err))
 	}

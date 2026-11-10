@@ -92,8 +92,10 @@ runs the agent without Maestro until the object form is set.
   Each folder is listed under its last path component as one word (letters,
   digits, `_` and `-`; any other run of characters becomes `-`): `/srv/src`
   is `src/…`. When two folders share a name, the later ones in the agent's
-  list get `-2`, `-3`, … (`src-2/…`). A folder that does not exist is left
-  out.
+  list get `-2`, `-3`, … (`src-2/…`). A folder named like an entry of
+  Maestro's own guide (`templates`, `phases`, …) gets `-2` too, so it never
+  hides the guide. A folder that does not exist is left out. A link inside a
+  folder that leads outside it is not listed or read.
 - When the agent imports a file into a project, it can import only what its
   own file tools may read: its workspace, its allowed folders and any paths
   allowed for reading. To import from somewhere else, add an allowed folder
