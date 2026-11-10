@@ -402,6 +402,21 @@ describe("AgentCard for a person", () => {
       expect(box().getAttribute("aria-checked")).toBe("mixed")
     })
 
+    it("says which coding tools Denied tools blocks", () => {
+      renderCard({
+        availableTools: codingCatalog,
+        tools: ["file_glob", "file_edit"],
+        denyTools: ["file_edit"],
+        onDenyToolsChange: () => {},
+      })
+      expect(
+        screen.getByText("Ignored for file_edit: blocked by Denied tools."),
+      ).toBeTruthy()
+      cleanup()
+      renderCard({ availableTools: codingCatalog, tools: ["file_glob"] })
+      expect(screen.queryByText(/blocked by Denied tools/)).toBeNull()
+    })
+
     it("ticking adds every missing coding tool; unticking from checked removes them all", () => {
       const onToolsChange = vi.fn()
       renderCard({

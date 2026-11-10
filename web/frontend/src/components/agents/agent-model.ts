@@ -318,6 +318,23 @@ export function codingToolsState(tools: string[]): boolean | "indeterminate" {
   return n === 0 ? false : "indeterminate"
 }
 
+// deniedCodingTools lists the coding tools the tools list grants but
+// deny_tools blocks, under the backend's deny rule (an exact entry in any case,
+// or a prefix entry ending in "*").
+export function deniedCodingTools(
+  tools: string[],
+  denyTools: string[],
+): string[] {
+  return CODING_TOOLS.filter(
+    (name) =>
+      codingToolInList(tools, name) &&
+      denyTools.some((raw) => {
+        const d = norm(raw)
+        return d.endsWith("*") ? name.startsWith(d.slice(0, -1)) : d === name
+      }),
+  )
+}
+
 // withCodingTools adds every coding tool the list lacks (allowed) or removes
 // all of them (not allowed). Before removing, a "*" or prefix entry that grants
 // a coding tool is replaced by the catalogTools it matches (the per-tool names

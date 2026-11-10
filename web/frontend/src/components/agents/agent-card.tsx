@@ -25,6 +25,7 @@ import {
   type TaskGrantKind,
   type TaskModelGrant,
   codingToolsState,
+  deniedCodingTools,
   internalToolsSummary,
   settingsCardClass,
   shellAllowed,
@@ -508,6 +509,13 @@ export function AgentCard({
                 {t("agents.allowCodingTools")}
               </span>
             </label>
+            {deniedCodingTools(tools, denyTools).length > 0 && (
+              <p className="text-xs font-medium text-amber-400">
+                {t("agents.allowCodingToolsDenied", {
+                  tools: deniedCodingTools(tools, denyTools).join(", "),
+                })}
+              </p>
+            )}
 
             <div className="space-y-1.5">
               <div className="flex items-center justify-between gap-2">

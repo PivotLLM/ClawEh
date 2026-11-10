@@ -58,8 +58,9 @@ The same lists can be written by hand. Entries are tool names; a trailing `*` ma
 
 - Ticking the box adds every one the agent lacks to its tools list; unticking it removes them all. Nothing else changes, and there is no separate setting: the box only edits the list.
 - The box is ticked when all ten are granted and shows a mixed state when only some are. The single tool boxes and **Allow shell commands** stay and follow it.
-- `file_glob` is not in **Default tools**. It returns matching paths newest first (at most 200) and skips folders whose name starts with a dot.
-- `file_search_lines` takes `include` (a file pattern such as `*.go`), `context` (up to 10 lines around each match) and `output` (`lines`, `files` or `count`), and skips what the `.gitignore` files in the searched folder ignore.
+- When **Denied tools** blocks some of them, the box says which, for example "Ignored for file_edit: blocked by Denied tools."
+- `file_glob` is not in **Default tools**. It returns matching paths newest first (at most 200) and skips folders whose name starts with a dot. A pattern may be up to 512 characters with up to 10 `{…}` groups.
+- `file_search_lines` takes `include` (a file pattern such as `*.go`), `context` (up to 10 lines around each match; a result then shows at most 2,000 lines) and `output` (`lines`, `files` or `count`), and skips what the `.gitignore` files in the searched folder ignore (a `.gitignore` that is a link, not a regular file, or over 64 KiB is not read).
 - Both reach only what the other file tools reach: see [Files and allowed folders](./allowed-folders.md).
 
 ## Shell commands

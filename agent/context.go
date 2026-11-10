@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/PivotLLM/ctxengine"
 
@@ -159,12 +160,29 @@ func (cb *ContextBuilder) accessibleFolders(workspacePath string) string {
 		if !fileutil.Writable(f.Path) {
 			line += " (read-only)"
 		}
-		if f.Note != "" {
-			line += ": " + f.Note
+		if note := promptNote(f.Note); note != "" {
+			line += ": " + note
 		}
 		lines = append(lines, line)
 	}
 	return "- " + strings.Join(lines, "\n- ")
+}
+
+// promptNote is a folder note as the prompt shows it: newlines and other
+// control characters become spaces, and it is cut to
+// config.MaxAllowedFolderNoteChars characters, so a hand-edited note cannot
+// break the folder list.
+func promptNote(note string) string {
+	note = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, note)
+	if r := []rune(note); len(r) > config.MaxAllowedFolderNoteChars {
+		note = string(r[:config.MaxAllowedFolderNoteChars])
+	}
+	return strings.TrimSpace(note)
 }
 
 // WithCharacterCard gives the agent the character card at path, rendered by

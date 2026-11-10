@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/bmatcuk/doublestar/v4"
 
@@ -19,7 +20,28 @@ import (
 const (
 	maxGlobResults        = 200   // file paths returned per call
 	maxGlobEntriesScanned = 50000 // cap on folder entries examined per call
+	maxGlobPatternChars   = 512   // longest pattern or include accepted
+	maxGlobBraceGroups    = 10    // most {…} groups a pattern may have
 )
+
+// globEntryLimit is maxGlobEntriesScanned; tests lower it.
+var globEntryLimit = maxGlobEntriesScanned
+
+// checkGlobPattern refuses a pattern (named what: "pattern", "include") that
+// is not a valid glob, or whose length or number of {…} groups would make
+// matching each name too slow.
+func checkGlobPattern(what, pattern string) error {
+	if utf8.RuneCountInString(pattern) > maxGlobPatternChars {
+		return tools.Refusal(fmt.Errorf("%s is longer than %d characters", what, maxGlobPatternChars))
+	}
+	if strings.Count(pattern, "{") > maxGlobBraceGroups {
+		return tools.Refusal(fmt.Errorf("%s has more than %d {…} groups", what, maxGlobBraceGroups))
+	}
+	if !doublestar.ValidatePattern(pattern) {
+		return tools.Refusal(fmt.Errorf("%s is not a valid glob pattern: %s", what, pattern))
+	}
+	return nil
+}
 
 // GlobTool finds files by name pattern (file_glob). It reads through the same
 // file-system layers as the other file-reading tools, so it reaches exactly
@@ -71,14 +93,14 @@ type globMatch struct {
 	mtime time.Time
 }
 
-func (t *GlobTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
+func (t *GlobTool) Execute(ctx context.Context, args map[string]any) *tools.ToolResult {
 	pattern, ok := args["pattern"].(string)
 	pattern = strings.TrimSpace(pattern)
 	if !ok || pattern == "" {
 		return tools.ErrorResult("pattern is required")
 	}
-	if !doublestar.ValidatePattern(pattern) {
-		return tools.ErrorResult("pattern is not a valid glob pattern: " + pattern)
+	if err := checkGlobPattern("pattern", pattern); err != nil {
+		return errResult(err)
 	}
 	root, ok := args["path"].(string)
 	if !ok || strings.TrimSpace(root) == "" {
@@ -104,7 +126,10 @@ func (t *GlobTool) Execute(_ context.Context, args map[string]any) *tools.ToolRe
 			return
 		}
 		for _, e := range entries {
-			if scanned >= maxGlobEntriesScanned {
+			if ctx.Err() != nil {
+				return
+			}
+			if scanned >= globEntryLimit {
 				stopped = true
 				return
 			}
@@ -137,11 +162,14 @@ func (t *GlobTool) Execute(_ context.Context, args map[string]any) *tools.ToolRe
 		}
 	}
 	walk(root, "")
+	if err := ctx.Err(); err != nil {
+		return errResult(fmt.Errorf("file_glob stopped: %w", err))
+	}
 
 	if len(matches) == 0 {
 		msg := fmt.Sprintf("No files match %q in %s.", pattern, root)
 		if stopped {
-			msg += fmt.Sprintf(" [Stopped after %d entries — search a smaller folder.]", maxGlobEntriesScanned)
+			msg += fmt.Sprintf(" [Stopped after %d entries — search a smaller folder.]", globEntryLimit)
 		}
 		return tools.NewToolResult(msg)
 	}
@@ -158,7 +186,7 @@ func (t *GlobTool) Execute(_ context.Context, args map[string]any) *tools.ToolRe
 		header += fmt.Sprintf("\n[Showing the %d newest — narrow the pattern or the path for more.]", maxGlobResults)
 	}
 	if stopped {
-		header += fmt.Sprintf("\n[Stopped after %d entries — search a smaller folder for the rest.]", maxGlobEntriesScanned)
+		header += fmt.Sprintf("\n[Stopped after %d entries — search a smaller folder for the rest.]", globEntryLimit)
 	}
 	paths := make([]string, len(matches))
 	for i, m := range matches {

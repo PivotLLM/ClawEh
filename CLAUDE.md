@@ -652,10 +652,13 @@ production instance directly; test against a dev instance.
   patterns relative to `path`, files only, newest first, `maxGlobResults` 200, dot-folders
   skipped, not a default tool) and `file_search_lines` (line mode only: `include`
   doublestar glob, a pattern without `/` matching the base name; `context` capped at
-  `maxSearchContextLines` 10; `output` lines/files/count; `.gitignore` files in the
-  searched tree via go-git's `plumbing/format/gitignore`, `walkLines`) read through
+  `maxSearchContextLines` 10, a context result at most `maxSearchOutputLines` 2000 lines;
+  `output` lines/files/count; `.gitignore` files in the searched tree via go-git's
+  `plumbing/format/gitignore`, `walkLines`, only regular files up to 64 KiB,
+  `readGitignore`). Patterns and `include` go through `checkGlobPattern` (512
+  characters, 10 `{` groups), and every walk stops on a cancelled context. Both read through
   `buildFs` like the other reading tools. `file_search_bytes` keeps its own `walk` and
-  has none of these.
+  has none of these but the cancellation check.
 - **Shell guard** (`tools/shell`): `shell_exec` refuses commands only by the deny
   patterns, the allow patterns and the custom allow patterns; it does not look at the
   paths a command names, and `working_dir` may be any directory (relative to the

@@ -21,21 +21,26 @@
   whose name starts with a dot (`.git`), and reaches only what the other
   file-reading tools reach (the workspace read scope and the allowed
   folders). It is not in **Default tools**; grant it per agent, or with
-  **Allow coding tools**.
+  **Allow coding tools**. A pattern longer than 512 characters or with more
+  than 10 `{…}` groups is refused.
 - **`file_search_lines` takes `include`, `context` and `output`, and skips
   what `.gitignore` ignores.** `include` is a glob on file paths (one
   without `/` matches the file name in any folder, so `*.go` finds Go files
   everywhere); `context` shows that many lines before and after each match
-  (0 to 10); `output` is `lines` (the default, as before), `files` (only the
-  paths of the files that match) or `count` (matching lines per file). The
-  `.gitignore` files in the searched folder and below are applied as git
-  applies them (nested files, `!` patterns); one above the searched folder is
-  not read. `file_search_bytes` is unchanged.
+  (0 to 10; a result then shows at most 2,000 lines, with a note when cut);
+  `output` is `lines` (the default, as before), `files` (only the paths of
+  the files that match) or `count` (matching lines per file). `include`
+  follows `file_glob`'s pattern limits. The `.gitignore` files in the
+  searched folder and below are applied as git applies them (nested files,
+  `!` patterns); one above the searched folder is not read, nor one that is
+  a link or not a regular file, nor one over 64 KiB. `file_search_bytes` is
+  unchanged.
 - **A note per allowed folder.** `agents.list[].allowed_folders[].note`, at
   most 100 characters (a save with a longer one is refused, naming the agent
   and the folder), is shown to the agent after the folder in its prompt:
-  `/opt/audio/in (read-only): inbound audio notes`. On the Agents page it is
-  the **Note** box on each folder's row.
+  `/opt/audio/in (read-only): inbound audio notes`, on one line (line breaks
+  and other control characters become spaces) and cut to 100 characters. On
+  the Agents page it is the **Note** box on each folder's row.
 - **Allow coding tools on the Agents page.** **Allow coding tools (includes
   shell commands, full account access)** adds `file_list`, `file_glob`,
   `file_read_lines`, `file_search_lines`, `file_edit_lines`,
@@ -43,7 +48,8 @@
   `shell_exec` to the agent's `tools` list together, or removes them all. It
   is ticked when all are granted and shows a mixed state when some are. It
   only edits the `tools` list; the tool boxes and **Allow shell commands**
-  stay and follow it.
+  stay and follow it. When **Denied tools** blocks some of them, the box
+  says which ("Ignored for file_edit: blocked by Denied tools.").
 - **Slack shows a "Thinking..." message and progress updates on long
   turns, on by default.** The app posts the message where the reply will go,
   edits it with progress on long turns, replaces it with the reply and

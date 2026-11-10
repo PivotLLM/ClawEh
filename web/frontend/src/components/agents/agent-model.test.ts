@@ -7,6 +7,7 @@ import {
   applyMaestroEdits,
   cliBypassWarnings,
   codingToolsState,
+  deniedCodingTools,
   fusionAccessView,
   internalToolsSummary,
   maestroEditsFromAgent,
@@ -1046,6 +1047,22 @@ describe("Allow coding tools", () => {
     )
     expect(out).toEqual(["web_*"])
     expect(codingToolsState(out)).toBe(false)
+  })
+
+  it("names the granted coding tools that Denied tools blocks", () => {
+    expect(deniedCodingTools([...CODING_TOOLS], [])).toEqual([])
+    expect(
+      deniedCodingTools(
+        [...CODING_TOOLS],
+        ["FILE_EDIT", "shell_*", "web_fetch"],
+      ),
+    ).toEqual(["file_edit", "shell_exec"])
+    // A denied tool the list does not grant is not mentioned.
+    expect(deniedCodingTools(["file_list"], ["file_edit"])).toEqual([])
+    expect(deniedCodingTools(["file_*"], ["file_e*"])).toEqual([
+      "file_edit_lines",
+      "file_edit",
+    ])
   })
 
   it("leaves shell_exec in step with the shell switch", () => {

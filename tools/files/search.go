@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"path"
 	"regexp"
 	"slices"
@@ -25,6 +26,8 @@ const (
 	maxSearchLineWidth      = 240     // trim long matching lines for display
 	byteSnippetTrailing     = 80      // bytes of context shown after a byte match
 	maxSearchContextLines   = 10      // cap on file_search_lines' context
+	maxSearchOutputLines    = 2000    // cap on the lines one result shows with context
+	maxGitignoreBytes       = 64 << 10
 )
 
 // Output modes of file_search_lines.
@@ -125,9 +128,10 @@ func (t *SearchFilesTool) Parameters() map[string]any {
 				"A pattern without / matches the file name in any folder.",
 		}
 		props["context"] = map[string]any{
-			"type":        "integer",
-			"description": fmt.Sprintf("Lines to show before and after each match (default 0, max %d).", maxSearchContextLines),
-			"default":     0,
+			"type": "integer",
+			"description": fmt.Sprintf("Lines to show before and after each match (default 0, max %d). "+
+				"A result shows at most %d lines.", maxSearchContextLines, maxSearchOutputLines),
+			"default": 0,
 		}
 		props["output"] = map[string]any{
 			"type": "string",
@@ -156,8 +160,10 @@ func parseLineOptions(args map[string]any) (lineOptions, error) {
 	opts := lineOptions{output: searchOutputLines}
 	if v, ok := args["include"].(string); ok {
 		opts.include = strings.TrimSpace(v)
-		if opts.include != "" && !doublestar.ValidatePattern(opts.include) {
-			return opts, fmt.Errorf("include is not a valid glob pattern: %s", opts.include)
+		if opts.include != "" {
+			if err := checkGlobPattern("include", opts.include); err != nil {
+				return opts, err
+			}
 		}
 	}
 	n, err := getInt64Arg(args, "context", 0)
@@ -191,7 +197,7 @@ func (o lineOptions) included(rel string) bool {
 	return err == nil && ok
 }
 
-func (t *SearchFilesTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
+func (t *SearchFilesTool) Execute(ctx context.Context, args map[string]any) *tools.ToolResult {
 	query, ok := args["query"].(string)
 	if !ok || strings.TrimSpace(query) == "" {
 		return tools.ErrorResult("query is required")
@@ -235,7 +241,7 @@ func (t *SearchFilesTool) Execute(_ context.Context, args map[string]any) *tools
 		return errResult(statErr)
 	}
 	if !t.byteMode {
-		return t.searchLines(query, root, info.IsDir(), re, int(maxResults), opts)
+		return t.searchLines(ctx, query, root, info.IsDir(), re, int(maxResults), opts)
 	}
 
 	var (
@@ -244,6 +250,9 @@ func (t *SearchFilesTool) Execute(_ context.Context, args map[string]any) *tools
 		truncated bool
 	)
 	visit := func(p string) bool { // returns false to stop walking
+		if ctx.Err() != nil {
+			return false
+		}
 		scanned++
 		hits := t.searchFile(p, re, int(maxResults)-len(out))
 		out = append(out, hits...)
@@ -258,6 +267,9 @@ func (t *SearchFilesTool) Execute(_ context.Context, args map[string]any) *tools
 		t.walk(root, visit)
 	} else {
 		visit(root)
+	}
+	if err := ctx.Err(); err != nil {
+		return errResult(fmt.Errorf("search stopped: %w", err))
 	}
 
 	if len(out) == 0 {
@@ -276,14 +288,19 @@ func (t *SearchFilesTool) Execute(_ context.Context, args map[string]any) *tools
 // searchLines is file_search_lines: the matches, files or counts under root
 // (a folder when isDir), at most limit of them (matches in lines mode, files
 // otherwise).
-func (t *SearchFilesTool) searchLines(query, root string, isDir bool, re *regexp.Regexp, limit int, opts lineOptions) *tools.ToolResult {
+func (t *SearchFilesTool) searchLines(ctx context.Context, query, root string, isDir bool, re *regexp.Regexp, limit int, opts lineOptions) *tools.ToolResult {
 	var (
 		out       []string // one entry per match block, file or count
 		found     int      // matches (lines mode) or files (files/count)
 		scanned   int
 		truncated bool
+		lines     int  // lines shown so far (context mode)
+		cut       bool // the output reached maxSearchOutputLines
 	)
 	visit := func(p, rel string) bool { // returns false to stop walking
+		if ctx.Err() != nil {
+			return false
+		}
 		scanned++ // every file walked counts, so a narrow include still stops
 		if !opts.included(rel) {
 			return scanned < maxSearchFilesScanned
@@ -305,8 +322,17 @@ func (t *SearchFilesTool) searchLines(query, root string, isDir bool, re *regexp
 			}
 		default:
 			hits, n := formatLineMatches(p, data, re, limit-found, opts.context)
+			if opts.context > 0 {
+				hits, n, cut = capBlocks(p, hits, n, maxSearchOutputLines-lines)
+				for _, h := range hits {
+					lines += strings.Count(h, "\n") + 1
+				}
+			}
 			out = append(out, hits...)
 			found += n
+			if cut {
+				return false
+			}
 		}
 		if found >= limit {
 			truncated = true
@@ -321,6 +347,9 @@ func (t *SearchFilesTool) searchLines(query, root string, isDir bool, re *regexp
 		// A single file is matched by the path as given (by its name for a
 		// pattern without "/").
 		visit(root, root)
+	}
+	if err := ctx.Err(); err != nil {
+		return errResult(fmt.Errorf("search stopped: %w", err))
 	}
 
 	if found == 0 {
@@ -337,6 +366,9 @@ func (t *SearchFilesTool) searchLines(query, root string, isDir bool, re *regexp
 	}
 	if truncated {
 		header += fmt.Sprintf("\n[Showing the first %d — narrow the query or search a subdirectory for more.]", found)
+	}
+	if cut {
+		header += fmt.Sprintf("\n[Showing the first %d lines — use less context, narrow the query or search a subdirectory for more.]", maxSearchOutputLines)
 	}
 	sep := "\n"
 	switch opts.output {
@@ -387,7 +419,7 @@ func (t *SearchFilesTool) walkLines(dir string, rel []string, ignores []gitignor
 	if err != nil {
 		return true
 	}
-	if data, err := t.sysFs.ReadFile(path.Join(dir, gitignoreFile)); err == nil {
+	if data := t.readGitignore(path.Join(dir, gitignoreFile)); data != nil {
 		ignores = append(slices.Clip(ignores), parseGitignore(data, rel)...)
 	}
 	matcher := gitignore.NewMatcher(ignores)
@@ -412,6 +444,66 @@ func (t *SearchFilesTool) walkLines(dir string, rel []string, ignores []gitignor
 		}
 	}
 	return true
+}
+
+// readGitignore returns the content of the .gitignore file at p, or nil when
+// there is none to use: a missing file, anything but a regular file (a link,
+// a FIFO, a device; git does not follow them either) or one larger than
+// maxGitignoreBytes, which is skipped whole rather than read in part.
+func (t *SearchFilesTool) readGitignore(p string) []byte {
+	info, err := t.sysFs.Lstat(p)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > maxGitignoreBytes {
+		return nil
+	}
+	f, err := t.sysFs.Open(p)
+	if err != nil {
+		return nil
+	}
+	defer func() {
+		if cerr := f.Close(); cerr != nil {
+			logger.DebugCF("tool", "closing .gitignore failed", map[string]any{"path": p, "error": cerr.Error()})
+		}
+	}()
+	data, err := io.ReadAll(io.LimitReader(f, maxGitignoreBytes+1))
+	if err != nil || len(data) > maxGitignoreBytes {
+		return nil
+	}
+	return data
+}
+
+// capBlocks keeps the context blocks of one file (hits, holding n matches)
+// that fit in room more lines, cutting the last one to fit. It returns the
+// blocks kept, the matches they hold and whether anything was cut. A line is
+// a match when it is "<p>:<line>:" rather than "<p>-<line>-".
+func capBlocks(p string, hits []string, n, room int) ([]string, int, bool) {
+	total := 0
+	for _, h := range hits {
+		total += strings.Count(h, "\n") + 1
+	}
+	if total <= room {
+		return hits, n, false
+	}
+	var (
+		kept    []string
+		matches int
+	)
+	for _, h := range hits {
+		if room <= 0 {
+			break
+		}
+		blockLines := strings.Split(h, "\n")
+		if len(blockLines) > room {
+			blockLines = blockLines[:room]
+		}
+		for _, l := range blockLines {
+			if len(l) > len(p) && l[len(p)] == ':' {
+				matches++
+			}
+		}
+		kept = append(kept, strings.Join(blockLines, "\n"))
+		room -= len(blockLines)
+	}
+	return kept, matches, true
 }
 
 // parseGitignore reads the patterns of one .gitignore file in the folder at

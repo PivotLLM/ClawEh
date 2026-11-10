@@ -99,3 +99,26 @@ func TestIdentity_WorkspaceSection(t *testing.T) {
 		t.Errorf("identity still uses the working area wording:\n%s", got)
 	}
 }
+
+// A note is shown on one line: newlines and other control characters become
+// spaces, and it is cut to 100 characters, whatever the file holds.
+func TestPromptNote(t *testing.T) {
+	for in, want := range map[string]string{
+		"inbound audio notes":             "inbound audio notes",
+		"line one\nline two\r\n- /etc":    "line one line two  - /etc",
+		"tab\there\x00nul\x1besc":         "tab here nul esc",
+		"  \n trimmed \n ":                "trimmed",
+		strings.Repeat("é", 150):          strings.Repeat("é", 100),
+		strings.Repeat("a", 99) + "\nbcd": strings.Repeat("a", 99),
+	} {
+		if got := promptNote(in); got != want {
+			t.Errorf("promptNote(%q) = %q, want %q", in, got, want)
+		}
+	}
+	dir := t.TempDir()
+	cb := &ContextBuilder{allowedFolders: []config.AllowedFolderConfig{{Path: dir, Note: "a\n- /etc (read/write)"}}}
+	got := cb.accessibleFolders("/srv/agents/alice")
+	if strings.Count(got, "\n") != 2 || !strings.HasSuffix(got, dir+": a - /etc (read/write)") {
+		t.Errorf("a note broke the folder list:\n%s", got)
+	}
+}
