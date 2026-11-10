@@ -80,6 +80,9 @@ func TestGlob_EntryLimit(t *testing.T) {
 		mustWrite(t, filepath.Join(ws, "files", fmt.Sprintf("f%d.txt", i)), "x")
 	}
 	old := globEntryLimit
+	if old != 50000 {
+		t.Errorf("entry limit = %d, want 50000", old)
+	}
 	globEntryLimit = 4
 	t.Cleanup(func() { globEntryLimit = old })
 	res := NewGlobTool(ws, true).Execute(context.Background(), map[string]any{"pattern": "*.txt", "path": "files"})

@@ -395,6 +395,8 @@ func TestShellTool_NoPathConfinement(t *testing.T) {
 		{"working_dir outside the workspace", map[string]any{"command": "cat note.txt", "working_dir": outside}, "outside note"},
 		{"working_dir through a link", map[string]any{"command": "cat note.txt", "working_dir": link}, "outside note"},
 		{"relative working_dir starts at the workspace", map[string]any{"command": "pwd", "working_dir": "files"}, filepath.Join("workspace", "files")},
+		{"relative working_dir out of the workspace", map[string]any{"command": "cat note.txt", "working_dir": "../outside"}, "outside note"},
+		{"no working_dir is the workspace", map[string]any{"command": "pwd; ls"}, "workspace\nfiles\nout\n"},
 	} {
 		res := tool.Execute(ctx, tc.args)
 		if res.IsError || !strings.Contains(res.ForLLM, tc.want) {

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -187,4 +188,70 @@ func TestGlob_NotDefault(t *testing.T) {
 		}
 	}
 	t.Fatal("glob is not registered")
+}
+
+// An absolute path inside the workspace works like the relative one and the
+// paths come back as given; files with the same modification time are
+// listed by path.
+func TestGlob_AbsoluteWorkspacePathAndTies(t *testing.T) {
+	ws := t.TempDir()
+	at := time.Now().Add(-time.Hour)
+	for _, rel := range []string{"files/b.go", "files/a.go", "files/c/a.go"} {
+		p := filepath.Join(ws, rel)
+		mustWrite(t, p, "x")
+		touch(t, p, at, 0)
+	}
+	defaultScope(t)
+	res := NewGlobTool(ws, true).Execute(context.Background(), map[string]any{"pattern": "**/*.go", "path": filepath.Join(ws, "files")})
+	if res.IsError {
+		t.Fatalf("absolute files/: %s", res.ForLLM)
+	}
+	want := []string{filepath.Join(ws, "files", "a.go"), filepath.Join(ws, "files", "b.go"), filepath.Join(ws, "files", "c", "a.go")}
+	if got := resultPaths(res.ForLLM); strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("paths = %v, want %v (same time: by path)", got, want)
+	}
+}
+
+// A read-only allowed folder is searched like any other; a link in files/
+// that leads out of the workspace is not a match, and naming the linked
+// folder is refused.
+func TestGlob_ReadOnlyFolderAndWorkspaceLink(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs file permissions that bind the test account")
+	}
+	ws := t.TempDir()
+	mustWrite(t, filepath.Join(ws, "files", "in.go"), "x")
+	outside := t.TempDir()
+	mustWrite(t, filepath.Join(outside, "secret.go"), "x")
+	for name, target := range map[string]string{"link.go": filepath.Join(outside, "secret.go"), "out": outside} {
+		if err := os.Symlink(target, filepath.Join(ws, "files", name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ro := t.TempDir()
+	mustWrite(t, filepath.Join(ro, "pkg", "lib.go"), "x")
+	if err := os.Chmod(ro, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(ro, 0o700); err != nil {
+			t.Error(err)
+		}
+	})
+	allowFolders(t, ws, ro)
+	defaultScope(t)
+	tool := NewGlobTool(ws, true)
+	ctx := context.Background()
+
+	res := tool.Execute(ctx, map[string]any{"pattern": "**/*.go", "path": ro})
+	if got := resultPaths(res.ForLLM); res.IsError || len(got) != 1 || got[0] != filepath.Join(ro, "pkg", "lib.go") {
+		t.Errorf("read-only folder: %v %s", res.IsError, res.ForLLM)
+	}
+	res = tool.Execute(ctx, map[string]any{"pattern": "**/*.go", "path": "files"})
+	if got := resultPaths(res.ForLLM); res.IsError || len(got) != 1 || got[0] != "files/in.go" {
+		t.Errorf("files/ with links out = %v (%s), want only files/in.go", got, res.ForLLM)
+	}
+	if res := tool.Execute(ctx, map[string]any{"pattern": "**", "path": "files/out"}); !res.IsError || strings.Contains(res.ForLLM, "secret.go") {
+		t.Errorf("glob in a linked folder outside: %v %s", res.IsError, res.ForLLM)
+	}
 }
