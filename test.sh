@@ -867,6 +867,18 @@ EOF
                         integ_fail "task models end to end (tests/test_task_models.sh) failed; see its output above"
                     fi
 
+                    # The coding harness end to end: its own gateway, a git
+                    # repository in the agent's files/ and a read-only
+                    # allowed folder, the coding tools driven over MCP.
+                    echo ""
+                    echo "${BOLD}--- Coding harness end to end ---${NC}"
+                    echo ""
+                    if PROBE_PATH="$PROBE_BIN" bash "$SCRIPT_DIR/tests/test_coding_harness.sh" "$INTEG_BIN"; then
+                        INTEGRATION_PASS_COUNT=$((INTEGRATION_PASS_COUNT + 1))
+                    else
+                        integ_fail "coding harness end to end (tests/test_coding_harness.sh) failed; see its output above"
+                    fi
+
                     # ---- Workspace re-population: delete alice's dir and restart ----
                     if [ "${CLAW_TEST_CLI:-}" = "1" ]; then
                         echo ""
