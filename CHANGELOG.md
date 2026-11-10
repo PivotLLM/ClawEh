@@ -228,6 +228,11 @@
   `sudo claw install` to move an existing install. The old
   `/opt/claw/claw` and `/opt/claw/openclaw` are left in place; the
   installer names each one and says it can be removed.
+- **BREAKING: a link in the global skills folder or an `allow_read_paths`
+  folder that leads elsewhere on the host is no longer followed.** A skill
+  installed as a link to another folder (for example a git checkout) is
+  refused. To keep it, add the link's target folder to
+  `tools.allow_read_paths`.
 - **BREAKING: `msg_send_file` takes a list of files.** Its arguments are now
   `files`, a list of 1 to 10 `{"path", "filename"}` entries sent in order;
   the old `path` and `filename` arguments are refused. A file can be sent
