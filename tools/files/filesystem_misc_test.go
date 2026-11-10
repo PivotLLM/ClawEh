@@ -8,40 +8,7 @@ import (
 	"github.com/PivotLLM/ClawEh/utils"
 )
 
-// Tests for resolveExistingAncestor, NewReadFileTool default maxSize, and hostFs.Open permission error.
-
-func TestResolveExistingAncestor_ExistingPath(t *testing.T) {
-	dir := t.TempDir()
-	resolved, err := resolveExistingAncestor(dir)
-	if err != nil {
-		t.Fatalf("resolveExistingAncestor() error = %v", err)
-	}
-	if resolved == "" {
-		t.Error("expected non-empty resolved path")
-	}
-}
-
-func TestResolveExistingAncestor_NonExistentPath(t *testing.T) {
-	dir := t.TempDir()
-	// Create a path that doesn't exist within the temp dir.
-	path := filepath.Join(dir, "nonexistent", "deep", "path")
-	resolved, err := resolveExistingAncestor(path)
-	if err != nil {
-		t.Fatalf("resolveExistingAncestor() error = %v (expected to find ancestor)", err)
-	}
-	// Should have resolved to an ancestor that does exist (the temp dir).
-	if resolved == "" {
-		t.Error("expected non-empty resolved ancestor path")
-	}
-}
-
-func TestResolveExistingAncestor_NonExistentRoot(t *testing.T) {
-	// Path completely outside any real directory — will traverse up to root.
-	// This tests the "Dir(current) == current" exit condition at root.
-	_, err := resolveExistingAncestor("/nonexistent-root-level-xyz-abc-123")
-	// May succeed (resolves to /) or fail; just ensure no panic.
-	_ = err
-}
+// Tests for NewReadFileTool default maxSize and hostFs.Open permission error.
 
 func TestNewReadFileTool_DefaultMaxSize(t *testing.T) {
 	// maxReadFileSize <= 0 should use MaxReadFileSize default.

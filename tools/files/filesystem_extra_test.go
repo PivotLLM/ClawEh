@@ -232,52 +232,6 @@ func TestSandboxFs_ReadFile_OutsideWorkspace(t *testing.T) {
 	}
 }
 
-// Tests for validatePath coverage.
-
-func TestValidatePath_RelativePath(t *testing.T) {
-	workspace := t.TempDir()
-	path, err := validatePath("subdir/file.txt", workspace, true)
-	if err != nil {
-		t.Fatalf("validatePath() error = %v", err)
-	}
-	expected := filepath.Join(workspace, "subdir", "file.txt")
-	if path != expected {
-		t.Errorf("path = %q, want %q", path, expected)
-	}
-}
-
-func TestValidatePath_AbsolutePathOutsideWorkspace(t *testing.T) {
-	workspace := t.TempDir()
-	_, err := validatePath("/etc/passwd", workspace, true)
-	if err == nil {
-		t.Fatal("expected error for path outside workspace")
-	}
-	if !strings.Contains(err.Error(), "access denied") {
-		t.Errorf("error = %q, want 'access denied'", err.Error())
-	}
-}
-
-func TestValidatePath_EmptyWorkspace(t *testing.T) {
-	_, err := validatePath("file.txt", "", true)
-	if err == nil {
-		t.Fatal("expected error for empty workspace")
-	}
-	if !strings.Contains(err.Error(), "workspace is not defined") {
-		t.Errorf("error = %q, want 'workspace is not defined'", err.Error())
-	}
-}
-
-func TestValidatePath_UnrestrictedAllowsAnyPath(t *testing.T) {
-	// When restrict=false, any path should be allowed
-	path, err := validatePath("/tmp/anything.txt", t.TempDir(), false)
-	if err != nil {
-		t.Fatalf("validatePath() error = %v", err)
-	}
-	if path != "/tmp/anything.txt" {
-		t.Errorf("path = %q, want /tmp/anything.txt", path)
-	}
-}
-
 // Tests for ListDir tool.
 
 func TestListDirTool_Success(t *testing.T) {

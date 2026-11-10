@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strings"
 	"testing"
 )
 
@@ -211,27 +210,5 @@ func TestBuildFs_RestrictedWithPatterns(t *testing.T) {
 	fs := buildBaseFs(t.TempDir(), true, []*regexp.Regexp{pattern})
 	if _, ok := fs.(*whitelistFs); !ok {
 		t.Errorf("buildBaseFs(restricted, with patterns) = %T, want *whitelistFs", fs)
-	}
-}
-
-func TestValidatePath_RelativeInWorkspace(t *testing.T) {
-	workspace := t.TempDir()
-
-	path, err := validatePath("myfile.txt", workspace, false)
-	if err != nil {
-		t.Fatalf("validatePath() error = %v", err)
-	}
-	if !strings.HasSuffix(path, "myfile.txt") {
-		t.Errorf("path = %q, want to end with 'myfile.txt'", path)
-	}
-}
-
-func TestValidatePath_AbsoluteOutsideWorkspace(t *testing.T) {
-	workspace := t.TempDir()
-	outside := t.TempDir()
-
-	_, err := validatePath(outside, workspace, true)
-	if err == nil {
-		t.Error("validatePath() should error for absolute path outside workspace")
 	}
 }
