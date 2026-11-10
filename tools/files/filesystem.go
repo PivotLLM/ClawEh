@@ -1190,9 +1190,55 @@ func (w *whitelistFs) matches(path string) bool {
 	return false
 }
 
+// hostReadPath is the path a read of the allow-listed path goes to: path
+// with its links resolved. A link may lead only to another allow-listed
+// path or elsewhere inside the allow-listed folder path lies in (its links
+// resolved too, for a system folder such as /tmp that is itself a link);
+// anywhere else is refused, so a link in an allow-read folder cannot reach
+// a file the agent may not read. A path that does not resolve (missing) is
+// returned as it is, for the host to report.
+func (w *whitelistFs) hostReadPath(path string) (string, error) {
+	target, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return path, nil //nolint:nilerr // the host read reports a missing path itself
+	}
+	if w.matches(target) || w.matches(target+string(filepath.Separator)) {
+		return target, nil
+	}
+	if area := w.matchedArea(path); area != "" {
+		if resolved, rerr := filepath.EvalSymlinks(area); rerr == nil && (target == resolved || isWithinWorkspace(target, resolved)) {
+			return target, nil
+		}
+	}
+	return "", tools.Refusal(fmt.Errorf("access denied: %s resolves outside the folders the agent can read", path))
+}
+
+// matchedArea returns the shortest folder prefix of path that an allow-read
+// pattern matches (as a folder, with a trailing separator), or "".
+func (w *whitelistFs) matchedArea(path string) string {
+	var dirs []string // path and its parents, deepest first
+	for d := filepath.Clean(path); ; d = filepath.Dir(d) {
+		dirs = append(dirs, d)
+		if filepath.Dir(d) == d {
+			break
+		}
+	}
+	sep := string(filepath.Separator)
+	for _, d := range slices.Backward(dirs) {
+		if w.matches(strings.TrimSuffix(d, sep) + sep) {
+			return d
+		}
+	}
+	return ""
+}
+
 func (w *whitelistFs) ReadFile(path string) ([]byte, error) {
 	if w.matches(path) {
-		return w.host.ReadFile(path)
+		target, err := w.hostReadPath(path)
+		if err != nil {
+			return nil, err
+		}
+		return w.host.ReadFile(target)
 	}
 	return w.sandbox.ReadFile(path)
 }
@@ -1220,7 +1266,11 @@ func (w *whitelistFs) WriteFileExclMode(path string, data []byte, mode os.FileMo
 
 func (w *whitelistFs) Stat(path string) (os.FileInfo, error) {
 	if w.matches(path) {
-		return w.host.Stat(path)
+		target, err := w.hostReadPath(path)
+		if err != nil {
+			return nil, err
+		}
+		return w.host.Stat(target)
 	}
 	return w.sandbox.Stat(path)
 }
@@ -1234,14 +1284,22 @@ func (w *whitelistFs) Lstat(path string) (os.FileInfo, error) {
 
 func (w *whitelistFs) ReadDir(path string) ([]os.DirEntry, error) {
 	if w.matches(path) {
-		return w.host.ReadDir(path)
+		target, err := w.hostReadPath(path)
+		if err != nil {
+			return nil, err
+		}
+		return w.host.ReadDir(target)
 	}
 	return w.sandbox.ReadDir(path)
 }
 
 func (w *whitelistFs) Open(path string) (fs.File, error) {
 	if w.matches(path) {
-		return w.host.Open(path)
+		target, err := w.hostReadPath(path)
+		if err != nil {
+			return nil, err
+		}
+		return w.host.Open(target)
 	}
 	return w.sandbox.Open(path)
 }

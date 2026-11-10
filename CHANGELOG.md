@@ -432,7 +432,10 @@
   refused: "access denied: <path> resolves outside the folders the agent
   can read". A link to a folder the agent may read, such as `skills/`,
   still works. Writes already followed this rule; agents allowed to read
-  the whole workspace are unaffected.
+  the whole workspace are unaffected. Likewise, a link inside a folder
+  listed in `tools.allow_read_paths` (or the global skills folder) is
+  followed only to another allowed place; one leading anywhere else on the
+  host is refused the same way.
 
 - **The Providers page's add and edit forms start with a protocol the
   server accepts.** They started with `openai`, which is not a protocol,
