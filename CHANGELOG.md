@@ -398,6 +398,11 @@
 
 ### Fixed
 
+- **Logging no longer races with a change to the logger.** A line logged
+  while the log files were being set up at start or rotated could read the
+  logger's settings mid-change; each line now reads them under the logger's
+  lock.
+
 - **The Models page's enable switch is named.** Screen readers announced
   it as `models.action.enable`; it is now "Enable model" or "Disable model".
 

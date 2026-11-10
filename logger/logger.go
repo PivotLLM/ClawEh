@@ -466,13 +466,20 @@ func getEvent(logger zerolog.Logger, level LogLevel) *zerolog.Event {
 }
 
 func logMessage(level LogLevel, component string, message string, fields map[string]any) {
-	if level < currentLevel {
+	// The writers (SetLevel, the file setup, RedirectForTest) change these
+	// under mu; read them under it too, so a goroutine logging while the
+	// logger is reconfigured does not race.
+	mu.RLock()
+	minLevel, out, fileOut, errOut, errLevel := currentLevel, logger, fileLogger, errorLogger, errorLogLevel
+	mu.RUnlock()
+
+	if level < minLevel {
 		return
 	}
 
 	callerFile, callerLine, callerFunc := getCallerInfo()
 
-	event := getEvent(logger, level)
+	event := getEvent(out, level)
 
 	// Build combined field with component and caller
 	if component != "" {
@@ -485,8 +492,8 @@ func logMessage(level LogLevel, component string, message string, fields map[str
 	event.Msg(message)
 
 	// Also log to file if enabled
-	if fileLogger.GetLevel() != zerolog.NoLevel {
-		fileEvent := getEvent(fileLogger, level)
+	if fileOut.GetLevel() != zerolog.NoLevel {
+		fileEvent := getEvent(fileOut, level)
 
 		if component != "" {
 			fileEvent.Str("component", component)
@@ -497,8 +504,8 @@ func logMessage(level LogLevel, component string, message string, fields map[str
 	}
 
 	// Mirror problems (errorLogLevel and above) to error.log for quick scanning.
-	if level >= errorLogLevel && errorLogger.GetLevel() != zerolog.NoLevel {
-		errEvent := getEvent(errorLogger, level)
+	if level >= errLevel && errOut.GetLevel() != zerolog.NoLevel {
+		errEvent := getEvent(errOut, level)
 
 		if component != "" {
 			errEvent.Str("component", component)
