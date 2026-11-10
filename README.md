@@ -1,19 +1,21 @@
 # ClawEh: Yet another claw - Canadian style
 
-**ClawEh is a self-hosted Go runtime for long-running AI assistants: several agents, each with its own models, tools, memory and channels, managed from one web interface.**
+**ClawEh is a self-hosted application for long-running AI assistants: several agents, each with its own models, tools, memory and channels, managed from one web interface.**
+
+Written in Go, the code compiles into a single binary that you can download from Github releases, or you can compile it yourself.
 
 ## Features
 
-- **Multiple agents** with their own workspaces, models, tools, memory and routing
-- **API and CLI models**: cloud APIs, OpenRouter, Amazon Bedrock, local models, and CLI agents such as Claude Code, Codex, Antigravity and Cursor, with fallback chains and cooldowns
-- **Coding harness tools**: find, search, read and edit code, and run commands, with access to source trees outside the workspace
-- **Maestro workflow orchestration**: projects, task lists run by worker sub-agents, reusable playbooks and reports
-- **Forums**: structured discussions among agents, run to a final report
-- **MCPFusion hub and configuration-defined MCP servers**: REST APIs described in a file become tools, and ClawEh serves its tools over MCP and connects to other MCP servers
-- **Speech and image conversion**: transcription, text to speech, image generation and image descriptions through task models
-- **IM integration**: Telegram, Slack, Discord, Matrix, Signal and the built-in web chat
-- **Devices and the message API**: the Rabbit R1, voice apps, and other applications that send messages to an agent
-- **Cognitive memory and context management** that keep long-running conversations useful and within model limits
+- **Multiple agents** with their own workspaces, models, tools, memory and communication channels.
+- **API and CLI models**: cloud APIs and CLI agents are supported with fallback chains and cooldowns
+- **Coding harness tools**: find, search, read and edit code, and run commands.
+- **Maestro workflow orchestration**: reusable playbooks, projects, task lists run by worker sub-agents, and reports
+- **Forums**: structured discussions or role play among agents, run to a final report
+- **MCPFusion hub and configuration-defined MCP servers**: REST APIs described in a file become tools, connection to upstream MCP servers, and internal tools.
+- **Speech and image conversion**: transcription, text-to-speech, image generation, and image descriptions through task models
+- **IM integration**: Telegram, Slack, Discord, Matrix, Signal and a built-in web chat
+- **Devices and the message API**: the Rabbit R1, voice apps, and other applications that send messages to an agent via an OpenClaw-compatible WebSocket.
+- **Cognitive memory and context management** that keep long-running agents useful and improving over time.
 - **Sub-agents** that take on work for an agent, and messages between agents
 - **Human agents**: a person who answers questions from agents in their own chat
 - **Classifiers with MCP integration**: sort email, files or tickets from any tool or MCP server an agent can use, and act on each category
@@ -56,7 +58,7 @@ Connect agents to [Telegram](manual/channels/telegram.md) (several bots), [Slack
 
 ### Devices and the message API
 
-A built-in [device listener](manual/channels/devices.md) lets the Rabbit R1 and voice apps such as Claw to Talk pair with ClawEh and talk to your agents. The [message API](manual/channels/message-api.md) lets other applications, such as an alarm panel or a monitoring check, send a message to an agent over HTTP.
+A built-in [device listener](manual/channels/devices.md) lets voice apps such as Claw to Talk or a Folotoy AI Passport talk to your agents. The [message API](manual/channels/message-api.md) lets other applications send a message to an agent over HTTP. And, an OpenClaw-compatible command line supports the Rabbit R1 agent.
 
 ### Cognitive memory and context management
 
@@ -96,8 +98,6 @@ The **user manual** covers installing, providers and models, agents, channels, f
 
 - in a running ClawEh, open **Manual** in the WebUI (served at `/manual/`);
 - in this repository, the Markdown source is under [`manual/`](manual/index.md).
-
-A quickstart tutorial is at https://github.com/PivotLLM/Tutorials/blob/main/docs/claweh-quickstart.md.
 
 Changes in each release are listed in [CHANGELOG.md](CHANGELOG.md).
 
@@ -164,8 +164,7 @@ Do not install Node.js with `apt`; the packaged version is too old. Use the [Nod
 ```bash
 git clone https://github.com/PivotLLM/ClawEh.git
 cd ClawEh
-make build             # build/claw, with the WebUI and the manual embedded
-./build/claw install   # install it as a service
+make install
 ```
 
 The WebUI (`web/frontend`) and the user manual (`manual/`, VitePress) are built and embedded in the one `claw` binary, which serves the agent runtime, the WebUI, its API and the manual from one process.
@@ -190,18 +189,18 @@ Several parts of ClawEh are standalone Go modules so they can be reused (e.g. by
 - **[`ctxengine`](https://github.com/PivotLLM/ctxengine)** — the context engine: transcript, archive, compaction and the session tools.
 - **[`cogmem`](https://github.com/PivotLLM/cogmem)** — cognitive memory.
 
-None of them imports ClawEh; policy (model selection, fallback, cooldown, configuration) stays in ClawEh.
+Policy (model selection, fallback, cooldown, configuration) remains in ClawEh.
 
 ## Why ClawEh exists
 
-ClawEh began as a fork of [PicoClaw](https://github.com/sipeed/picoclaw), whose small, easy-to-deploy Go foundation provided the inspiration and starting point for the project.
+ClawEh began as a fork of [PicoClaw](https://github.com/sipeed/picoclaw), whose small, easy-to-deploy Go foundation inspired the project and provided a starting point.
 
 It has since evolved into a separate project with different priorities: a smaller, focused codebase that puts core stability, reliability, security, and maintainability first. Over time, the implementation was progressively rewritten, and the original PicoClaw code has now been completely replaced.
 
 ClawEh remains grateful to PicoClaw for the original idea and inspiration.
 
 ## Terms of Use and Compliance
-ClawEh supports a wide range of LLM providers. It is your responsibility to ensure that your use of any provider, API, service, or model is consistent with the applicable terms of service, acceptable use policies, contracts, and legal requirements. This includes use-case restrictions, data handling obligations, and any prohibition on accessing non-public or undocumented APIs. We have removed support for some providers where we determined the implementation could not reasonably be used without violating the provider's terms. We welcome feedback from any LLM providers on this topic.
+ClawEh supports a wide range of LLM providers. It is your responsibility to ensure that your use of any provider, API, service, or model is consistent with the applicable terms of service, acceptable use policies, contracts, and legal requirements. This includes use-case restrictions, data handling obligations, and any prohibition on accessing non-public or undocumented APIs. We welcome feedback from any LLM providers on this topic.
 
 ## Security Considerations
 
