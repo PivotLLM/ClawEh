@@ -540,3 +540,54 @@ func TestTaskModelProblem(t *testing.T) {
 		}
 	}
 }
+
+// Every list is a model reference site: the reference names the list, a
+// rename follows the model into it keeping the entry's settings, and a
+// missing model is pruned from it.
+func TestTaskModels_EveryListIsAReferenceSite(t *testing.T) {
+	cfg := taskModelsTestConfig()
+	cfg.TaskModels = TaskModelsConfig{
+		TextModels:     []TaskModelRef{{Model: "m"}},
+		ImageModels:    []ImageTaskModel{{Model: "m", ImageAPI: ImageAPIImages}},
+		TTSModels:      []TTSTaskModel{{Model: "m", TTSDefaults: &TTSDefaults{Voice: "alloy"}}},
+		STTModels:      []TaskModelRef{{Model: "m"}},
+		VisionModels:   []TaskModelRef{{Model: "m"}},
+		ClassifyModels: []TaskModelRef{{Model: "m"}},
+	}
+	refs := cfg.ModelReferences("m")
+	for _, use := range TaskUses {
+		if want := "task_models." + string(use) + "[m]"; !slices.Contains(refs, want) {
+			t.Errorf("ModelReferences(m) = %v, missing %s", refs, want)
+		}
+	}
+	cfg.Models[0].ModelName = "n"
+	cfg.RenameModelReferences("m", "n")
+	for _, use := range TaskUses {
+		if got := cfg.TaskModels.ModelsFor(use); !slices.Equal(got, []string{"n"}) {
+			t.Errorf("%s after rename = %v", use, got)
+		}
+	}
+	if e, _ := cfg.TaskModels.Entry(TaskUseImage, "n"); e.ImageAPI != ImageAPIImages {
+		t.Errorf("image entry after rename = %+v", e)
+	}
+	if e, _ := cfg.TaskModels.Entry(TaskUseTTS, "n"); e.TTSDefaults == nil || e.TTSDefaults.Voice != "alloy" {
+		t.Errorf("tts entry after rename = %+v", e)
+	}
+	cfg.Models = cfg.Models[1:]
+	cfg.PruneDanglingModelReferences()
+	for _, use := range TaskUses {
+		if got := cfg.TaskModels.ModelsFor(use); len(got) != 0 {
+			t.Errorf("%s after prune = %v", use, got)
+		}
+	}
+}
+
+// Entries hands out copies: changing a returned entry's TTS defaults leaves
+// the config alone.
+func TestTaskModels_EntriesDoNotShareTheConfig(t *testing.T) {
+	tm := TaskModelsConfig{TTSModels: []TTSTaskModel{{Model: "s", TTSDefaults: &TTSDefaults{Voice: "alloy"}}}}
+	tm.Entries(TaskUseTTS)[0].TTSDefaults.Voice = "changed"
+	if tm.TTSModels[0].TTSDefaults.Voice != "alloy" {
+		t.Error("an Entries result reached into the config")
+	}
+}

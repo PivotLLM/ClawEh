@@ -153,7 +153,12 @@ func (t TaskModelsConfig) Entries(use TaskUse) []TaskModelEntry {
 		}
 	case TaskUseTTS:
 		for _, m := range t.TTSModels {
-			add(TaskModelEntry{Model: m.Model, TTSDefaults: m.TTSDefaults})
+			e := TaskModelEntry{Model: m.Model}
+			if d := m.TTSDefaults; d != nil {
+				copied := *d // a reader must not reach into the config
+				e.TTSDefaults = &copied
+			}
+			add(e)
 		}
 	default:
 		if refs := taskRefList(&t, use); refs != nil {
