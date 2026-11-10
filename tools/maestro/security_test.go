@@ -305,3 +305,23 @@ func TestDispatcher_MetadataStubs(t *testing.T) {
 		t.Error("GetExecInfo must not be nil")
 	}
 }
+
+// TestSecurity_ReferenceLinkOutOfFolderRefused: a link inside an allowed
+// folder that leads outside it is neither listed nor read through Maestro's
+// reference library.
+func TestSecurity_ReferenceLinkOutOfFolderRefused(t *testing.T) {
+	h := newMaestroHarness(t)
+	outside := writeSecret(t)
+	if err := os.Symlink(outside, filepath.Join(h.mount, "leak.md")); err != nil {
+		t.Fatal(err)
+	}
+	if lst := h.call("maestro_file_list", map[string]any{"source": "reference"}, false); strings.Contains(lst, "leak.md") {
+		t.Errorf("the link out is listed: %s", lst)
+	}
+	if out := h.call("maestro_file_get", map[string]any{"source": "reference", "path": "standards/leak.md"}, true); strings.Contains(out, "s3cret") {
+		t.Errorf("the link out was read: %s", out)
+	}
+	if got := h.call("maestro_file_get", map[string]any{"source": "reference", "path": "standards/standard.md"}, false); !strings.Contains(got, "rule one") {
+		t.Errorf("the folder's own file: %s", got)
+	}
+}

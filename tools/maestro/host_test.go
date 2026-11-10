@@ -6,9 +6,14 @@ package maestro
 import (
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
 	"testing"
 
 	mconfig "github.com/PivotLLM/Maestro/config"
+	mmaestro "github.com/PivotLLM/Maestro/pkg/maestro"
+	mreference "github.com/PivotLLM/Maestro/reference"
 
 	"github.com/PivotLLM/ClawEh/config"
 )
@@ -77,6 +82,44 @@ func TestReferenceDirsFromAllowedFolders(t *testing.T) {
 	}
 	if referenceDirsFromAllowedFolders(nil) != nil {
 		t.Error("nil agent must map to no dirs")
+	}
+}
+
+// Maestro's own top-level reference entries count as taken, in any case, so
+// a folder with such a name gets "-2" and never hides Maestro's guide.
+func TestReferenceDirsFromAllowedFolders_BuiltinNamesTaken(t *testing.T) {
+	builtins := mreference.BuiltinNames(mmaestro.EmbeddedReference)
+	for _, want := range []string{"phases", "templates", "start.md"} {
+		if !slices.Contains(builtins, want) {
+			t.Fatalf("BuiltinNames = %v, want it to hold %s", builtins, want)
+		}
+	}
+	base := t.TempDir()
+	folders := make([]config.AllowedFolderConfig, 0, 3)
+	var wantMounts []string
+	for i, name := range []string{"templates", "Phases", "src"} {
+		p := filepath.Join(base, strconv.Itoa(i), name)
+		if err := os.MkdirAll(p, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		folders = append(folders, config.AllowedFolderConfig{Path: p})
+	}
+	wantMounts = []string{"templates-2", "Phases-2", "src"}
+	got := referenceDirsFromAllowedFolders(&config.AgentConfig{ID: "alice", AllowedFolders: folders})
+	if len(got) != len(wantMounts) {
+		t.Fatalf("dirs = %+v", got)
+	}
+	for i, w := range wantMounts {
+		if got[i].Mount != w {
+			t.Errorf("dir %d named %q, want %q", i, got[i].Mount, w)
+		}
+	}
+	for _, d := range got {
+		for _, b := range builtins {
+			if strings.EqualFold(d.Mount, b) {
+				t.Errorf("%s takes the built-in name %s", d.Path, b)
+			}
+		}
 	}
 }
 

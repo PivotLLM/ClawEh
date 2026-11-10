@@ -12,6 +12,8 @@ import (
 	"strings"
 
 	mconfig "github.com/PivotLLM/Maestro/config"
+	mmaestro "github.com/PivotLLM/Maestro/pkg/maestro"
+	mreference "github.com/PivotLLM/Maestro/reference"
 
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/logger"
@@ -35,7 +37,9 @@ func runnerConfig(mc *config.MaestroConfig) mconfig.Runner {
 // Maestro reference directories (read-only inside Maestro, whatever the file
 // permissions say). Each is named after its last path component reduced to
 // one word Maestro accepts (referenceName); a name already taken, in any case,
-// gets "-2", "-3", … in config order. Names are given to every configured
+// gets "-2", "-3", … in config order. The names of Maestro's own top-level
+// reference entries (reference.BuiltinNames) count as taken, so a folder never
+// hides Maestro's guide: /srv/templates is "templates-2". Names are given to every configured
 // folder before any is skipped, so a folder that goes missing does not rename
 // the others. A folder that is not an existing directory is skipped, so
 // Maestro never creates a directory on the host's behalf.
@@ -44,6 +48,9 @@ func referenceDirsFromAllowedFolders(agentCfg *config.AgentConfig) []mconfig.Ref
 		out   []mconfig.ReferenceDir
 		taken = map[string]bool{}
 	)
+	for _, b := range mreference.BuiltinNames(mmaestro.EmbeddedReference) {
+		taken[strings.ToLower(b)] = true
+	}
 	for _, p := range agentCfg.AllowedFolderPaths() {
 		name := referenceName(p)
 		unique := name
