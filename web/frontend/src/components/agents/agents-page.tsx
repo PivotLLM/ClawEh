@@ -11,6 +11,7 @@ import {
   getAgentTools,
   getAppConfig,
   getHumanAgents,
+  getIgnoredAllowedFolders,
   patchAppConfig,
 } from "@/api/channels"
 import { type ModelInfo, getModels } from "@/api/models"
@@ -123,13 +124,21 @@ export function AgentsPage() {
     queryKey: HUMAN_AGENTS_QUERY_KEY,
     queryFn: getHumanAgents,
   })
+  // Saved allowed folders the file tools skip; each is marked in its row.
+  const { data: ignoredFolders } = useQuery({
+    queryKey: ["agents-ignored-folders"],
+    queryFn: getIgnoredAllowedFolders,
+  })
   // The character-card library, for each card's Character card select.
   const { data: cardsData } = useQuery({
     queryKey: CARDS_QUERY_KEY,
     queryFn: getCards,
   })
   const refreshAgentNotes = () =>
-    queryClient.invalidateQueries({ queryKey: HUMAN_AGENTS_QUERY_KEY })
+    Promise.all([
+      queryClient.invalidateQueries({ queryKey: HUMAN_AGENTS_QUERY_KEY }),
+      queryClient.invalidateQueries({ queryKey: ["agents-ignored-folders"] }),
+    ])
 
   const fetchError = loadError
     ? loadError instanceof Error
@@ -576,6 +585,9 @@ export function AgentsPage() {
                       cogmem={agent.cogmem !== false}
                       onCogmemChange={() => handleToggleCogmem(i)}
                       allowedFolders={e.allowedFolders}
+                      ignoredFolders={(ignoredFolders ?? []).filter((f) =>
+                        sameAgentId(f.agent, agent.id),
+                      )}
                       onAllowedFoldersChange={(fs) =>
                         edit(i, { allowedFolders: fs })
                       }

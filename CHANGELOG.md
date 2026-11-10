@@ -209,7 +209,11 @@
   the upgrade only records what each folder holds. The reserved folder names
   for mounts are gone, and with them `GET /api/agents/mounts/ignored`, the
   Agents page marking and the Check Up row. On the Agents page the editor is
-  **Allowed folders** (a path and **Notify on new files** per folder).
+  **Allowed folders** (a path and **Notify on new files** per folder); a
+  saved folder that is not an absolute path or does not exist is marked
+  "Ignored" on its row and listed on Check Up (**Allowed folder**), and the
+  migration log warns for each formerly read-only mount the agent can now
+  write.
 - **BREAKING: `shell_exec` no longer refuses commands by path.** The checks
   for `..`, for absolute paths outside the working folder and for a
   `working_dir` outside the workspace are gone: a command runs with the full

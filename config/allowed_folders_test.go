@@ -143,3 +143,39 @@ func TestLoadConfig_MigratedRelativeMountTolerated(t *testing.T) {
 		t.Fatalf("unrelated save refused: %v", err)
 	}
 }
+
+// A mount that was read-only, on a folder the account can write, gets a
+// second warning naming the agent and the folder; a writable mount does not.
+func TestLoadConfig_MigratedReadOnlyMountNowWritable(t *testing.T) {
+	var buf bytes.Buffer
+	restore := logger.RedirectForTest(&buf)
+	defer restore()
+
+	dir := t.TempDir()
+	t.Setenv("CLAW_HOME", dir)
+	path := filepath.Join(dir, "config.json")
+	ro := filepath.Join(dir, "ref")
+	rw := filepath.Join(dir, "src")
+	for _, d := range []string{ro, rw} {
+		if err := os.Mkdir(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	doc := `{"agents":{"list":[{"id":"alice","mounts":[` +
+		`{"name":"ref","path":"` + ro + `"},{"name":"src","path":"` + rw + `","writable":true}]}]}}`
+	if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewStore(path); err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	var gained []string
+	for line := range strings.SplitSeq(buf.String(), "\n") {
+		if strings.Contains(line, "now writable by the agent") {
+			gained = append(gained, line)
+		}
+	}
+	if len(gained) != 1 || !strings.Contains(gained[0], ro) || !strings.Contains(gained[0], "alice") {
+		t.Errorf("want one warning naming alice and %s, got %q", ro, gained)
+	}
+}

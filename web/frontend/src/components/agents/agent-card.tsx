@@ -8,6 +8,7 @@ import { type CardSummary } from "@/api/cards"
 import {
   type AgentToolCatalogResponse,
   type HumanAgentProblem,
+  type IgnoredAllowedFolder,
 } from "@/api/channels"
 import { type ModelInfo } from "@/api/models"
 import {
@@ -118,6 +119,8 @@ export interface AgentCardProps {
   cogmem?: boolean
   allowedFolders?: AllowedFolderEntry[]
   onAllowedFoldersChange?: (folders: AllowedFolderEntry[]) => void
+  /** Saved allowed folders the file tools skip (GET /api/agents/allowed-folders/ignored). */
+  ignoredFolders?: IgnoredAllowedFolder[]
   mcpTools?: string[]
   onMCPToolsChange?: (mcpTools: string[]) => void
   denyTools?: string[]
@@ -196,6 +199,7 @@ export function AgentCard({
   cogmem = true,
   allowedFolders = [],
   onAllowedFoldersChange = undefined,
+  ignoredFolders = [],
   mcpTools = [],
   onMCPToolsChange = undefined,
   denyTools = [],
@@ -538,35 +542,54 @@ export function AgentCard({
                   ),
                 )
               return (
-                <div key={fi} className="flex items-center gap-1.5">
-                  <Input
-                    value={f.path}
-                    onChange={(e) => set({ path: e.target.value })}
-                    placeholder="/srv/src"
-                    aria-label={t("agents.allowedFolderPath")}
-                    className="h-7 flex-1 font-mono text-xs"
-                  />
-                  <label className="text-muted-foreground flex items-center gap-1 text-xs select-none">
-                    <Checkbox
-                      checked={f.notify === true}
-                      onCheckedChange={(c) => set({ notify: c === true })}
+                <div key={fi} className="space-y-0.5">
+                  <div className="flex items-center gap-1.5">
+                    <Input
+                      value={f.path}
+                      onChange={(e) => set({ path: e.target.value })}
+                      placeholder="/srv/src"
+                      aria-label={t("agents.allowedFolderPath")}
+                      className="h-7 flex-1 font-mono text-xs"
                     />
-                    {t("agents.allowedFolderNotify")}
-                  </label>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    className="h-7 w-7"
-                    aria-label={t("agents.allowedFolderRemove")}
-                    onClick={() =>
-                      onAllowedFoldersChange(
-                        allowedFolders.filter((_, j) => j !== fi),
-                      )
-                    }
-                  >
-                    <IconTrash className="size-3.5" />
-                  </Button>
+                    <label className="text-muted-foreground flex items-center gap-1 text-xs select-none">
+                      <Checkbox
+                        checked={f.notify === true}
+                        onCheckedChange={(c) => set({ notify: c === true })}
+                      />
+                      {t("agents.allowedFolderNotify")}
+                    </label>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="h-7 w-7"
+                      aria-label={t("agents.allowedFolderRemove")}
+                      onClick={() =>
+                        onAllowedFoldersChange(
+                          allowedFolders.filter((_, j) => j !== fi),
+                        )
+                      }
+                    >
+                      <IconTrash className="size-3.5" />
+                    </Button>
+                  </div>
+                  {(() => {
+                    const ignored = ignoredFolders.find(
+                      (g) => g.path === f.path,
+                    )
+                    return ignored ? (
+                      <p
+                        data-testid="ignored-folder"
+                        className="text-xs text-amber-600 dark:text-amber-400"
+                      >
+                        {t(
+                          ignored.reason === "not_absolute"
+                            ? "agents.allowedFolderNotAbsolute"
+                            : "agents.allowedFolderNotFound",
+                        )}
+                      </p>
+                    ) : null
+                  })()}
                 </div>
               )
             })}

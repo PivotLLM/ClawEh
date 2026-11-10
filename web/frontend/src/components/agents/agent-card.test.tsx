@@ -119,7 +119,7 @@ describe("AgentCard allowed folders", () => {
     expect(screen.getByText("Allowed folders")).toBeTruthy()
     expect(
       screen.getByText(
-        "File tools can use these folders. Write access follows file permissions.",
+        "File tools can use these folders; write access follows file permissions.",
       ),
     ).toBeTruthy()
     const paths = screen.getAllByLabelText("Folder path") as HTMLInputElement[]
@@ -147,6 +147,32 @@ describe("AgentCard allowed folders", () => {
     expect(onChange).toHaveBeenLastCalledWith([
       { path: "/srv/ref", notify: false },
     ])
+  })
+})
+
+describe("AgentCard ignored allowed folders", () => {
+  it("marks a skipped folder in its row with why", () => {
+    renderCard({
+      allowedFolders: [
+        { path: "/srv/src", notify: false },
+        { path: "notes", notify: false },
+        { path: "/srv/gone", notify: false },
+      ],
+      ignoredFolders: [
+        { agent: "alice", path: "notes", reason: "not_absolute" },
+        { agent: "alice", path: "/srv/gone", reason: "not_found" },
+      ],
+    })
+    const notes = screen.getAllByTestId("ignored-folder")
+    expect(notes.map((n) => n.textContent)).toEqual([
+      "Ignored: not an absolute path",
+      "Ignored: folder not found",
+    ])
+  })
+
+  it("shows no note when no folder is ignored", () => {
+    renderCard()
+    expect(screen.queryAllByTestId("ignored-folder")).toHaveLength(0)
   })
 })
 

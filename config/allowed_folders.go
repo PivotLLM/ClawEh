@@ -5,11 +5,13 @@ package config
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/PivotLLM/ClawEh/fileutil"
 	"github.com/PivotLLM/ClawEh/logger"
 )
 
@@ -25,7 +27,9 @@ type LegacyMountConfig struct {
 // migrateLegacyMounts turns each agent's retired mounts into allowed folders
 // (path and notify kept; the name and the writable flag are dropped, since
 // write access now follows file permissions) and clears them, so the next save
-// writes only allowed_folders. Each migrated entry is logged once at WARN. A
+// writes only allowed_folders. Each migrated entry is logged once at WARN, and
+// a mount that was read-only but whose folder the account can write gets a
+// second WARN saying the agent can now write there. A
 // mount whose path an allowed folder of the agent already has only merges its
 // notify flag.
 func (c *Config) migrateLegacyMounts() {
@@ -35,6 +39,10 @@ func (c *Config) migrateLegacyMounts() {
 			path := strings.TrimSpace(m.Path)
 			logger.WarnCF("config", "mounts is replaced by allowed_folders; migrated the entry (name and writable dropped, write access follows file permissions)",
 				map[string]any{"agent": a.ID, "path": path})
+			if !m.Writable && filepath.IsAbs(path) && fileutil.Writable(path) {
+				logger.WarnCF("config", "a read-only mount is now writable by the agent: its folder's file permissions allow writes; make it read-only for the app's account to keep it read-only",
+					map[string]any{"agent": a.ID, "path": path})
+			}
 			merged := false
 			for j := range a.AllowedFolders {
 				if a.AllowedFolders[j].Path == path {
@@ -110,4 +118,42 @@ func newAllowedFolderProblems(before, next *Config) []error {
 			}
 			return errors.New(name + "'s allowed folder " + strconv.Quote(p.Path) + " must be an absolute path.")
 		})
+}
+
+// Reasons an allowed folder is ignored (IgnoredAllowedFolder.Reason).
+const (
+	FolderNotAbsolute = "not_absolute"
+	FolderNotFound    = "not_found"
+)
+
+// IgnoredAllowedFolder is a configured allowed folder the file tools skip.
+type IgnoredAllowedFolder struct {
+	Agent  string // agent id
+	Path   string // the path as configured
+	Reason string // FolderNotAbsolute or FolderNotFound
+}
+
+// IgnoredAllowedFolders lists every configured allowed folder the file tools
+// skip, in config order: a path that is not absolute (one a migration left)
+// or that is not an existing directory.
+func (c *Config) IgnoredAllowedFolders() []IgnoredAllowedFolder {
+	var out []IgnoredAllowedFolder
+	for i := range c.Agents.List {
+		a := &c.Agents.List[i]
+		for _, f := range a.AllowedFolders {
+			p := strings.TrimSpace(f.Path)
+			switch {
+			case !filepath.IsAbs(p):
+				out = append(out, IgnoredAllowedFolder{Agent: a.ID, Path: f.Path, Reason: FolderNotAbsolute})
+			case !isDir(p):
+				out = append(out, IgnoredAllowedFolder{Agent: a.ID, Path: f.Path, Reason: FolderNotFound})
+			}
+		}
+	}
+	return out
+}
+
+func isDir(p string) bool {
+	info, err := os.Stat(p)
+	return err == nil && info.IsDir()
 }

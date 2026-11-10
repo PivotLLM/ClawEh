@@ -101,6 +101,23 @@ export async function getHumanAgents(): Promise<HumanAgentsInfo> {
   return { problems: res.problems ?? [], human_agents: res.human_agents ?? [] }
 }
 
+// IgnoredAllowedFolder is a saved allowed folder the file tools skip: its
+// path is not absolute, or the folder does not exist.
+export interface IgnoredAllowedFolder {
+  agent: string
+  path: string
+  reason: "not_absolute" | "not_found"
+}
+
+export async function getIgnoredAllowedFolders(): Promise<
+  IgnoredAllowedFolder[]
+> {
+  const res = await request<{ ignored?: IgnoredAllowedFolder[] }>(
+    "/api/agents/allowed-folders/ignored",
+  )
+  return res.ignored ?? []
+}
+
 // SecMsgLinkStatus mirrors the backend pairing reply. status is
 // "pending" | "complete" | "error"; qr_png is a PNG data-URL for the pairing URI.
 export interface SecMsgLinkStatus {

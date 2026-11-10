@@ -616,14 +616,20 @@ production instance directly; test against a dev instance.
   that resolves (links followed) inside an allowed folder from that folder's `os.Root`
   sandbox, past the workspace read/write scopes; a path that names an allowed folder but
   leads out of every one is refused when the agent is confined; relative paths keep
-  resolving from the workspace. `tools/files.AgentFolders` lists the folders the provider
+  resolving from the workspace. `agentFolders` (tools/files) lists the folders the provider
   registers per workspace (`SetAllowedFoldersForWorkspace`): each existing absolute
   allowed folder plus `<workspace>/maestro` when Maestro is on (no mount: `maestro/` is
   simply part of the workspace then). `files.Reader` uses the same table, so
   `msg_send_file`, cogmem attachments, forum sources and task-model files follow the same
   rule. `Store.Update` refuses a new non-absolute path ("Alice's allowed folder "x" must
   be an absolute path."). The retired `mounts` list is migrated at load and on save
-  (`migrateLegacyMounts`: path and notify kept, one WARN per entry). The prompt lists each
+  (`migrateLegacyMounts`: path and notify kept, one WARN per entry, and a second WARN
+  for a non-writable mount whose folder is writable). A folder the tools skip (not
+  absolute, not an existing directory: `Config.IgnoredAllowedFolders`) is marked on its
+  Agents page row (`GET /api/agents/allowed-folders/ignored`) and is a Check Up row
+  "Allowed folder (<agent>)". A path inside the workspace always follows the
+  workspace scopes, even when an allowed folder holds the workspace; only a folder
+  inside the workspace (maestro/) is served by its own sandbox there. The prompt lists each
   folder by its path, "(read-only)" when `fileutil.Writable` (access(2) W_OK) says no.
   New-file notices: `folderwatch` (notify on; `.claw` marker with a header line, a
   headerless pre-0.6.4 marker baselines).

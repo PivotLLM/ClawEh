@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -259,6 +260,15 @@ func collectAssessment(ctx context.Context, cfg *config.Config, env Environment)
 		shellText += "; CLI models with Allow CLI to bypass restrictions have their own shell"
 	}
 	add(len(shell) > 0 && !ex.EnableDenyPatterns, "Shell access", shellText+".")
+
+	// An allowed folder the file tools skip.
+	for _, f := range cfg.IgnoredAllowedFolders() {
+		status := "Ignored: " + strconv.Quote(f.Path) + " is not an absolute path."
+		if f.Reason == config.FolderNotFound {
+			status = "Ignored: folder " + strconv.Quote(f.Path) + " not found."
+		}
+		add(true, "Allowed folder ("+agentNames(cfg, []string{f.Agent})[0]+")", status)
+	}
 
 	// A built-in use with no task model: voice is not transcribed, images are
 	// not described for text-only models.

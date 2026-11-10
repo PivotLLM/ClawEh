@@ -37,6 +37,31 @@ type agentToolCatalogResponse struct {
 func (h *Handler) registerAgentRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/agents/tools", h.handleListAgentTools)
 	mux.HandleFunc("GET /api/agents/human", h.handleHumanAgentProblems)
+	mux.HandleFunc("GET /api/agents/allowed-folders/ignored", h.handleIgnoredAllowedFolders)
+}
+
+// ignoredAllowedFolder is an allowed folder of the saved configuration the
+// file tools skip (config.IgnoredAllowedFolders); the Agents page marks its
+// row. Reason is "not_absolute" or "not_found".
+type ignoredAllowedFolder struct {
+	Agent  string `json:"agent"`
+	Path   string `json:"path"`
+	Reason string `json:"reason"`
+}
+
+// handleIgnoredAllowedFolders lists the allowed folders the file tools skip.
+func (h *Handler) handleIgnoredAllowedFolders(w http.ResponseWriter, _ *http.Request) {
+	cfg, err := h.currentConfig()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	out := []ignoredAllowedFolder{}
+	for _, f := range cfg.IgnoredAllowedFolders() {
+		out = append(out, ignoredAllowedFolder{Agent: f.Agent, Path: f.Path, Reason: f.Reason})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	encodeJSON(w, map[string]any{"ignored": out})
 }
 
 // humanAgentProblem is one way the configuration breaks the human-agent
