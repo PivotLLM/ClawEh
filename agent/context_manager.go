@@ -553,6 +553,8 @@ func (al *AgentLoop) buildSessionEntry(bk sessionBuildKey, done chan struct{}, a
 		ctxengine.WithCompactDebug(debugCapture),
 		ctxengine.WithFailureDump(failureDump),
 		ctxengine.WithCompactionReporter(reporter),
+		// A person whose reply waits on a compaction is told so.
+		ctxengine.WithCompactionStartFunc(al.compactionStarted),
 		// The engine stops automatic compaction for a session after repeated
 		// summarization failures; the context then grows until the safety-net
 		// pass, so an operator should know.

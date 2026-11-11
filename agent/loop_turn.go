@@ -52,6 +52,9 @@ type processOptions struct {
 	// still owes the sender its reply.
 	MessageID     string
 	ReplyRequired bool
+	// FromPerson marks a turn answering a message someone wrote in a chat
+	// (fromPerson), the only kind told when a compaction makes it wait.
+	FromPerson bool
 	// OnReplyDelivery, when set with SendResponse, is told how the delivery
 	// of the reply ended (bus.OutboundMessage.OnDelivery), with the reply.
 	// It must not block.
@@ -110,6 +113,7 @@ func (al *AgentLoop) runAgentLoop(
 	// After the session context, so the session's token exists.
 	ctx, endTokenTurn := al.scopeSessionToken(ctx, agent, opts)
 	defer endTokenTurn()
+	ctx = withCompactionNotice(ctx, agent, opts)
 
 	if err = al.prepareSession(ctx, agent, cm, &opts); err != nil {
 		return "", err

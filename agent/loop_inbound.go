@@ -301,6 +301,7 @@ func (al *AgentLoop) inboundProcessOptions(msg bus.InboundMessage, agent *AgentI
 		OutcomeOut:      outcome,
 		MessageID:       msg.MessageID,
 		ReplyRequired:   msg.ReplyRequired(),
+		FromPerson:      fromPerson(msg),
 	}
 }
 

@@ -302,7 +302,8 @@ func (p *ageProvider) GetDefaultModel() string { return "age-model" }
 
 // TestDeferredCompaction_RealEngineAge: a person's message to a conversation
 // whose oldest message is past the age trigger is answered without waiting
-// for the summary; the summary is written after the reply.
+// for the summary and without the notice; the summary is written after the
+// reply.
 func TestDeferredCompaction_RealEngineAge(t *testing.T) {
 	restore := logger.RedirectForTest(&safeBufLoop{})
 	defer restore()
@@ -345,7 +346,7 @@ func TestDeferredCompaction_RealEngineAge(t *testing.T) {
 	dispatch(al, msg)
 
 	if out := nextOutbound(t, msgBus); out.Content != "hello" {
-		t.Fatalf("first outbound = %+v, want the reply", out)
+		t.Fatalf("first outbound = %+v, want the reply (no notice for an age-only compaction)", out)
 	}
 	select {
 	case <-provider.summaries:
@@ -365,4 +366,8 @@ func TestDeferredCompaction_RealEngineAge(t *testing.T) {
 	if agent.Sessions.GetSummary(sessionKey) == "" {
 		t.Fatal("the deferred age compaction wrote no summary")
 	}
+	noOutboundExcept(t, msgBus, func(out bus.OutboundMessage) bool {
+		// The engine's compaction report may follow; never the notice.
+		return out.Content != compactionNoticeText("Alice")
+	})
 }

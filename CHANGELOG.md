@@ -220,6 +220,13 @@
   400 with `API_KEY_INVALID`) raises **Voice transcription rejected** like a
   401 does.
 
+- **A chat is told when a compaction makes its reply wait.** When the
+  conversation has to be summarised before the agent can answer a person,
+  the chat gets one message first, naming the agent: "Alice is summarising
+  the conversation so far; the reply may take a moment." It is sent at most
+  once per reply, and never for scheduled jobs, webhooks, questions from
+  other agents, sub-agents, background results or `/compact`.
+
 ### Changed
 
 - **The voice alerts are now Normal priority, like every other alert.**
