@@ -205,13 +205,16 @@ func TestDeferredCompaction_NotStacked(t *testing.T) {
 	nextCompactCall(t, cm)
 }
 
-// TestDeferredCompaction_SkippedAgents: a sub-agent (ephemeral) and a
-// single-shot agent keep no conversation, so nothing is deferred for them.
+// TestDeferredCompaction_SkippedAgents: no temporary agent gets a deferred
+// compaction (a clone, a sub-agent, a fresh agent of any mode): it is deleted
+// once its work is done, and a pass holding its session would make that fail.
 func TestDeferredCompaction_SkippedAgents(t *testing.T) {
 	al := newTestAgentLoop(t).al
 	for _, agent := range []*AgentInstance{
-		{ID: "a1", Spec: agentreg.Spec{ID: "a1", Origin: agentreg.OriginTemp, Ephemeral: true}},
-		{ID: "a2", Spec: agentreg.Spec{ID: "a2", Origin: agentreg.OriginTemp, Fresh: true, Mode: agentreg.ModeSingleShot}},
+		{ID: "a1", Spec: agentreg.Spec{ID: "a1", Origin: agentreg.OriginTemp, SourceID: "main"}},
+		{ID: "a2", Spec: agentreg.Spec{ID: "a2", Origin: agentreg.OriginTemp, SourceID: "main", Ephemeral: true}},
+		{ID: "a3", Spec: agentreg.Spec{ID: "a3", Origin: agentreg.OriginTemp, Fresh: true, Mode: agentreg.ModeMemory}},
+		{ID: "a4", Spec: agentreg.Spec{ID: "a4", Origin: agentreg.OriginTemp, Fresh: true, Mode: agentreg.ModeSingleShot}},
 	} {
 		cm := newDueContextManager(nil)
 		injectContextManager(al, agent.ID, "s1", cm)

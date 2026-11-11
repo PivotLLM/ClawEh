@@ -70,12 +70,12 @@ func (q *afterReplyQueue) run() {
 // once the turn's reply is out: queued on q when the turn has one, started now
 // otherwise (a caller that delivers the reply itself, such as the CLI, gets it
 // as the turn returns; the pass runs in the background and does not hold it
-// up). Agents that never keep a conversation for long are
-// skipped: an ephemeral agent (a sub-agent, deleted once its result is
-// delivered) and a single-shot one (its conversation is discarded after the
-// turn).
+// up). Temporary agents are skipped: they are deleted after 24 hours idle or
+// as soon as their work is done (a sub-agent, a forum participant), so their
+// conversation rarely ages past the trigger, and the reference the pass holds
+// on the session would make such a deletion fail.
 func (al *AgentLoop) compactAfterReply(q *afterReplyQueue, agent *AgentInstance, sessionKey string) {
-	if agent.Spec.Ephemeral || agent.Spec.SingleShot() {
+	if agent.IsTemp() {
 		return
 	}
 	start := func() { al.startDeferredCompaction(agent, sessionKey) }
