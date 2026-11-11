@@ -502,10 +502,14 @@ func TestReload_ChannelStillRetryingItsStart(t *testing.T) {
 	await(t, old.entered, "the first start")
 
 	// Let the retry begin and hold it inside Start, past its cancellation.
-	old.gate, old.ignoreCtx = gate, true
-	if err := clk.BlockUntil(context.Background(), 1); err != nil {
+	// Two timers wait on the clock once the retry is scheduled: the TTL
+	// janitor's ticker (StartAll) and the retry's backoff. Advancing before
+	// the second exists would leave the retry waiting forever. The gate is
+	// set only then, once the first Start has returned.
+	if err := clk.BlockUntil(context.Background(), 2); err != nil {
 		t.Fatal(err)
 	}
+	old.gate, old.ignoreCtx = gate, true
 	clk.Advance(2 * StartRetryMin)
 	await(t, old.entered, "the retry")
 
