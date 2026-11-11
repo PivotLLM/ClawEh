@@ -57,6 +57,12 @@ type OutboundMessage struct {
 	// split into chunks reports once, with the first non-nil error among
 	// them. It must not block.
 	OnDelivery func(error) `json:"-"`
+	// StillWorking marks an interim message sent while the turn goes on (a
+	// notice that the reply will take a while). Sending it clears the chat's
+	// typing indicator and placeholder like any message; once it is
+	// delivered, the channel manager shows them again, so the chat still
+	// looks busy until the reply.
+	StillWorking bool `json:"-"`
 }
 
 // Outcomes of a turn, carried on its final reply (OutboundMessage.Outcome).

@@ -70,8 +70,8 @@ func TestCompactionNotice_WhoIsTold(t *testing.T) {
 			}
 			if tc.told {
 				out := nextOutbound(t, msgBus)
-				if out.Channel != "test" || out.ChatID != "c1" || out.Content != want || out.Outcome != "" {
-					t.Fatalf("notice = %+v, want %q to test/c1 with no outcome", out, want)
+				if out.Channel != "test" || out.ChatID != "c1" || out.Content != want || out.Outcome != "" || !out.StillWorking {
+					t.Fatalf("notice = %+v, want %q to test/c1 with no outcome, the chat kept busy", out, want)
 				}
 			}
 			noOutbound(t, msgBus)

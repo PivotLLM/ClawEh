@@ -70,6 +70,8 @@ func (al *AgentLoop) compactionStarted(ctx context.Context, info ctxengine.Compa
 		Channel: notice.channel,
 		ChatID:  notice.chatID,
 		Content: notice.text,
+		// The reply is still coming: the chat keeps showing it is busy.
+		StillWorking: true,
 	}); err != nil {
 		fields["error"] = err.Error()
 		logger.WarnCF("agent", "Failed to send the compaction notice", turnFields(ctx, fields))

@@ -706,11 +706,44 @@ func (m *Manager) runWorker(ctx context.Context, name string, w *channelWorker) 
 	}
 }
 
-// sendSplit sends msg through w, split into chunks when it exceeds the
+// sendSplit sends msg through w (sendChunks) and, once an interim message
+// (StillWorking) is delivered, shows the chat busy again (showWorking).
+func (m *Manager) sendSplit(ctx context.Context, name string, w *channelWorker, msg bus.OutboundMessage) error {
+	if !msg.StillWorking {
+		return m.sendChunks(ctx, name, w, msg)
+	}
+	key := name + ":" + msg.ChatID
+	_, typing := m.typingStops.Load(key)
+	_, placeholder := m.placeholders.Load(key)
+	err := m.sendChunks(ctx, name, w, msg)
+	if err == nil {
+		m.showWorking(ctx, name, msg.ChatID, w.ch, typing, placeholder)
+	}
+	return err
+}
+
+// showWorking shows again what sending an interim message cleared (see
+// bus.OutboundMessage.StillWorking): the typing indicator and the
+// placeholder, each only when the chat had one before. It runs on the
+// channel's worker, so the reply queued after the message finds them.
+func (m *Manager) showWorking(ctx context.Context, name, chatID string, ch Channel, typing, placeholder bool) {
+	if tc, ok := ch.(TypingCapable); ok && typing {
+		if stop, err := tc.StartTyping(ctx, chatID); err == nil {
+			m.RecordTypingStop(name, chatID, stop)
+		}
+	}
+	if pc, ok := ch.(PlaceholderCapable); ok && placeholder {
+		if phID, err := pc.SendPlaceholder(ctx, chatID); err == nil && phID != "" {
+			m.RecordPlaceholder(name, chatID, phID)
+		}
+	}
+}
+
+// sendChunks sends msg through w, split into chunks when it exceeds the
 // channel's maximum message length, and returns the first non-nil error
 // among the chunks. Every chunk is attempted unless the recipient is offline
 // or can't be reached.
-func (m *Manager) sendSplit(ctx context.Context, name string, w *channelWorker, msg bus.OutboundMessage) error {
+func (m *Manager) sendChunks(ctx context.Context, name string, w *channelWorker, msg bus.OutboundMessage) error {
 	maxLen := 0
 	if mlp, ok := w.ch.(MessageLengthProvider); ok {
 		maxLen = mlp.MaxMessageLength()
