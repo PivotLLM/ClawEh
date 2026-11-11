@@ -61,6 +61,37 @@ type ModelCaller interface {
 	Complete(ctx context.Context, agentID, system, user string) (reply, model string, err error)
 }
 
+// NamedText is one Markdown file of an instructions folder: its file name
+// and its content.
+type NamedText struct {
+	Name string
+	Text string
+}
+
+// InstructionsReader reads a classifier's Markdown instructions as the
+// owning agent, with that agent's own file-read permission: only what its
+// file tools may read, and only inside its files/ area (a link leading out
+// of it is refused). path is workspace-relative (ValidInstructionsPath).
+// A missing file or folder is an error wrapping fs.ErrNotExist; every
+// other error is a short reason ("it is a folder").
+type InstructionsReader interface {
+	// ReadInstructionsFile returns the content of the regular file at path,
+	// refused when it has more than MaxInstructionsFileBytes bytes.
+	ReadInstructionsFile(agentID, path string) (string, error)
+	// ReadInstructionsDir returns every regular *.md file directly in the
+	// folder at path (not recursive, hidden names skipped, a name ending in
+	// .md in any case; other entries are skipped), in any order; refused
+	// when one has more than MaxInstructionsFileBytes bytes or all together
+	// more than MaxInstructionsDirBytes.
+	ReadInstructionsDir(agentID, path string) ([]NamedText, error)
+}
+
+// Size caps of the Markdown instructions a classifier reads, in bytes.
+const (
+	MaxInstructionsFileBytes = 256 << 10
+	MaxInstructionsDirBytes  = 1 << 20
+)
+
 // Notifier posts a run's summary to the owning agent's default chat. The host
 // names the agent; text names the classifier. Errors are logged only.
 type Notifier interface {
@@ -117,12 +148,15 @@ func (systemClock) After(d time.Duration) <-chan time.Time { return time.After(d
 // Host bundles what the service needs from ClawEh. Tools, Model and Logger
 // are required; the others may be nil.
 type Host struct {
-	Tools    ToolRunner
-	Model    ModelCaller
-	Notifier Notifier // nil: summaries are not posted
-	Auditor  Auditor  // nil: nothing is audited
-	Logger   Logger
-	Clock    Clock // nil: the system clock
+	Tools ToolRunner
+	Model ModelCaller
+	// Instructions reads classify.instructions_file and instructions_dir.
+	// nil: a classifier naming either fails its runs.
+	Instructions InstructionsReader
+	Notifier     Notifier // nil: summaries are not posted
+	Auditor      Auditor  // nil: nothing is audited
+	Logger       Logger
+	Clock        Clock // nil: the system clock
 	// Modes gives the exact folder and file modes of what is created under
 	// base (a scope's BaseDirectory). nil or zero means 0700/0600.
 	Modes func(base string) (dir, file os.FileMode)

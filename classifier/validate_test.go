@@ -66,7 +66,7 @@ func TestValidateStatic(t *testing.T) {
 		{"category in fetch", func(m map[string]any) {
 			obj(m["fetch"])["args"] = map[string]any{"id": "{{category}}"}
 		}, "cannot be used in fetch.args"},
-		{"no instructions", func(m map[string]any) { obj(m["classify"])["instructions"] = " " }, "classify.instructions is required."},
+		{"no instructions", func(m map[string]any) { obj(m["classify"])["instructions"] = " " }, "classify.instructions is required unless classify.instructions_file or classify.instructions_dir is set."},
 		{"too many rules", func(m map[string]any) {
 			obj(m["classify"])["rules"] = []any{"a", "b", "c", "d"}
 		}, "classify.rules has 4 rules; this install allows 3."},
@@ -234,7 +234,7 @@ func TestParseReply(t *testing.T) {
 
 func TestBuildPrompt(t *testing.T) {
 	def := decodeMap(t, definition())
-	system, user := buildPrompt(def, itemData{
+	system, user := buildPrompt(def, instructions{}, itemData{
 		fields:  []Field{{Name: "body", Value: "Hello", Shortened: true}, {Name: "subject", Value: "Hi"}},
 		missing: []string{"from"},
 	}, "", "T0K")
@@ -265,7 +265,7 @@ func TestBuildPromptContentCannotForgeBoundary(t *testing.T) {
 	if d1 == d2 || len(d1) != 32 {
 		t.Fatalf("delimiters %q and %q are not fresh 128-bit tokens", d1, d2)
 	}
-	_, user := buildPrompt(def, data, "", d1)
+	_, user := buildPrompt(def, instructions{}, data, "", d1)
 	if strings.Count(user, "</item "+d1+">") != 1 || !strings.HasSuffix(user, "</item "+d1+">\n") {
 		t.Errorf("the block is not closed exactly once, at its end:\n%s", user)
 	}

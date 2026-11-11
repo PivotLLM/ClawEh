@@ -147,9 +147,11 @@ func ValidateStatic(def *Definition, c Ceilings) error {
 	}
 
 	// Classify.
-	if strings.TrimSpace(def.Classify.Instructions) == "" {
-		add("classify.instructions is required.")
+	markdown := def.Classify.InstructionsFile != "" || def.Classify.InstructionsDir != ""
+	if strings.TrimSpace(def.Classify.Instructions) == "" && !markdown {
+		add("classify.instructions is required unless classify.instructions_file or classify.instructions_dir is set.")
 	}
+	issues = append(issues, checkInstructionsPaths(def.Classify)...)
 	if c.MaxRules > 0 && len(def.Classify.Rules) > c.MaxRules {
 		add("classify.rules has %d rules; this install allows %d.", len(def.Classify.Rules), c.MaxRules)
 	}

@@ -243,16 +243,16 @@ func TestRerunAndTest(t *testing.T) {
 		t.Errorf("Test ran an action: %d moves", n)
 	}
 	// Without an item id, Test takes the first item listed.
-	if d, err = e.svc.Test(context.Background(), e.scope, "inbox-priority", ""); err != nil || d.ItemID != "m1" {
-		t.Errorf("Test(first) = %+v, %v", d, err)
+	if first, firstErr := e.svc.Test(context.Background(), e.scope, "inbox-priority", ""); firstErr != nil || first.ItemID != "m1" {
+		t.Errorf("Test(first) = %+v, %v", first, firstErr)
 	}
 
-	d, err = e.svc.Rerun(context.Background(), e.scope, "inbox-priority", "m1")
+	rerun, err := e.svc.Rerun(context.Background(), e.scope, "inbox-priority", "m1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d.Category != "low" || !d.Rerun || d.Outcome != OutcomeActed {
-		t.Errorf("Rerun = %+v", d)
+	if rerun.Category != "low" || !rerun.Rerun || rerun.Outcome != OutcomeActed {
+		t.Errorf("Rerun = %+v", rerun)
 	}
 	moves := e.tools.callsOf("mail_move")
 	if last := moves[len(moves)-1]; last.args["id"] != "m1" || last.args["destination"] != "low" {

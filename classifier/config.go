@@ -54,11 +54,17 @@ type Fetch struct {
 	MaxChars int               `json:"max_chars,omitempty"`
 }
 
-// Classify is the question asked about each item.
+// Classify is the question asked about each item. InstructionsFile and
+// InstructionsDir name Markdown in the owning agent's files/ area
+// (workspace-relative), read on every run: the file's whole content, and
+// every *.md file directly in the folder (hidden ones skipped) in
+// alphabetical order of their names (instructionsOrder).
 type Classify struct {
-	Instructions string     `json:"instructions"`
-	Rules        []string   `json:"rules,omitempty"`
-	Categories   []Category `json:"categories"`
+	Instructions     string     `json:"instructions"`
+	InstructionsFile string     `json:"instructions_file,omitempty"`
+	InstructionsDir  string     `json:"instructions_dir,omitempty"`
+	Rules            []string   `json:"rules,omitempty"`
+	Categories       []Category `json:"categories"`
 }
 
 // Category is one possible answer.

@@ -63,9 +63,11 @@ var fieldDocs = map[string]fieldDoc{
 	"Fetch.html":      {desc: "Names of fields whose HTML is reduced to text"},
 	"Fetch.max_chars": {desc: "Characters the fields may take together, the longest cut first; the install's maximum when omitted", min: 1},
 
-	"Classify.instructions": {desc: "What to decide about each item"},
-	"Classify.rules":        {desc: "Rules applied in order, such as \"Email from bob@example.com is always urgent.\""},
-	"Classify.categories":   {desc: "The possible answers; at least one"},
+	"Classify.instructions":      {desc: "What to decide about each item; may be empty when instructions_file or instructions_dir is set"},
+	"Classify.instructions_file": {desc: "Path of a .md file under files/ (such as files/classifiers/inbox/guide.md) whose content follows instructions; read on every run, so edits apply on the next run"},
+	"Classify.instructions_dir":  {desc: "Path of a folder under files/ (such as files/classifiers/inbox/rules); every .md file directly in it is added under its name, read on every run. Files load in alphabetical order of their names; to control the order, you can start names with zero-padded numbers such as 00-, 01-"},
+	"Classify.rules":             {desc: "Rules applied in order, such as \"Email from bob@example.com is always urgent.\"; prefer one .md file per rule in instructions_dir"},
+	"Classify.categories":        {desc: "The possible answers; at least one"},
 
 	"Category.name":        {desc: "Category name: letters, digits, - and _; not \"unclassified\""},
 	"Category.description": {desc: "What belongs in the category"},

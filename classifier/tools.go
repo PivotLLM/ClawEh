@@ -46,7 +46,7 @@ func Tools(svc *Service, host ToolHost) []toolspec.ToolDefinition {
 		{Name: "list", Description: "List your classifiers", Handler: t.list},
 		{Name: "get", Description: "Return a classifier's definition", Handler: t.get, Parameters: []toolspec.Parameter{id}},
 		{Name: "create", Description: "Create a classifier; it is checked against your tools, its source tool is called once, and it runs at once unless dry_run is set", Handler: t.create, Parameters: []toolspec.Parameter{definition}},
-		{Name: "update", Description: "Change a classifier with a JSON merge patch; items already handled are not reprocessed", Handler: t.update, Parameters: []toolspec.Parameter{
+		{Name: "update", Description: "Change a classifier with a JSON merge patch; items already handled are not reprocessed. To change rules kept in Markdown (instructions_file, instructions_dir), edit those files with your file tools instead", Handler: t.update, Parameters: []toolspec.Parameter{
 			id,
 			{Name: "changes", Type: "object", Required: true, Description: "JSON merge patch (RFC 7386): objects merge, null deletes a key, arrays such as classify.rules are replaced whole"},
 		}},
@@ -55,7 +55,7 @@ func Tools(svc *Service, host ToolHost) []toolspec.ToolDefinition {
 		{Name: "status", Description: "A classifier's last run, counts, recent decisions and last error; omit id for all your classifiers", Handler: t.status, Parameters: []toolspec.Parameter{
 			{Name: "id", Type: "string", Description: "Classifier ID; omit for all"},
 		}},
-		{Name: "test", Description: "Classify one item without acting or storing anything: the category, reason and the action that would run", Handler: t.test, Parameters: []toolspec.Parameter{
+		{Name: "test", Description: "Classify one item without acting or storing anything: the category, reason, the action that would run and the system prompt with your Markdown instructions loaded", Handler: t.test, Parameters: []toolspec.Parameter{
 			id,
 			{Name: "item_id", Type: "string", Description: "The item's ID; omit for the first item the source lists"},
 		}},

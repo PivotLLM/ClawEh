@@ -23,6 +23,18 @@
 
 ### Added
 
+- **A classifier can keep its rules in Markdown files.** Two optional keys
+  in a definition's `classify`: `instructions_file`, one `.md` file, and
+  `instructions_dir`, a folder whose `.md` files (not sub-folders, not
+  hidden ones) are each added under their name, in alphabetical order of
+  the names. Both are paths in the agent's `files/` folder, read on every
+  run with the agent's own file permission, so the agent changes a rule by
+  editing a file and the change applies on the next run. `instructions` may
+  be empty when either is set. The text counts toward
+  `classifiers.limits.max_prompt_chars`; a missing or unreadable file, or
+  text over the limit, ends the run in error naming the classifier and the
+  path, with nothing classified. `classifier_test` now also returns the
+  system prompt (`system_prompt`) with the files loaded.
 - **`file_glob` finds files by name pattern.** A new file tool: `pattern`
   (`*` within one folder, `**` across folders, `?`, `{a,b}`) and an optional
   `path`, the folder to search under (relative to the workspace or

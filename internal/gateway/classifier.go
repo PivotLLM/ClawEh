@@ -25,14 +25,15 @@ const classifierCloseTimeout = 10 * time.Second
 // whenever the service needs them.
 func newClassifierService(host *agent.ClassifierHost) *classifier.Service {
 	svc := classifier.New(classifier.Host{
-		Tools:    host,
-		Model:    host,
-		Notifier: host,
-		Auditor:  host,
-		Logger:   logger.NewLogger("classifier"),
-		Modes:    host.Modes,
-		Ceilings: host.Ceilings,
-		Scopes:   host.Scopes,
+		Tools:        host,
+		Model:        host,
+		Instructions: host,
+		Notifier:     host,
+		Auditor:      host,
+		Logger:       logger.NewLogger("classifier"),
+		Modes:        host.Modes,
+		Ceilings:     host.Ceilings,
+		Scopes:       host.Scopes,
 	})
 	toolsclassifier.SetService(svc)
 	return svc

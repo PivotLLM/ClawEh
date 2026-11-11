@@ -28,9 +28,9 @@ for you; a definition does not name one.
    reason and the action it would have run (`action_args`), filtered by
    `search` (a sender, a subject word, a destination). Summarise for the
    user: what went where, and anything that looks wrong.
-4. **Adjust.** Turn the user's corrections into rules with
-   `classifier_update`, and check a specific item with `classifier_test`
-   before relying on the change.
+4. **Adjust.** Turn the user's corrections into rules: edit or add a rule
+   file with your file tools (see "Rules in Markdown"), and check a specific
+   item with `classifier_test` before relying on the change.
 5. **Go live only when the user agrees.** Set `"dry_run": false`. Every item
    still in the source is then classified again with the current rules and
    acted on, so say so before switching.
@@ -94,7 +94,8 @@ for you; a definition does not name one.
   the longest first, and the model is told which were shortened. Without
   `fetch`, the model sees the list element's members.
 - `classify`: the instructions, rules applied in order, and the categories.
-  `unclassified` is reserved.
+  `unclassified` is reserved. `instructions_file` and `instructions_dir`
+  add Markdown from `files/` (see below); `instructions` may then be empty.
 - `actions`: the tool run for each category. A category with no action is
   only recorded.
 - `limits`: items per run (the rest are taken next run), items handled at
@@ -106,6 +107,58 @@ for you; a definition does not name one.
 - `activity_hours`: how long the activity log is kept (72 by default).
 
 ClawEh writes `owner`, `created_at` and `updated_at`.
+
+## Rules in Markdown
+
+Keep the classification guidance and rules in Markdown under `files/`, and
+keep the JSON for the source, fetch, categories and actions. Then you change
+a rule by editing a file with your file tools, not the definition.
+
+- `classify.instructions_file`: one `.md` file with the overall guidance,
+  such as `files/classifiers/<id>/guide.md`.
+- `classify.instructions_dir`: a folder, such as
+  `files/classifiers/<id>/rules`. Every `.md` file directly in it is added
+  under a `## <file name>` heading; sub-folders and names starting with `.`
+  are skipped. Use one short file per rule, for example one per sender
+  domain.
+- Files load in alphabetical order of their names. To control the order,
+  you can start names with zero-padded numbers such as `00-`, `01-`, …
+  `33-`.
+- The model gets, in order: `instructions`, the file, the folder's files,
+  the numbered `rules`, then the categories.
+- Both paths are relative to your workspace and must be inside `files/`;
+  they are read with your own file permission, so you need
+  `file_read_lines` or `file_read_bytes`. The files are read on every run, so an edit applies on the next run.
+  Items already classified are not reprocessed.
+- If a file or folder is missing or can't be read, or the text is over
+  `max_prompt_chars` with `instructions` and `rules`, the run classifies
+  nothing and its error says why (`classifier_status`).
+- `classifier_test` shows the system prompt with the files loaded
+  (`system_prompt`), so you can check your rules.
+
+Example, for email:
+
+```json
+"classify": {
+  "instructions_file": "files/classifiers/inbox-priority/guide.md",
+  "instructions_dir": "files/classifiers/inbox-priority/rules",
+  "categories": [
+    { "name": "urgent" }, { "name": "normal" }, { "name": "low" }
+  ]
+}
+```
+
+`files/classifiers/inbox-priority/rules/00-example.com.md`:
+
+```markdown
+Email from example.com is from a client: urgent.
+```
+
+`files/classifiers/inbox-priority/rules/10-news.example.org.md`:
+
+```markdown
+Email from news.example.org is a newsletter: low, unless it mentions an invoice.
+```
 
 ## Paths
 
@@ -131,8 +184,8 @@ resolves to nothing fails that item; nothing empty is passed to a tool.
 - An item is done once its action succeeds. A failed item is tried again on
   the next run; if the model had already answered, its first answer is
   reused. An unclassified item is not tried again.
-- Changing the rules, categories or actions does not reprocess items already
-  handled. Use `classifier_rerun` to reclassify one item on purpose.
+- Changing the rules (in the definition or in its Markdown files),
+  categories or actions does not reprocess items already handled. Use `classifier_rerun` to reclassify one item on purpose.
 - `dry_run` records decisions without running actions, kept apart from the
   live state: switching to live classifies everything again. Its activity
   entries show each action's arguments (`action_args`) after substitution.
@@ -148,7 +201,7 @@ resolves to nothing fails that item; nothing empty is passed to a tool.
 - `classifier_validate`: the same checks without saving.
 - `classifier_list`, `classifier_get`, `classifier_status`.
 - `classifier_test`: classify one item (or the first listed) without acting
-  or storing anything.
+  or storing anything; it shows the system prompt the model got.
 - `classifier_rerun`: classify one item again and run its action.
 - `classifier_activity`: the activity log, newest first, with `limit`,
   `offset` and `search`.

@@ -211,6 +211,7 @@ type env struct {
 	scope    Scope
 	tools    *fakeTools
 	model    *fakeModel
+	instr    *fakeInstructions
 	notifier *fakeNotifier
 	auditor  *fakeAuditor
 	log      *testLogger
@@ -235,6 +236,7 @@ func newEnv(t *testing.T) *env {
 		scope:    Scope{AgentID: "alice", BaseDirectory: filepath.Join(t.TempDir(), "classifiers")},
 		tools:    &fakeTools{handlers: map[string]func(map[string]any) (string, error){}},
 		model:    &fakeModel{},
+		instr:    &fakeInstructions{files: map[string]string{}, dirs: map[string][]NamedText{}},
 		notifier: &fakeNotifier{},
 		auditor:  &fakeAuditor{},
 		clock:    clock.NewFake(testStart),
@@ -259,7 +261,7 @@ func newEnv(t *testing.T) *env {
 		return "low: a newsletter", nil
 	})
 	e.svc = New(Host{
-		Tools: e.tools, Model: e.model, Notifier: e.notifier, Auditor: e.auditor, Logger: e.log, Clock: e.clock,
+		Tools: e.tools, Model: e.model, Instructions: e.instr, Notifier: e.notifier, Auditor: e.auditor, Logger: e.log, Clock: e.clock,
 		Modes:    func(string) (os.FileMode, os.FileMode) { return 0o750, 0o640 },
 		Ceilings: func() Ceilings { e.mu.Lock(); defer e.mu.Unlock(); return e.ceilings },
 		Scopes:   func() []Scope { e.mu.Lock(); defer e.mu.Unlock(); return append([]Scope(nil), e.scopes...) },

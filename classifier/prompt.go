@@ -37,15 +37,26 @@ func newDelimiter() string {
 }
 
 // buildPrompt is one request about an item (design 5.1a): the system prompt
-// holds the instructions, the rules in order, the categories with their
-// descriptions, the output contract and how the item is delimited; the user
-// message holds the item's fields between lines carrying delim (a fresh
-// random token, newDelimiter). badReply, when not empty, is a previous reply
-// that named no category: the request then says so, after the item
-// (design 5.1c).
-func buildPrompt(def *Definition, data itemData, badReply, delim string) (system, user string) {
+// holds the instructions (inline, then the instructions file's content,
+// then each file of the instructions folder under a "## <name>" heading, in
+// load order), the rules in order, the categories with their descriptions,
+// the output contract and how the item is delimited; the user message holds
+// the item's fields between lines carrying delim (a fresh random token,
+// newDelimiter). badReply, when not empty, is a previous reply that named
+// no category: the request then says so, after the item (design 5.1c).
+func buildPrompt(def *Definition, in instructions, data itemData, badReply, delim string) (system, user string) {
 	var s strings.Builder
-	s.WriteString(strings.TrimSpace(def.Classify.Instructions))
+	var parts []string
+	if t := strings.TrimSpace(def.Classify.Instructions); t != "" {
+		parts = append(parts, t)
+	}
+	if t := strings.TrimSpace(in.file); t != "" {
+		parts = append(parts, t)
+	}
+	for _, f := range in.dir {
+		parts = append(parts, strings.TrimSpace("## "+f.Name+"\n\n"+strings.TrimSpace(f.Text)))
+	}
+	s.WriteString(strings.Join(parts, "\n\n"))
 	s.WriteString("\n")
 	if len(def.Classify.Rules) > 0 {
 		s.WriteString("\nRules:\n")

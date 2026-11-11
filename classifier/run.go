@@ -27,17 +27,19 @@ const (
 
 // decision is the outcome of deciding one item: the Decision, the item's
 // data (fields for the activity log, fetched values for the action), and a
-// run-wide error (no usable model, cooldown) that ends the run.
+// run-wide error (no usable model, cooldown) that ends the run. system is
+// the system prompt of the first model request, "" when none was made.
 type decision struct {
 	Decision
-	data  itemData
-	fatal error
+	data   itemData
+	fatal  error
+	system string
 }
 
 // decide fetches one item and classifies it. reuse, when it holds a
 // category the definition still has, is the first attempt's answer (design
 // 7.1b): no model call is made.
-func (s *Service) decide(ctx context.Context, scope Scope, def *Definition, item listedItem, reuse *processedRow) decision {
+func (s *Service) decide(ctx context.Context, scope Scope, def *Definition, in instructions, item listedItem, reuse *processedRow) decision {
 	var d decision
 	d.ItemID = item.id
 	if def.Fetch != nil {
@@ -63,7 +65,8 @@ func (s *Service) decide(ctx context.Context, scope Scope, def *Definition, item
 	}
 
 	delim := newDelimiter()
-	system, user := buildPrompt(def, d.data, "", delim)
+	system, user := buildPrompt(def, in, d.data, "", delim)
+	d.system = system
 	reply, model, err := s.host.Model.Complete(ctx, scope.AgentID, system, user)
 	if err != nil {
 		return d.modelFailed(err)
@@ -71,7 +74,7 @@ func (s *Service) decide(ctx context.Context, scope Scope, def *Definition, item
 	d.Model = model
 	category, reason, ok := parseReply(reply, def)
 	if !ok {
-		system, user = buildPrompt(def, d.data, reply, newDelimiter())
+		system, user = buildPrompt(def, in, d.data, reply, newDelimiter())
 		reply, model, err = s.host.Model.Complete(ctx, scope.AgentID, system, user)
 		if err != nil {
 			return d.modelFailed(err)
@@ -161,10 +164,10 @@ func nonNilArgs(args map[string]any) map[string]any {
 // action that ran is recorded even when the run is stopped meanwhile; a
 // classification that cannot be recorded fails the item before its action
 // runs, so a later run never repeats an action it did not know had run.
-func (s *Service) handleItem(ctx context.Context, scope Scope, def *Definition, st *stateDB, item listedItem, reuse *processedRow, mode itemMode) decision {
+func (s *Service) handleItem(ctx context.Context, scope Scope, def *Definition, in instructions, st *stateDB, item listedItem, reuse *processedRow, mode itemMode) decision {
 	ctx = withClassifier(ctx, NormalizeID(def.ID))
 	dry := mode == modeDry || (mode == modeRerun && def.DryRun)
-	d := s.decide(ctx, scope, def, item, reuse)
+	d := s.decide(ctx, scope, def, in, item, reuse)
 	now := s.host.clock().Now().UTC()
 	d.At, d.DryRun, d.Rerun = now, dry, mode == modeRerun
 	cls := NormalizeID(def.ID)
@@ -277,6 +280,13 @@ func (s *Service) runClassifier(ctx context.Context, scope Scope, def *Definitio
 	if err = validateGrants(def, scope.AgentID, s.host.Tools); err != nil {
 		return fail(err)
 	}
+	// Read on every run, before the source is called: a missing or
+	// unreadable Markdown file, or a prompt over max_prompt_chars, classifies
+	// nothing.
+	in, err := s.loadInstructions(scope, def)
+	if err != nil {
+		return fail(err)
+	}
 	items, err := listItems(ctx, def, scope.AgentID, s.host.Tools)
 	if err != nil {
 		return fail(err)
@@ -345,7 +355,7 @@ func (s *Service) runClassifier(ctx context.Context, scope Scope, def *Definitio
 		go func(item listedItem) {
 			defer wg.Done()
 			defer func() { <-slots }()
-			d := s.handleItem(ctx, scope, def, st, item, reuse[item.id], mode)
+			d := s.handleItem(ctx, scope, def, in, st, item, reuse[item.id], mode)
 			mu.Lock()
 			defer mu.Unlock()
 			switch d.Outcome {

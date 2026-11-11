@@ -25,7 +25,7 @@ Ask the agent. For example, to Alice:
 
 > Every two minutes, sort my inbox into urgent, normal and low. Mail from bob@example.com is from a client and is always urgent. Move urgent mail to Priority/Urgent and low mail to Priority/Low.
 
-Alice reads the format with `classifier_readme`, writes the definition and saves it with `classifier_create`. To change the rules later, tell her ("newsletters are always low"); she updates the definition with `classifier_update`.
+Alice reads the format with `classifier_readme`, writes the definition and saves it with `classifier_create`. To change the rules later, tell her ("newsletters are always low"); she edits the rule files (see [Rules in Markdown](#rules-in-markdown)) or updates the definition with `classifier_update`.
 
 A classifier belongs to the agent that created it and runs as that agent: the tools it lists, reads and acts with must be tools the agent has. This is checked when the definition is saved and again on every run. A tool that needs a conversation, and the classifier tools themselves, cannot be used.
 
@@ -38,7 +38,7 @@ The agent's guide tells it to:
 1. Agree the categories, actions and interval with you, and ask how often to run if you have not said. Every run calls the source tool, so it uses minutes, not seconds (five minutes for email unless you say otherwise).
 2. Start in [dry run](#dry-run) unless you ask for it to act at once, and tell you that decisions are kept for 72 hours by default.
 3. When you ask how it is doing, review the activity log and summarise what went where.
-4. Turn your corrections into rules and check a message with `classifier_test`.
+4. Turn your corrections into rules, kept as Markdown files under `files/`, and check a message with `classifier_test`.
 5. Switch to live only when you agree, warning you that everything still in the source is then classified and acted on.
 
 ## Where they live
@@ -101,13 +101,41 @@ You can edit a definition file by hand. ClawEh reads it again when it changes an
 | `trigger.every_seconds` | How often it runs. A run that finds nothing new makes no model call. |
 | `source` | The tool that lists the items. `items` is the path to the list in its result (`""` when the result is the list); `id` is the path, inside one item, to its stable id. |
 | `fetch` | Optional: the tool that reads one item. `fields` names what the model sees; everything else is dropped. `html` lists the fields whose HTML is turned into text. The fields are cut to `max_chars` together, longest first, and the model is told which were shortened. Without `fetch`, the model sees the listed item. |
-| `classify` | The instructions, the rules (applied in order) and the categories. `unclassified` is reserved. |
+| `classify` | The instructions, the rules (applied in order) and the categories. `unclassified` is reserved. `instructions_file` and `instructions_dir` add Markdown from the agent's `files/` (see [Rules in Markdown](#rules-in-markdown)); `instructions` may then be empty. |
 | `actions` | The tool run for each category. A category with no action is only recorded. |
 | `limits` | `items_per_run`: items taken per run, the rest wait for the next. `parallel`: items handled at the same time. `stop_after_failures`: consecutive failures that stop a run. |
 | `report.summary` | `on_problems` (default): a summary to the agent's default chat when items failed or were unclassified. `always`: after every run that handled items. `never`. |
 | `activity_hours` | How long the activity log is kept. |
 
 ClawEh writes `owner`, `created_at` and `updated_at`.
+
+### Rules in Markdown
+
+A classifier can keep its guidance and rules in Markdown files in the agent's `files/` folder, so the agent changes a rule by editing a file with its file tools instead of rewriting the definition. The definition keeps the source, fetch, categories and actions.
+
+| Key | What it is |
+|---|---|
+| `classify.instructions_file` | One `.md` file with the overall guidance, such as `files/classifiers/inbox-priority/guide.md`. |
+| `classify.instructions_dir` | A folder, such as `files/classifiers/inbox-priority/rules`. Every `.md` file directly in it is added under a `## <file name>` heading. Sub-folders, names starting with `.` and anything that is not a regular file are skipped. |
+
+Recommended layout, one short file per rule (for example one per sender domain):
+
+```
+files/classifiers/inbox-priority/
+  guide.md
+  rules/
+    00-example.com.md
+    10-news.example.org.md
+```
+
+- Folder files load in alphabetical order of their names. To control the order, you can start names with zero-padded numbers such as `00-`, `01-`, … `33-`.
+- The model gets, in order: `instructions`, the file, the folder's files, the numbered `rules`, then the categories.
+- Both paths are relative to the workspace and must be inside `files/`; an absolute path or one leading out with `..` is refused when the definition is saved. The files are read with the agent's own file permission: the agent needs `file_read_lines` or `file_read_bytes`, and a link leading out of `files/` is refused.
+- The files are read on every run, so an edit applies on the next run. Items already handled are not reprocessed.
+- Each file may have up to 256 KiB and the folder's files 1 MiB together; the text, with `instructions` and `rules`, counts toward `max_prompt_chars`.
+- A save accepts files that do not exist yet, but refuses ones that exist and cannot be read or are over `max_prompt_chars`.
+- When a file or folder is missing or cannot be read, or the text is over `max_prompt_chars`, the run classifies nothing and ends in error, naming the classifier and the path: in `classifier_status`, on the Check Up **Classifiers** table and, as `report.summary` says, in the summary.
+- `classifier_test` shows the system prompt with the files loaded.
 
 ### Paths and placeholders
 
@@ -128,7 +156,7 @@ A placeholder must be the whole value: `"{{item.id}}"`, never `"id={{item.id}}"`
 ## Runs
 
 - An item is done once its action succeeds. A failed item is tried again on the next run, with the model's first answer if it already gave one. An answer that is not a category is asked again once, then the item is `unclassified` and left where it is.
-- Changing the rules, categories or actions does not reprocess items already handled. `classifier_rerun` classifies one item again on purpose.
+- Changing the rules (in the definition or its Markdown files), categories or actions does not reprocess items already handled. `classifier_rerun` classifies one item again on purpose.
 - Handled items are remembered for 30 days (`classifiers.processed_days`), so an item that comes back is not classified again.
 - One run at a time per classifier.
 
@@ -149,7 +177,7 @@ Every item handled (live or dry run) is logged with the fields sent to the model
 | `classifier_create`, `classifier_update`, `classifier_delete` | Save, change (a JSON merge patch) or remove a classifier. A save checks the definition and calls the source tool once. |
 | `classifier_validate` | The same checks, without saving. |
 | `classifier_status` | Last run, counts, recent decisions and the last error. |
-| `classifier_test` | Classifies one item without acting or storing anything. |
+| `classifier_test` | Classifies one item without acting or storing anything, and shows the system prompt the model got. |
 | `classifier_rerun` | Classifies one item again and runs its action. |
 | `classifier_activity` | The activity log, newest first, with `limit`, `offset` and `search`. |
 
@@ -176,7 +204,7 @@ Install-wide, set on the System page (**Classifiers**) or in `config.json`:
 |---|---|---|
 | `processed_days` | 30 | How long handled items are remembered. |
 | `max_rules` | 100 | Rules in one definition. |
-| `max_prompt_chars` | 20000 | Characters of instructions and rules together. |
+| `max_prompt_chars` | 20000 | Characters of instructions and rules together, with the Markdown files (checked on every run). |
 | `max_item_chars` | 50000 | `fetch.max_chars`. |
 | `max_items_per_run` | 500 | `limits.items_per_run`. |
 | `max_parallel` | 8 | `limits.parallel`. |

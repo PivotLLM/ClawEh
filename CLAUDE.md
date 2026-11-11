@@ -469,7 +469,22 @@ production instance directly; test against a dev instance.
   cooldowns honoured, the summary posted directly to the owner's default chat
   (`CronTarget`, no model turn; `report.summary` `on_problems`/`always`/
   `never`), audit kinds `classifier_write` and `classification`. A clone acts
-  as its source (`Scope.Clone` in audit details). Decisions: interval trigger
+  as its source (`Scope.Clone` in audit details). Markdown instructions
+  (`classifier/instructions.go`): `classify.instructions_file` (one `.md`)
+  and `instructions_dir` (its `*.md`, any case, not recursive, hidden and
+  non-regular skipped, sorted case-insensitively by name, ties by exact
+  name), workspace-relative and inside `files/` (`ValidInstructionsPath`;
+  `instructions` may then be empty), are read on every run, test and rerun
+  through `Host.Instructions` (`InstructionsReader`, implemented by
+  `ClassifierHost.ReadInstructionsFile`/`Dir` in
+  `agent/classifier_instructions.go`: only for an agent with
+  `file_read_lines`/`file_read_bytes`, `files.Reader` Resolve/Allowed/Open
+  plus `os.SameFile`, link target inside `<ws>/files`, 256 KiB per file and
+  1 MiB per folder); prompt order inline, file, `## <name>` per folder file,
+  numbered rules, categories. A missing/unreadable file or a prompt over
+  `max_prompt_chars` ends the run in `RunError` before the source is called;
+  create/update/validate check only what exists (`checkInstructions`);
+  `Test` returns `TestResult` with `system_prompt`. Decisions: interval trigger
   only (`trigger.every_seconds`, the core's own timer, nothing in cron);
   create/update also call the source tool once; `classifier_*` tools are
   refused as source, fetch or action; per-definition defaults parallel 1,

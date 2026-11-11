@@ -255,6 +255,9 @@ func (s *Service) check(ctx context.Context, scope Scope, def *Definition, live 
 	if !live {
 		return nil
 	}
+	if err := s.checkInstructions(scope, def); err != nil {
+		return err
+	}
 	if _, err := listItems(ctx, def, scope.AgentID, s.host.Tools); err != nil {
 		return &ValidationError{Issues: []string{err.Error() + "."}}
 	}
@@ -504,19 +507,43 @@ func (s *Service) pickItem(ctx context.Context, scope Scope, def *Definition, it
 	return listedItem{}, ErrItemNotFound
 }
 
+// TestResult is classifier_test's answer: the Decision and the system
+// prompt the model was given, with the Markdown instructions loaded, so the
+// agent can check its rules.
+type TestResult struct {
+	Decision
+	SystemPrompt string `json:"system_prompt"`
+}
+
+// instructionsRefusal is a tool's refusal of Markdown instructions that
+// could not be loaded: loadInstructions' sentence.
+func instructionsRefusal(err error) error {
+	msg := err.Error()
+	return &ValidationError{Issues: []string{strings.ToUpper(msg[:1]) + msg[1:] + "."}}
+}
+
 // Test classifies one item (itemID, or the first the source lists) with the
-// current definition: the category and reason, the action that would run,
-// nothing stored and no action run (design 9.1f).
-func (s *Service) Test(ctx context.Context, scope Scope, id, itemID string) (Decision, error) {
+// current definition: the category and reason, the action that would run
+// and the system prompt, nothing stored and no action run (design 9.1f).
+func (s *Service) Test(ctx context.Context, scope Scope, id, itemID string) (TestResult, error) {
 	def, err := s.validDefinition(scope, id)
 	if err != nil {
-		return Decision{}, err
+		return TestResult{}, err
+	}
+	in, err := s.loadInstructions(scope, def)
+	if err != nil {
+		return TestResult{}, instructionsRefusal(err)
 	}
 	item, err := s.pickItem(ctx, scope, def, itemID)
 	if err != nil {
-		return Decision{}, err
+		return TestResult{}, err
 	}
-	return s.handleItem(ctx, scope, def, nil, item, nil, modeTest).Decision, nil
+	d := s.handleItem(ctx, scope, def, in, nil, item, nil, modeTest)
+	system := d.system
+	if system == "" { // no model call: the fetch failed
+		system, _ = buildPrompt(def, in, itemData{}, "", newDelimiter())
+	}
+	return TestResult{Decision: d.Decision, SystemPrompt: system}, nil
 }
 
 // Rerun classifies one item again with the current definition, replaces
@@ -539,6 +566,10 @@ func (s *Service) Rerun(ctx context.Context, scope Scope, id, itemID string) (De
 		return Decision{}, ctx.Err()
 	}
 	defer func() { <-lock }()
+	in, err := s.loadInstructions(scope, def)
+	if err != nil {
+		return Decision{}, instructionsRefusal(err)
+	}
 	st, err := s.state(ctx, scope.BaseDirectory)
 	if err != nil {
 		return Decision{}, err
@@ -547,7 +578,7 @@ func (s *Service) Rerun(ctx context.Context, scope Scope, id, itemID string) (De
 	if err != nil {
 		return Decision{}, err
 	}
-	return s.handleItem(ctx, scope, def, st, item, nil, modeRerun).Decision, nil
+	return s.handleItem(ctx, scope, def, in, st, item, nil, modeRerun).Decision, nil
 }
 
 // Inspect lists the classifiers in base for the configuration report,
