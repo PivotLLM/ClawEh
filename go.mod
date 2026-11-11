@@ -1,6 +1,6 @@
 module github.com/PivotLLM/ClawEh
 
-go 1.27.3
+go 1.27.4
 
 require (
 	github.com/PivotLLM/MCPFusion v0.4.9
