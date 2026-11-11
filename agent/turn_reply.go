@@ -40,6 +40,10 @@ func (al *AgentLoop) runTurn(ctx, turnParent context.Context, msg bus.InboundMes
 	defer cancel()
 	var roundSent atomic.Bool
 	msgCtx := tools.WithRoundSentFlag(turnCtx, &roundSent)
+	// Work the turn leaves for after its reply (a deferred compaction) runs
+	// once runTurn has published it, or decided to send nothing.
+	msgCtx, afterReply := withAfterReply(msgCtx)
+	defer afterReply.run()
 
 	// outcome is set by the turn only when it did not end in a plain reply
 	// (an empty one); failure and cancellation are decided from err.

@@ -41,9 +41,13 @@ type AgentLoop struct {
 	started         chan struct{}
 	startedOnce     sync.Once
 	contextManagers sync.Map
-	fallback        *providers.FallbackChain
-	channelManager  *channels.Manager
-	mediaStore      media.MediaStore
+	// deferredCompactions holds the agentID:sessionKey of each deferred age
+	// compaction running in the background (runDeferredCompaction), so a
+	// session never has two.
+	deferredCompactions sync.Map
+	fallback            *providers.FallbackChain
+	channelManager      *channels.Manager
+	mediaStore          media.MediaStore
 	// transcriber is swapped by the gateway on every reload while turns
 	// read it: always read it once, through currentTranscriber.
 	transcriber atomic.Pointer[transcriberSlot]

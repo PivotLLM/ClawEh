@@ -6,7 +6,7 @@ require (
 	github.com/PivotLLM/MCPFusion v0.4.9
 	github.com/PivotLLM/Maestro v0.5.9
 	github.com/PivotLLM/cogmem v0.0.9
-	github.com/PivotLLM/ctxengine v0.0.10
+	github.com/PivotLLM/ctxengine v0.0.11
 	github.com/PivotLLM/spawnllm v0.1.26
 	github.com/PivotLLM/toolspec v0.4.0
 	github.com/a3tai/openclaw-go v1.20260325.0

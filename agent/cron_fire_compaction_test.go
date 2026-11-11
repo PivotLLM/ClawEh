@@ -22,9 +22,10 @@ import (
 // TestCronFire_SurvivesAgeCompactionOnArrival reproduces the production loss of
 // a scheduled job's fire: a session whose oldest message is past the age
 // trigger receives the next fire of a job that already fired several times, the
-// age-triggered compaction runs inside AddUserMessage, and the new fire must
-// still be in the live window and be the request the model answers. Earlier
-// fires of the same job, with replies between them, must not be dropped either.
+// age-triggered compaction runs (AddUserMessage marks it due, CompactIfDue runs
+// it), and the new fire must still be in the live window and be the request
+// the model answers. Earlier fires of the same job, with replies between them,
+// must not be dropped either.
 //
 // It goes through getContextManager, so the context manager and the session
 // store are the ones a turn uses, built with the agent's real options; wiring a
@@ -108,6 +109,14 @@ func TestCronFire_SurvivesAgeCompactionOnArrival(t *testing.T) {
 	newFire := cronmsg.Build(jobFP, now, jobMessage) // 546
 	if _, err := cm.AddUserMessage(ctx, providers.Message{Role: "user", Content: newFire}); err != nil {
 		t.Fatalf("AddUserMessage: %v", err)
+	}
+	// The age trigger alone does not make the turn wait: the add only marks
+	// the compaction due, and it runs once the reply is out (CompactIfDue).
+	if summarizer.callCount() != 0 {
+		t.Fatal("the age-triggered compaction ran inside AddUserMessage")
+	}
+	if ran, err := cm.CompactIfDue(ctx); err != nil || !ran {
+		t.Fatalf("CompactIfDue = %v, %v; want the deferred age compaction", ran, err)
 	}
 
 	if summarizer.callCount() == 0 {

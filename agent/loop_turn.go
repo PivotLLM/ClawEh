@@ -102,6 +102,11 @@ func (al *AgentLoop) runAgentLoop(
 	cm, mem, releaseCtxMgr := al.getSessionContext(agent, opts.SessionKey) //nolint:contextcheck // compaction reporter: ctxengine's callback has no context, so it publishes on its own
 	defer releaseCtxMgr()
 
+	// An age-only compaction the engine deferred runs once the reply is out,
+	// however the turn ends.
+	afterReply := claimAfterReply(ctx)
+	defer al.compactAfterReply(afterReply, agent, opts.SessionKey) //nolint:contextcheck // it outlives the turn, so it runs on the loop's run context, not the turn's
+
 	// After the session context, so the session's token exists.
 	ctx, endTokenTurn := al.scopeSessionToken(ctx, agent, opts)
 	defer endTokenTurn()

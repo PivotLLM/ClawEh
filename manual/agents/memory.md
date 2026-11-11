@@ -17,6 +17,8 @@ A model can only read so much at once. ClawEh keeps the conversation within that
 - **Context eviction**: large, re-readable tool results, such as a file read or a web page fetched, are replaced with a short placeholder once the agent has moved on. The agent can read the content again if it needs it.
 - **Compaction**: when the conversation grows past a threshold, older messages are summarized by a memory model and only the summary and the recent messages stay in view.
 
+A compaction that only the age trigger asks for runs after the agent has replied, so the reply does not wait for it.
+
 Nothing is lost by compaction: the full messages and every summary stay in the agent's archive, and an agent granted the session tools (`session_search`, `session_messages`, `session_summary_list` and others) can look them up.
 
 The thresholds are on the **System** page, in **Context management**, and apply to every agent:
@@ -27,7 +29,7 @@ The thresholds are on the **System** page, in **Context management**, and apply 
 | **Emergency compression threshold** | Context use that forces summarization, even mid-turn (default 80%). |
 | **Minimum context threshold** | Below this, the percentage and message-count triggers never fire (default 20%). |
 | **Message count threshold** | Compact after this many new messages (default 100; 0 is off). |
-| **Age compaction trigger (days)** | Compact once the oldest message in view is this old (default 7). |
+| **Age compaction trigger (days)** | Compact once the oldest message in view is this old (default 7), after the agent's next reply. |
 | **Tail age limit (days)**, **Tail token ceiling**, **Tail window size (%)**, **Minimum tail messages** | How much recent conversation is kept as it is after a compaction. |
 | **Context eviction**, **Protected age**, **Expiry age**, **Read byte budget** | When large tool results are replaced by placeholders. |
 

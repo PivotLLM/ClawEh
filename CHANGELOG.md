@@ -386,6 +386,14 @@
   were `0755`/`0644`).
 - Updated dependencies
 
+- **A compaction asked for only by its age runs after the reply.** When the
+  oldest message in view passes **Age compaction trigger (days)**
+  (`compression.trigger.days`), the conversation used to be
+  summarised before the agent answered, so the person waited for the memory
+  model too. Now the agent replies first and the summary is written right
+  after, in the background. A compaction for any other reason (the context
+  threshold, the message count, an emergency) still runs before the reply.
+
 ### Removed
 
 - **BREAKING: `voice.stt` and `voice.echo_transcription` are removed, with
