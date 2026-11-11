@@ -11,6 +11,11 @@
 //     unclassified after the classifier's retry);
 //   - anything else gets "other".
 //
+// Before those, a rule in the system prompt decides: a line "When the item
+// says WORD, answer CATEGORY." makes an item holding WORD get CATEGORY (the
+// first such rule that matches), so a test can prove that instructions,
+// such as a classifier's Markdown rule files, reach the model.
+//
 // Every request is logged on stdout as one "chat: reply=..." line, so the
 // test can count the model calls. Plain and streaming (SSE) responses are
 // supported.
@@ -34,6 +39,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -74,8 +80,17 @@ type chatRequest struct {
 	} `json:"messages"`
 }
 
-// pick is the reply for a request whose user messages hold text.
-func pick(text string) string {
+// ruleLine is a system-prompt rule: the item's word, then the category.
+var ruleLine = regexp.MustCompile(`When the item says ([A-Z]+), answer ([a-z]+)\.`)
+
+// pick is the reply for a request whose system prompt is system and whose
+// user messages hold text.
+func pick(system, text string) string {
+	for _, m := range ruleLine.FindAllStringSubmatch(system, -1) {
+		if strings.Contains(text, m[1]) {
+			return m[2] + "\nA rule says so."
+		}
+	}
 	switch {
 	case strings.Contains(text, "INVOICE"):
 		return "invoice\nIt is an invoice."
@@ -100,14 +115,22 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Only the user messages carry the item; the system prompt lists every
-	// category and must not decide the answer.
-	var user strings.Builder
+	// category and decides the answer only through a rule line.
+	var user, system strings.Builder
 	for _, m := range req.Messages {
-		if m.Role == "user" {
+		switch m.Role {
+		case "user":
 			user.Write(m.Content)
+		case "system":
+			var text string
+			if json.Unmarshal(m.Content, &text) == nil {
+				system.WriteString(text)
+			} else {
+				system.Write(m.Content)
+			}
 		}
 	}
-	reply := pick(user.String())
+	reply := pick(system.String(), user.String())
 	log.Printf("chat: stream=%v reply=%q", req.Stream, reply)
 	if req.Stream {
 		writeStream(w, req.Model, reply)

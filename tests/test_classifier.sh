@@ -22,6 +22,11 @@
 #     substituted arguments, and moves nothing;
 #   - the run with an unclassified item posts one summary to Alice's chat,
 #     naming the agent and the classifier;
+#   - a classifier with its rules in Markdown under files/ (instructions_file,
+#     instructions_dir, no inline instructions) decides by a rule file, skips
+#     a hidden one, shows the loaded text in classifier_test, picks up an
+#     edit on the next run; a missing rules folder ends its runs in error,
+#     and a folder outside files/ is refused;
 #   - a hand-edited invalid definition is never run, is logged, and is
 #     reported by the Check Up assessment API;
 #   - the classifier folder, the definition files and state.db have exactly
@@ -295,6 +300,63 @@ else
     grep 'telegram:' "$STUB_LOG" | sed 's/^/    /'
 fi
 if [ "$SUMMARIES" = 1 ]; then pass "only the run with a problem was summarised"; else fail "$SUMMARIES summaries posted, want 1"; fi
+
+# ---- 5b. Rules kept in Markdown under files/ reach the model. ----
+# The stub answers a rule line "When the item says WORD, answer CATEGORY."
+# found in the system prompt. Without the rule files, f would be "other".
+MD="$WS/files/classifiers/md"
+mkdir -p "$MD/rules" "$WS/files/md-inbox"
+printf 'Sort the document by its rules.\n' >"$MD/guide.md"
+printf 'When the item says ZEBRA, answer newsletter.\n' >"$MD/rules/00-zebra.md"
+printf 'When the item says PANDA, answer invoice.\n' >"$MD/rules/10-panda.md"
+printf 'When the item says ZEBRA, answer invoice.\n' >"$MD/rules/.hidden.md"
+printf '{"subject":"Crossing","body":"A ZEBRA crossing."}\n' >"$WS/files/md-inbox/f.json"
+printf '{"items":[%s]}\n' "$(item f md-inbox)" >"$WS/files/md-index.json"
+MDCLASSIFY='{"instructions":"","instructions_file":"files/classifiers/md/guide.md","instructions_dir":"files/classifiers/md/rules","categories":[{"name":"invoice"},{"name":"newsletter"},{"name":"other"}]}'
+MDDEF="{\"id\":\"md\",\"enabled\":true,\"dry_run\":true,\"trigger\":{\"every_seconds\":2},\"source\":${SOURCE/index.json/md-index.json},\"fetch\":$FETCH,\"classify\":$MDCLASSIFY,\"actions\":$ACTIONS,\"report\":{\"summary\":\"never\"}}"
+OUT="$(mcp classifier_create "{\"definition\":$MDDEF}")"
+if echo "$OUT" | grep -qF "Classifier md created."; then pass "classifier_create saves a classifier with Markdown rules and no inline instructions"; else fail "classifier_create (md): $OUT"; fi
+md_decided() { [ "$(sql "SELECT category FROM dry_run WHERE classifier='md' AND item_id='$1'")" = "$2" ]; }
+if wait_for 30 md_decided f newsletter; then
+    pass "a rule file decided the category (hidden rule file skipped)"
+else
+    fail "md decision for f: $(sql "SELECT category FROM dry_run WHERE classifier='md'"), want newsletter"
+fi
+OUT="$(mcp classifier_test '{"id":"md","item_id":"f"}')"
+if echo "$OUT" | grep -qF '## 00-zebra.md' && echo "$OUT" | grep -qF 'Sort the document by its rules.' && echo "$OUT" | grep -qF '## 10-panda.md' && ! echo "$OUT" | grep -qF 'hidden'; then
+    pass "classifier_test shows the system prompt with the Markdown loaded"
+else
+    fail "classifier_test (md): $OUT"
+fi
+# An edit applies on the next run, without a definition change; f is not reprocessed.
+printf 'When the item says ZEBRA, answer invoice.\n' >"$MD/rules/00-zebra.md"
+printf '{"subject":"Another","body":"One more ZEBRA."}\n' >"$WS/files/md-inbox/g.json"
+printf '{"items":[%s,%s]}\n' "$(item f md-inbox)" "$(item g md-inbox)" >"$WS/files/md-index.json"
+if wait_for 30 md_decided g invoice && md_decided f newsletter; then
+    pass "an edited rule file applies on the next run and handled items are not reprocessed"
+else
+    fail "md decisions after the edit: $(sql "SELECT item_id, category FROM dry_run WHERE classifier='md'" | tr '\n' ' ')"
+fi
+# A missing rules folder is accepted on save, then ends every run in error.
+MISSDEF="${MDDEF/\"id\":\"md\"/\"id\":\"md-missing\"}"
+MISSDEF="${MISSDEF/files\/classifiers\/md\/rules/files/classifiers/none}"
+OUT="$(mcp classifier_create "{\"definition\":$MISSDEF}")"
+if echo "$OUT" | grep -qF "Classifier md-missing created."; then pass "a rules folder that does not exist yet is accepted"; else fail "classifier_create (md-missing): $OUT"; fi
+if wait_for 30 run_done md-missing; then
+    RUN="$(sql "SELECT status, new_items, error FROM runs WHERE classifier='md-missing'")"
+    if [ "$RUN" = "error|0|classifier md-missing: classify.instructions_dir files/classifiers/none can't be read: it does not exist" ]; then
+        pass "a missing rules folder ends the run in error, naming the classifier and the path"
+    else
+        fail "md-missing run: $RUN"
+    fi
+else
+    fail "md-missing did not run within 30s"
+fi
+if [ "$(sql "SELECT COUNT(*) FROM dry_run WHERE classifier='md-missing'")" = 0 ]; then pass "the run with a missing rules folder classified nothing"; else fail "md-missing classified items"; fi
+BADDEF="${MDDEF/\"id\":\"md\"/\"id\":\"md-bad\"}"
+BADDEF="${BADDEF/files\/classifiers\/md\/rules/../memory}"
+OUT="$(mcp classifier_create "{\"definition\":$BADDEF}")"
+if echo "$OUT" | grep -qF 'classify.instructions_dir' && echo "$OUT" | grep -qF 'must be a path inside files/'; then pass "a rules folder outside files/ is refused"; else fail "classifier_create (md-bad): $OUT"; fi
 
 # ---- 6. A hand-edited invalid definition is not run and is reported. ----
 printf '{"id":"broken","owner":"alice","enabled":true,"trigger":{"every_seconds":0},"source":%s,"classify":%s}\n' "$SOURCE" "$CLASSIFY" >"$CLS_DIR/broken.json"
