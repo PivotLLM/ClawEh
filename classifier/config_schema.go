@@ -47,7 +47,7 @@ var fieldDocs = map[string]fieldDoc{
 	"Definition.classify":       {desc: "The question asked about each item"},
 	"Definition.actions":        {desc: "The tool run for each category, by category name; a category without one is only recorded"},
 	"Definition.limits":         {desc: "Limits of one run"},
-	"Definition.report":         {desc: "When a run's summary is posted to your chat"},
+	"Definition.report":         {desc: "When a run's summary is posted to your chat, and whether failed runs are reported"},
 	"Definition.activity_hours": {desc: "Hours the activity log is kept; 72 when omitted", min: 1},
 
 	"Trigger.every_seconds": {desc: "Run every this many seconds", min: 1},
@@ -79,7 +79,8 @@ var fieldDocs = map[string]fieldDoc{
 	"Limits.parallel":            {desc: "Items handled at the same time; 1 when omitted", min: 1},
 	"Limits.stop_after_failures": {desc: "Consecutive failed items that stop a run; 5 when omitted", min: 1},
 
-	"Report.summary": {desc: "on_problems (default): only when items failed or were unclassified; always: after every run that handled items; never", enum: summaryValues},
+	"Report.summary": {desc: "on_problems (default): only when items failed or were unclassified, or the run failed; always: after every run that handled items or failed; never", enum: summaryValues},
+	"Report.errors":  {desc: "true (default): a failed run is reported to you and your chat, the second in a row muting further reports for 24 hours; false: failed runs are only logged. Setting it, or any other change, lifts the mute"},
 }
 
 var (

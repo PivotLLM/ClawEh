@@ -52,7 +52,7 @@ func Tools(svc *Service, host ToolHost) []toolspec.ToolDefinition {
 		}},
 		{Name: "delete", Description: "Delete a classifier and its state", Handler: t.delete, Parameters: []toolspec.Parameter{id}},
 		{Name: "validate", Description: "Check a definition without saving it, including your tools and one call of its source tool", Handler: t.validate, Parameters: []toolspec.Parameter{definition}},
-		{Name: "status", Description: "A classifier's last run, counts, recent decisions and last error; omit id for all your classifiers", Handler: t.status, Parameters: []toolspec.Parameter{
+		{Name: "status", Description: "A classifier's last run, counts, recent decisions, last error and whether its error notices are on, off or muted; omit id for all your classifiers", Handler: t.status, Parameters: []toolspec.Parameter{
 			{Name: "id", Type: "string", Description: "Classifier ID; omit for all"},
 		}},
 		{Name: "test", Description: "Classify one item without acting or storing anything: the category, reason, the action that would run and the system prompt with your Markdown instructions loaded", Handler: t.test, Parameters: []toolspec.Parameter{
@@ -63,11 +63,12 @@ func Tools(svc *Service, host ToolHost) []toolspec.ToolDefinition {
 			id,
 			{Name: "item_id", Type: "string", Required: true, Description: "The item's ID"},
 		}},
-		{Name: "activity", Description: "A classifier's activity log, newest first: each item handled with its fields, category, reason and action", Handler: t.activity, Parameters: []toolspec.Parameter{
+		{Name: "activity", Description: "A classifier's activity log, newest first: each item handled with its fields, category, reason and action, and each failed run with its error (the same error in a row is one entry with count, at and last_at)", Handler: t.activity, Parameters: []toolspec.Parameter{
 			id,
 			{Name: "limit", Type: "integer", Description: fmt.Sprintf("Entries to return; %d when omitted, at most %d", DefaultActivityLimit, MaxActivityLimit)},
 			{Name: "offset", Type: "integer", Description: "Entries to skip"},
-			{Name: "search", Type: "string", Description: "Only entries whose fields, item ID, category, reason or action arguments contain this text (case-insensitive)"},
+			{Name: "search", Type: "string", Description: "Only entries whose fields, item ID, category, reason, action arguments or error contain this text (case-insensitive)"},
+			{Name: "outcome", Type: "string", Description: "Only entries with this outcome: " + strings.Join(ActivityOutcomes, ", ") + " (run_failed: failed runs)"},
 		}},
 	}
 	for i := range defs {
@@ -381,6 +382,9 @@ func (t *toolSuite) activity(call *toolspec.ToolCall) (*toolspec.Result, error) 
 			return nil, err
 		}
 		if q.Search, err = stringArg(call, "search", false); err != nil {
+			return nil, err
+		}
+		if q.Outcome, err = stringArg(call, "outcome", false); err != nil {
 			return nil, err
 		}
 		entries, err := t.svc.Activity(scope, id, q)

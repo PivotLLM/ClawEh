@@ -87,9 +87,12 @@ type Limits struct {
 	StopAfterFailures int `json:"stop_after_failures,omitempty"`
 }
 
-// Report says when a run's summary is posted to the owning agent's chat.
+// Report says when a run's summary is posted to the owning agent's chat,
+// and whether a failed run is reported (Errors, nil = true): false keeps
+// failed runs in the activity log only.
 type Report struct {
 	Summary string `json:"summary,omitempty"` // SummaryOnProblems (default), SummaryAlways or SummaryNever
+	Errors  *bool  `json:"errors,omitempty"`
 }
 
 // The values of report.summary.
@@ -184,6 +187,11 @@ func (d *Definition) summaryMode() string {
 		return SummaryOnProblems
 	}
 	return d.Report.Summary
+}
+
+// reportErrors is report.errors with its default (true).
+func (d *Definition) reportErrors() bool {
+	return d.Report.Errors == nil || *d.Report.Errors
 }
 
 // categoryNamed returns the definition's category whose name equals name

@@ -331,6 +331,8 @@ func TestToolRefusals(t *testing.T) {
 		{"activity", map[string]any{"id": "inbox-priority", "offset": 1.5}, "offset must be a whole number, 0 or more."},
 		{"activity", map[string]any{"id": "inbox-priority", "search": 2.0}, "search must be a string."},
 		{"activity", map[string]any{"id": "nope"}, "Classifier nope does not exist."},
+		{"activity", map[string]any{"id": "inbox-priority", "outcome": "classified"}, "outcome must be acted, recorded, unclassified, failed, run_failed."},
+		{"activity", map[string]any{"id": "inbox-priority", "outcome": 1.0}, "outcome must be a string."},
 		{"list", map[string]any{"a": 1, "b": 2}, "Unknown arguments a, b; this tool takes no arguments."},
 		{"rerun", map[string]any{"id": "x", "item": "m1"}, "Unknown argument item; use id or item_id."},
 	} {

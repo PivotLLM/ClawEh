@@ -104,6 +104,8 @@ for you; a definition does not name one.
 - `report.summary`: `on_problems` (default) posts a summary to your chat
   when items failed or were unclassified, or the run failed, `always` after
   every run that handled items or failed, `never` not at all.
+- `report.errors`: `true` (default) reports a failed run to you and your
+  chat (see below); `false` only logs it.
 - `activity_hours`: how long the activity log is kept (72 by default).
 
 ClawEh writes `owner`, `created_at` and `updated_at`.
@@ -192,13 +194,22 @@ resolves to nothing fails that item; nothing empty is passed to a tool.
 - When the model cannot be used (none set, or in cooldown), the run stops and
   its items are tried again on the next run.
 - When a run fails (your Markdown files can't be read or are too long, the
-  source tool fails, no usable model), you get a message in your
-  conversation, once per distinct failure:
+  source tool fails, no usable model), it is logged and you get a message in
+  your conversation:
   `[System: classifier] Classifier inbox: the run failed: <reason>. Check and
   fix the classifier's definition or its instructions files; classifier_test
   shows the result.` Fix the cause, run `classifier_test` to verify, and tell
-  the user what you changed; your answer goes to your default chat. The same
-  failure is not reported again until a run succeeds or the reason changes.
+  the user what you changed; your answer goes to your default chat.
+- The second failed run in a row adds: `Further errors from this classifier
+  won't be reported for 24 hours. To report them again now, call
+  classifier_update with {"report": {"errors": true}}.` Later failures are
+  only logged until those 24 hours are over. Any `classifier_update` of the
+  classifier (that call, or your fix) reports them again at once; a run that
+  succeeds starts the count again. `classifier_status` shows
+  `errors_reported`, `failed_runs` and, while muted, `errors_muted_until`.
+- To review failed runs, call `classifier_activity` with
+  `"outcome": "run_failed"`: the same error in a row is one entry with
+  `count`, `at` (the first) and `last_at` (the latest).
 
 ## Tools
 
@@ -212,4 +223,5 @@ resolves to nothing fails that item; nothing empty is passed to a tool.
   or storing anything; it shows the system prompt the model got.
 - `classifier_rerun`: classify one item again and run its action.
 - `classifier_activity`: the activity log, newest first, with `limit`,
-  `offset` and `search`.
+  `offset`, `search` (also matches the error) and `outcome` (`acted`,
+  `recorded`, `unclassified`, `failed` or `run_failed`).

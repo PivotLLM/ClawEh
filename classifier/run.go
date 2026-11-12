@@ -243,7 +243,8 @@ func (s *Service) handleItem(ctx context.Context, scope Scope, def *Definition, 
 // closed (the classifier was disabled or deleted, or the agent's switch
 // turned off: the items in flight finish), or when the model cannot be used.
 // The run is recorded and, as report.summary says, summarised to the agent;
-// a failed run is also reported to the agent itself (reportFailure).
+// a failed run is also written to the activity log and, as trackFailure
+// decides, reported to the agent itself (reportFailure).
 func (s *Service) runClassifier(ctx context.Context, scope Scope, def *Definition, stop <-chan struct{}) RunRecord {
 	rec := RunRecord{StartedAt: s.host.clock().Now().UTC(), DryRun: def.DryRun, Status: RunOK}
 	cls := NormalizeID(def.ID)
@@ -269,8 +270,8 @@ func (s *Service) runClassifier(ctx context.Context, scope Scope, def *Definitio
 			errSuffix(rec.Error))
 		failure := s.trackFailure(ctx, scope, def, st, rec, cooling)
 		s.summarise(ctx, scope, def, rec, failure)
-		if failure == failureNew {
-			s.reportFailure(ctx, scope, def, rec)
+		if failure == failureFirst || failure == failureSecond {
+			s.reportFailure(ctx, scope, def, rec, failure)
 		}
 		return rec
 	}
@@ -483,52 +484,79 @@ func (s *Service) prune(ctx context.Context, st *stateDB, def *Definition, proce
 	}
 }
 
-// failureReport says whether a run is a failure to report.
+// ErrorMute is how long a classifier's error notices stay muted after its
+// second notice in a row. It is fixed: the agent lifts the mute by changing
+// the definition (classifier_update), and a failure after it has expired
+// is reported as a first notice again.
+const ErrorMute = 24 * time.Hour
+
+// failureReport is what a run's end means for error notices.
 type failureReport int
 
 const (
 	failureNone   failureReport = iota // the run did not fail (or only its model is in cooldown)
-	failureNew                         // failed with an error not reported yet: report it
-	failureRepeat                      // failed with the error already reported: say nothing
+	failureSilent                      // failed; only logged (muted, or report.errors is false)
+	failureFirst                       // failed; the first notice
+	failureSecond                      // failed; the second notice, which mutes the next ones for ErrorMute
 )
 
-// trackFailure decides whether a run's failure is reported, once per
-// distinct error: the error last reported is kept in state.db (so a restart
-// does not report it again) and cleared by a run that does not fail, so a
-// later failure is reported again. A run that ended on a model in cooldown
-// changes nothing.
+// trackFailure logs a failed run in the activity log and decides whether it
+// is reported. Per classifier, the first failed run sends a notice, the
+// second sends one saying that further errors are muted for ErrorMute, and
+// later ones are only logged until the mute has expired when one happens
+// (no timer: muted_until is compared with the failure's time). A run that
+// does not fail resets the count but not the mute; a change of the
+// definition by the agent resets both (Service.Update, Create).
+// report.errors false reports none. The count and the mute are kept in
+// state.db, so a restart keeps them. A run that ended on a model in
+// cooldown changes nothing: the cooldown ends by itself, and the item it
+// failed is in the log already.
 func (s *Service) trackFailure(ctx context.Context, scope Scope, def *Definition, st *stateDB, rec RunRecord, cooling bool) failureReport {
 	if cooling {
 		return failureNone
 	}
 	wctx := context.WithoutCancel(ctx)
 	cls := NormalizeID(def.ID)
-	if rec.Status != RunError {
-		if err := st.setReportedError(wctx, cls, ""); err != nil {
-			s.host.Logger.Errorf("classifier=%s agent=%s: store reported error: %v", def.ID, scope.AgentID, err)
+	storeErr := func(what string, err error) {
+		if err != nil {
+			s.host.Logger.Errorf("classifier=%s agent=%s: %s: %v", def.ID, scope.AgentID, what, err)
 		}
+	}
+	if rec.Status != RunError {
+		storeErr("store run failures", st.runSucceeded(wctx, cls))
 		return failureNone
 	}
-	prev, err := st.reportedError(wctx, cls)
-	if err != nil {
-		// Reported again rather than never.
-		s.host.Logger.Errorf("classifier=%s agent=%s: read reported error: %v", def.ID, scope.AgentID, err)
-	} else if prev == rec.Error {
-		return failureRepeat
+	now := s.host.clock().Now().UTC()
+	storeErr("store the failed run", st.addRunFailure(wctx, cls, rec.Error, rec.DryRun, now))
+	f, err := runFailuresFrom(wctx, st.db, cls)
+	storeErr("read run failures", err) // read as none: reported rather than never
+	if !f.mutedUntil.IsZero() && !now.Before(f.mutedUntil) {
+		f = failureState{} // the mute has expired: a new cycle
 	}
-	if err := st.setReportedError(wctx, cls, rec.Error); err != nil {
-		s.host.Logger.Errorf("classifier=%s agent=%s: store reported error: %v", def.ID, scope.AgentID, err)
+	f.failures++
+	report := failureSilent
+	if f.mutedUntil.IsZero() && def.reportErrors() {
+		report = failureFirst
+		if f.failures > 1 {
+			report, f.mutedUntil = failureSecond, now.Add(ErrorMute)
+		}
 	}
-	return failureNew
+	storeErr("store run failures", st.setRunFailures(wctx, cls, f))
+	return report
 }
 
 // reportFailure delivers the notice of a failed run to the owning agent,
-// whatever report.summary says, so it can fix the classifier.
-func (s *Service) reportFailure(ctx context.Context, scope Scope, def *Definition, rec RunRecord) {
+// whatever report.summary says, so it can fix the classifier; the second
+// one in a row also says that further errors are muted and how to report
+// them again.
+func (s *Service) reportFailure(ctx context.Context, scope Scope, def *Definition, rec RunRecord, failure failureReport) {
 	if s.host.Notifier == nil {
 		return
 	}
 	text := failureText(def, rec) + " " + failureAdvice
+	if failure == failureSecond {
+		text += " " + muteNotice
+	}
 	if err := s.host.Notifier.RunFailed(withClassifier(ctx, NormalizeID(def.ID)), scope.AgentID, text); err != nil {
 		s.host.Logger.Warnf("classifier=%s agent=%s: failure notice not delivered: %v", def.ID, scope.AgentID, err)
 		return
@@ -536,23 +564,37 @@ func (s *Service) reportFailure(ctx context.Context, scope Scope, def *Definitio
 	s.host.Logger.Infof("classifier=%s agent=%s: run failure reported to the agent", def.ID, scope.AgentID)
 }
 
-// failureAdvice ends the agent's notice of a failed run.
+// failureAdvice follows the failure in the agent's notice of a failed run.
 const failureAdvice = "Check and fix the classifier's definition or its instructions files; classifier_test shows the result."
+
+// muteHours is ErrorMute in whole hours, for the notices.
+var muteHours = int(ErrorMute / time.Hour)
+
+// muteNotice ends the agent's second notice in a row; muteSummary ends the
+// chat summary's.
+var (
+	muteNotice = fmt.Sprintf("Further errors from this classifier won't be reported for %d hours. "+
+		`To report them again now, call classifier_update with {"report": {"errors": true}}.`, muteHours)
+	muteSummary = fmt.Sprintf("Further errors won't be reported for %d hours.", muteHours)
+)
 
 // summarise posts the run's summary to the owning agent's chat when
 // report.summary asks for it: always (a run that handled items or failed),
 // on_problems (default: a run with unclassified or failed items, or that
-// failed), never. A failed run is posted once per distinct error (failure).
+// failed), never. A failed run is posted only when trackFailure reports it
+// (failure), with the same count and mute as the agent's notice.
 func (s *Service) summarise(ctx context.Context, scope Scope, def *Definition, rec RunRecord, failure failureReport) {
 	if s.host.Notifier == nil {
 		return
 	}
 	text := summaryText(def, rec)
 	switch mode := def.summaryMode(); {
-	case mode == SummaryNever, failure == failureRepeat:
+	case mode == SummaryNever, failure == failureSilent:
 		return
-	case failure == failureNew:
+	case failure == failureFirst:
 		text = failureText(def, rec)
+	case failure == failureSecond:
+		text = failureText(def, rec) + " " + muteSummary
 	case mode == SummaryAlways:
 		if rec.NewItems == 0 && rec.Status != RunError {
 			return

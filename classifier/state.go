@@ -37,13 +37,21 @@ const (
 	OutcomeRecorded     = "recorded"     // classified; no action (none for the category, or a dry run)
 	OutcomeUnclassified = "unclassified" // the reply named no category twice
 	OutcomeFailed       = "failed"       // fetch, model, substitution or action failed
+	// OutcomeRunFailed is a run that failed outright (run status error, not
+	// a model cooldown): an activity row with no item, its error, and how
+	// often the same error repeated (ActivityEntry.Count, LastAt).
+	OutcomeRunFailed = "run_failed"
 )
+
+// ActivityOutcomes are the outcomes an activity row can have, the values of
+// ActivityQuery.Outcome.
+var ActivityOutcomes = []string{OutcomeActed, OutcomeRecorded, OutcomeUnclassified, OutcomeFailed, OutcomeRunFailed}
 
 // Decision is one item handled: the category and reason the model gave, the
 // model, the action tool (and, when it did not run, its arguments) and how
 // it ended.
 type Decision struct {
-	ItemID   string `json:"item_id"`
+	ItemID   string `json:"item_id,omitempty"` // "" on a run_failed row
 	Category string `json:"category,omitempty"`
 	Reason   string `json:"reason,omitempty"`
 	Model    string `json:"model,omitempty"`
@@ -60,10 +68,14 @@ type Decision struct {
 }
 
 // ActivityEntry is one activity log row: a Decision and the fields sent to
-// the model, each value cut to ActivityValueMax characters.
+// the model, each value cut to ActivityValueMax characters. A run_failed row
+// has no item: At is the first failure, Count the failed runs with the same
+// error in a row and LastAt the latest of them.
 type ActivityEntry struct {
 	Decision
 	Fields map[string]string `json:"fields,omitempty"`
+	Count  int               `json:"count,omitempty"`
+	LastAt time.Time         `json:"last_at,omitzero"`
 }
 
 // RunRecord is a classifier's last run.
@@ -90,13 +102,16 @@ const (
 
 // ActivityQuery selects activity entries: newest first, Limit (default
 // DefaultActivityLimit, at most MaxActivityLimit) after Offset, optionally
-// only those whose fields, item id, category, reason or action arguments
-// contain Search
+// only those with Outcome (one of ActivityOutcomes) and those whose fields,
+// item id, category, reason, action arguments or error contain Search
 // (case-insensitive).
 type ActivityQuery struct {
-	Limit  int
-	Offset int
-	Search string
+	Limit   int
+	Offset  int
+	Search  string
+	Outcome string
+	// itemsOnly leaves out run_failed rows (Status's recent decisions).
+	itemsOnly bool
 }
 
 // Activity query limits.
@@ -116,17 +131,22 @@ CREATE TABLE IF NOT EXISTS processed (
 CREATE TABLE IF NOT EXISTS dry_run (
   classifier TEXT NOT NULL, item_id TEXT NOT NULL, category TEXT, reason TEXT, model TEXT,
   decided_at INTEGER NOT NULL, last_seen INTEGER NOT NULL, PRIMARY KEY (classifier, item_id));
-CREATE TABLE IF NOT EXISTS activity (
-  id INTEGER PRIMARY KEY, classifier TEXT NOT NULL, at INTEGER NOT NULL, item_id TEXT NOT NULL,
-  fields TEXT NOT NULL,
-  category TEXT, reason TEXT, model TEXT, action TEXT, outcome TEXT NOT NULL, error TEXT,
-  dry_run INTEGER NOT NULL, rerun INTEGER NOT NULL, action_args TEXT);
+` + activityTable + `;
 CREATE INDEX IF NOT EXISTS activity_by_time ON activity (classifier, at DESC);
 CREATE TABLE IF NOT EXISTS runs (
   classifier TEXT PRIMARY KEY, started_at INTEGER, ended_at INTEGER, status TEXT, error TEXT,
-  listed INTEGER, new_items INTEGER, classified INTEGER, acted INTEGER, unclassified INTEGER, failed INTEGER, dry_run INTEGER,
-  reported_error TEXT);
+  listed INTEGER, new_items INTEGER, classified INTEGER, acted INTEGER, unclassified INTEGER, failed INTEGER, dry_run INTEGER);
+CREATE TABLE IF NOT EXISTS run_failures (
+  classifier TEXT PRIMARY KEY, failures INTEGER NOT NULL DEFAULT 0, muted_until INTEGER, open_row INTEGER);
 `
+
+// activityTable creates the activity table. A run_failed row has no item_id
+// (NULL) and has count and last_at.
+const activityTable = `CREATE TABLE IF NOT EXISTS activity (
+  id INTEGER PRIMARY KEY, classifier TEXT NOT NULL, at INTEGER NOT NULL, item_id TEXT,
+  fields TEXT NOT NULL,
+  category TEXT, reason TEXT, model TEXT, action TEXT, outcome TEXT NOT NULL, error TEXT,
+  dry_run INTEGER NOT NULL, rerun INTEGER NOT NULL, action_args TEXT, count INTEGER, last_at INTEGER)`
 
 // stateDB is one folder's state.db.
 type stateDB struct {
@@ -174,7 +194,7 @@ func openState(ctx context.Context, base string, dirMode, fileMode os.FileMode) 
 	if err := addColumn(ctx, db, "activity", "action_args"); err != nil {
 		return nil, errors.Join(fmt.Errorf("schema %s: %w", path, err), db.Close())
 	}
-	if err := addColumn(ctx, db, "runs", "reported_error"); err != nil {
+	if err := migrateActivity(ctx, db); err != nil {
 		return nil, errors.Join(fmt.Errorf("schema %s: %w", path, err), db.Close())
 	}
 	for _, side := range []string{"-wal", "-shm"} {
@@ -197,6 +217,42 @@ func addColumn(ctx context.Context, db *sql.DB, table, column string) error {
 	}
 	_, err := db.ExecContext(ctx, `ALTER TABLE `+table+` ADD COLUMN `+column+` TEXT`) // #nosec G202 -- fixed names
 	return err
+}
+
+// migrateActivity rebuilds the activity table of a state.db written before
+// run_failed rows existed (item_id NOT NULL, no count and last_at), keeping
+// every row: SQLite cannot drop a NOT NULL constraint in place.
+func migrateActivity(ctx context.Context, db *sql.DB) (err error) {
+	var n int
+	if err = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('activity') WHERE name = 'last_at'`).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, tx.Rollback())
+		}
+	}()
+	const columns = `id, classifier, at, item_id, fields, category, reason, model, action, outcome, error, dry_run, rerun, action_args`
+	for _, q := range []string{
+		`ALTER TABLE activity RENAME TO activity_old`,
+		`DROP INDEX IF EXISTS activity_by_time`,
+		activityTable,
+		`INSERT INTO activity (` + columns + `) SELECT ` + columns + ` FROM activity_old`,
+		`DROP TABLE activity_old`,
+		`CREATE INDEX activity_by_time ON activity (classifier, at DESC)`,
+	} {
+		if _, err = tx.ExecContext(ctx, q); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *stateDB) close() error { return s.db.Close() }
@@ -384,15 +440,24 @@ func (s *stateDB) activity(ctx context.Context, cls string, q ActivityQuery) (_ 
 	}
 	limit = min(limit, MaxActivityLimit)
 	offset := max(q.Offset, 0)
-	query := `SELECT at, item_id, fields, COALESCE(category,''), COALESCE(reason,''), COALESCE(model,''),
-  COALESCE(action,''), COALESCE(action_args,''), outcome, COALESCE(error,''), dry_run, rerun FROM activity WHERE classifier = ?`
+	query := `SELECT at, COALESCE(item_id,''), fields, COALESCE(category,''), COALESCE(reason,''), COALESCE(model,''),
+  COALESCE(action,''), COALESCE(action_args,''), outcome, COALESCE(error,''), dry_run, rerun,
+  COALESCE(count,0), last_at FROM activity WHERE classifier = ?`
 	args := []any{cls}
+	if q.Outcome != "" {
+		query += ` AND outcome = ?`
+		args = append(args, q.Outcome)
+	}
+	if q.itemsOnly {
+		query += ` AND outcome <> ?`
+		args = append(args, OutcomeRunFailed)
+	}
 	if search := strings.TrimSpace(q.Search); search != "" {
 		pattern := "%" + likeEscaper.Replace(strings.ToLower(search)) + "%"
-		query += ` AND (LOWER(fields) LIKE ? ESCAPE '\' OR LOWER(item_id) LIKE ? ESCAPE '\'
+		query += ` AND (LOWER(fields) LIKE ? ESCAPE '\' OR LOWER(COALESCE(item_id,'')) LIKE ? ESCAPE '\'
   OR LOWER(COALESCE(category,'')) LIKE ? ESCAPE '\' OR LOWER(COALESCE(reason,'')) LIKE ? ESCAPE '\'
-  OR LOWER(COALESCE(action_args,'')) LIKE ? ESCAPE '\')`
-		args = append(args, pattern, pattern, pattern, pattern, pattern)
+  OR LOWER(COALESCE(action_args,'')) LIKE ? ESCAPE '\' OR LOWER(COALESCE(error,'')) LIKE ? ESCAPE '\')`
+		args = append(args, pattern, pattern, pattern, pattern, pattern, pattern)
 	}
 	query += ` ORDER BY at DESC, id DESC LIMIT ? OFFSET ?`
 	args = append(args, limit, offset)
@@ -405,12 +470,13 @@ func (s *stateDB) activity(ctx context.Context, cls string, q ActivityQuery) (_ 
 	for rows.Next() {
 		var e ActivityEntry
 		var at int64
+		var lastAt sql.NullInt64
 		var fields string
 		if err := rows.Scan(&at, &e.ItemID, &fields, &e.Category, &e.Reason, &e.Model, &e.Action,
-			&e.ActionArgs, &e.Outcome, &e.Error, &e.DryRun, &e.Rerun); err != nil {
+			&e.ActionArgs, &e.Outcome, &e.Error, &e.DryRun, &e.Rerun, &e.Count, &lastAt); err != nil {
 			return nil, err
 		}
-		e.At = time.UnixMilli(at).UTC()
+		e.At, e.LastAt = time.UnixMilli(at).UTC(), fromMS(lastAt)
 		if err := json.Unmarshal([]byte(fields), &e.Fields); err != nil {
 			e.Fields = nil
 		}
@@ -431,7 +497,8 @@ func (s *stateDB) prune(ctx context.Context, cls string, processedBefore, activi
 	}{
 		{`DELETE FROM processed WHERE classifier = ? AND last_seen < ?`, processedBefore},
 		{`DELETE FROM dry_run WHERE classifier = ? AND last_seen < ?`, processedBefore},
-		{`DELETE FROM activity WHERE classifier = ? AND at < ?`, activityBefore},
+		// A run_failed row is kept while the same error goes on.
+		{`DELETE FROM activity WHERE classifier = ? AND COALESCE(last_at, at) < ?`, activityBefore},
 	} {
 		if q.at.IsZero() {
 			continue
@@ -445,7 +512,7 @@ func (s *stateDB) prune(ctx context.Context, cls string, processedBefore, activi
 
 // forget removes every row of cls.
 func (s *stateDB) forget(ctx context.Context, cls string) error {
-	for _, table := range []string{"processed", "dry_run", "activity", "runs"} {
+	for _, table := range []string{"processed", "dry_run", "activity", "runs", "run_failures"} {
 		if _, err := s.db.ExecContext(ctx, `DELETE FROM `+table+` WHERE classifier = ?`, cls); err != nil { // #nosec G202 -- a fixed table name
 			return err
 		}
@@ -467,22 +534,104 @@ ON CONFLICT (classifier) DO UPDATE SET started_at = excluded.started_at, ended_a
 	return err
 }
 
-// reportedError returns the run error last reported for cls (the chat
-// summary and the agent's notice of a failed run), "" when none is: no
-// failed run yet, or a run succeeded since.
-func (s *stateDB) reportedError(ctx context.Context, cls string) (string, error) {
-	var v sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT reported_error FROM runs WHERE classifier = ?`, cls).Scan(&v)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil
+// addRunFailure records a run of cls that failed with errText at now. When
+// the newest activity row of cls is its open run_failed row (no run that
+// did not fail and no item handled since) with the same error and dry-run
+// flag, that row's count and last_at are bumped; otherwise a new row is
+// written and becomes the open one.
+func (s *stateDB) addRunFailure(ctx context.Context, cls, errText string, dryRun bool, now time.Time) (err error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
 	}
-	return v.String, err
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, tx.Rollback())
+		}
+	}()
+	var open sql.NullInt64
+	err = tx.QueryRowContext(ctx, `SELECT open_row FROM run_failures WHERE classifier = ?`, cls).Scan(&open)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if open.Valid {
+		var prevErr string
+		var prevDry bool
+		err = tx.QueryRowContext(ctx, `SELECT COALESCE(error,''), dry_run FROM activity
+WHERE id = ? AND outcome = ? AND id = (SELECT MAX(id) FROM activity WHERE classifier = ?)`,
+			open.Int64, OutcomeRunFailed, cls).Scan(&prevErr, &prevDry)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+		case err != nil:
+			return err
+		case prevErr == errText && prevDry == dryRun:
+			if _, err = tx.ExecContext(ctx, `UPDATE activity SET count = count + 1, last_at = ? WHERE id = ?`, ms(now), open.Int64); err != nil {
+				return err
+			}
+			return tx.Commit()
+		}
+	}
+	res, err := tx.ExecContext(ctx, `
+INSERT INTO activity (classifier, at, item_id, fields, outcome, error, dry_run, rerun, count, last_at)
+VALUES (?, ?, NULL, '{}', ?, ?, ?, 0, 1, ?)`, cls, ms(now), OutcomeRunFailed, nullable(errText), dryRun, ms(now))
+	if err != nil {
+		return err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO run_failures (classifier, open_row) VALUES (?, ?)
+ON CONFLICT (classifier) DO UPDATE SET open_row = excluded.open_row`, cls, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
-// setReportedError records the run error reported for cls; "" clears it.
-// The run's row must exist (setRun wrote it).
-func (s *stateDB) setReportedError(ctx context.Context, cls, text string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE runs SET reported_error = ? WHERE classifier = ?`, nullable(text), cls)
+// failureState is what error notices count for a classifier: its failed
+// runs since the last run that did not fail (or since the agent last
+// changed its definition), and the time error notices are muted until
+// (zero when they are not).
+type failureState struct {
+	failures   int
+	mutedUntil time.Time
+}
+
+// runFailuresFrom returns cls's failureState in db; zero when it has none.
+func runFailuresFrom(ctx context.Context, db *sql.DB, cls string) (failureState, error) {
+	var f failureState
+	var muted sql.NullInt64
+	err := db.QueryRowContext(ctx, `SELECT failures, muted_until FROM run_failures WHERE classifier = ?`, cls).Scan(&f.failures, &muted)
+	if errors.Is(err, sql.ErrNoRows) {
+		return failureState{}, nil
+	}
+	f.mutedUntil = fromMS(muted)
+	return f, err
+}
+
+// setRunFailures stores cls's failureState.
+func (s *stateDB) setRunFailures(ctx context.Context, cls string, f failureState) error {
+	var muted any
+	if !f.mutedUntil.IsZero() {
+		muted = ms(f.mutedUntil)
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO run_failures (classifier, failures, muted_until) VALUES (?, ?, ?)
+ON CONFLICT (classifier) DO UPDATE SET failures = excluded.failures, muted_until = excluded.muted_until`, cls, f.failures, muted)
+	return err
+}
+
+// runSucceeded records a run of cls that did not fail: the failure count is
+// reset (a mute stays until it expires) and the next failure starts a new
+// run_failed row.
+func (s *stateDB) runSucceeded(ctx context.Context, cls string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE run_failures SET failures = 0, open_row = NULL WHERE classifier = ?`, cls)
+	return err
+}
+
+// clearRunFailures resets cls's failure count and lifts its mute: the agent
+// changed the definition.
+func (s *stateDB) clearRunFailures(ctx context.Context, cls string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE run_failures SET failures = 0, muted_until = NULL WHERE classifier = ?`, cls)
 	return err
 }
 

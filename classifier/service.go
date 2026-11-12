@@ -15,6 +15,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -70,15 +71,21 @@ type Summary struct {
 	Trigger string     `json:"trigger,omitempty"`
 	Invalid string     `json:"invalid,omitempty"` // why the file is not run
 	LastRun *RunRecord `json:"last_run,omitempty"`
+	// ErrorsReported is report.errors (nil for an invalid file);
+	// ErrorsMutedUntil is set while error notices are muted.
+	ErrorsReported   *bool     `json:"errors_reported,omitempty"`
+	ErrorsMutedUntil time.Time `json:"errors_muted_until,omitzero"`
 }
 
 // Status is a classifier's Summary with its processed items by status, its
-// most recent decisions and its last run's error.
+// most recent decisions, its last run's error and its failed runs in a row
+// as error notices count them.
 type Status struct {
 	Summary
-	Counts    map[string]int `json:"counts"`
-	Recent    []Decision     `json:"recent,omitempty"`
-	LastError string         `json:"last_error,omitempty"`
+	Counts     map[string]int `json:"counts"`
+	Recent     []Decision     `json:"recent,omitempty"`
+	LastError  string         `json:"last_error,omitempty"`
+	FailedRuns int            `json:"failed_runs"`
 }
 
 // recentDecisions is the number of decisions Status returns.
@@ -205,8 +212,24 @@ func summaryOf(path string, fi fileInfo) Summary {
 	if fi.def != nil {
 		sum.ID, sum.Enabled, sum.DryRun = fi.def.ID, fi.def.Enabled, fi.def.DryRun
 		sum.Trigger = fmt.Sprintf("every %d seconds", fi.def.Trigger.EverySeconds)
+		reported := fi.def.reportErrors()
+		sum.ErrorsReported = &reported
 	}
 	return sum
+}
+
+// failuresOf reads a classifier's failureState from db and sets the
+// summary's ErrorsMutedUntil when the mute has not expired at now. A read
+// failure is reported as no failures.
+func failuresOf(ctx context.Context, db *sql.DB, sum *Summary, now time.Time) failureState {
+	f, err := runFailuresFrom(ctx, db, NormalizeID(sum.ID))
+	if err != nil {
+		return failureState{}
+	}
+	if now.Before(f.mutedUntil) {
+		sum.ErrorsMutedUntil = f.mutedUntil
+	}
+	return f
 }
 
 // List returns the scope agent's classifiers, invalid ones included (their
@@ -226,6 +249,7 @@ func (s *Service) List(scope Scope) ([]Summary, error) {
 		sum := summaryOf(path, fi)
 		if st, stErr := s.state(ctx, scope.BaseDirectory); stErr == nil {
 			sum.LastRun = s.lastRun(ctx, st.db, sum.ID)
+			failuresOf(ctx, st.db, &sum, s.host.clock().Now())
 		}
 		out = append(out, sum)
 	}
@@ -307,6 +331,7 @@ func (s *Service) Create(ctx context.Context, scope Scope, raw []byte) (string, 
 		Kind: AuditWrite, Agent: scope.AgentID, Classifier: def.ID, Outcome: "ok", Clone: scope.Clone,
 		Details: map[string]any{"op": "create", "definition": json.RawMessage(data)},
 	})
+	s.clearFailures(ctx, scope, def.ID)
 	s.host.Logger.Infof("classifier=%s agent=%s: created", def.ID, scope.AgentID)
 	s.wake()
 	return def.ID, nil
@@ -359,9 +384,24 @@ func (s *Service) Update(ctx context.Context, scope Scope, id string, patch []by
 		Kind: AuditWrite, Agent: scope.AgentID, Classifier: def.ID, Outcome: "ok", Clone: scope.Clone,
 		Details: map[string]any{"op": "update", "patch": json.RawMessage(patch)},
 	})
+	s.clearFailures(ctx, scope, def.ID)
 	s.host.Logger.Infof("classifier=%s agent=%s: updated", def.ID, scope.AgentID)
 	s.wake()
 	return nil
+}
+
+// clearFailures resets a classifier's failed-run count and lifts its error
+// mute: the agent created or changed it, so its next failure is reported
+// as a first notice. It does not wait for a run in progress; a failure
+// that run records after it counts.
+func (s *Service) clearFailures(ctx context.Context, scope Scope, id string) {
+	st, err := s.state(ctx, scope.BaseDirectory)
+	if err == nil {
+		err = st.clearRunFailures(context.WithoutCancel(ctx), NormalizeID(id))
+	}
+	if err != nil {
+		s.host.Logger.Errorf("classifier=%s agent=%s: reset run failures: %v", id, scope.AgentID, err)
+	}
 }
 
 // Delete removes a classifier's definition and its state. A run in progress
@@ -441,7 +481,8 @@ func (s *Service) Status(scope Scope, id string) ([]Status, error) {
 		if status.Counts, err = st.counts(ctx, cls); err != nil {
 			return nil, err
 		}
-		recent, err := st.activity(ctx, cls, ActivityQuery{Limit: recentDecisions})
+		status.FailedRuns = failuresOf(ctx, st.db, &status.Summary, s.host.clock().Now()).failures
+		recent, err := st.activity(ctx, cls, ActivityQuery{Limit: recentDecisions, itemsOnly: true})
 		if err != nil {
 			return nil, err
 		}
@@ -453,10 +494,14 @@ func (s *Service) Status(scope Scope, id string) ([]Status, error) {
 	return out, nil
 }
 
-// Activity reads a classifier's activity log (design 7.2).
+// Activity reads a classifier's activity log (design 7.2). An Outcome that
+// is not one of ActivityOutcomes is refused.
 func (s *Service) Activity(scope Scope, id string, q ActivityQuery) ([]ActivityEntry, error) {
 	if _, err := s.owned(scope, id); err != nil {
 		return nil, err
+	}
+	if q.Outcome != "" && !slices.Contains(ActivityOutcomes, q.Outcome) {
+		return nil, &ValidationError{Issues: []string{"outcome must be " + strings.Join(ActivityOutcomes, ", ") + "."}}
 	}
 	ctx := context.Background()
 	st, err := s.state(ctx, scope.BaseDirectory)
@@ -584,8 +629,8 @@ func (s *Service) Rerun(ctx context.Context, scope Scope, id, itemID string) (De
 // Inspect lists the classifiers in base for the configuration report,
 // without a service: every definition file, invalid ones (checked against
 // the install's maximums c, as a run checks them) and ones owned by another
-// agent included, with the last run read from state.db (opened read only;
-// none when it does not exist).
+// agent included, with the last run and the error mute read from state.db
+// (opened read only; none when it does not exist).
 func Inspect(ctx context.Context, base string, c Ceilings) ([]Summary, error) {
 	files, err := definitionFiles(base)
 	if err != nil {
@@ -599,12 +644,14 @@ func Inspect(ctx context.Context, base string, c Ceilings) ([]Summary, error) {
 		}
 	}
 	out := []Summary{}
+	now := time.Now()
 	for _, path := range files {
 		sum := summaryOf(path, readFile(path, c))
 		if db != nil {
 			if r, runErr := lastRunFrom(ctx, db, NormalizeID(sum.ID)); runErr == nil {
 				sum.LastRun = r
 			}
+			failuresOf(ctx, db, &sum, now)
 		}
 		out = append(out, sum)
 	}

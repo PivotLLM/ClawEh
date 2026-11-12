@@ -26,9 +26,11 @@
 #     instructions_dir, no inline instructions) decides by a rule file, skips
 #     a hidden one, shows the loaded text in classifier_test, picks up an
 #     edit on the next run; a missing rules folder ends its runs in error,
-#     posts the failure to Alice's chat once over two failing runs and
-#     tells Alice herself (a system turn in her conversation), and a folder
-#     outside files/ is refused;
+#     logged as one folded run_failed row (classifier_activity with
+#     outcome run_failed), reported twice to Alice's chat and to Alice
+#     herself (a system turn in her conversation), the second saying further
+#     errors are muted for 24 hours, then silent until classifier_update
+#     turns reports back on; and a folder outside files/ is refused;
 #   - a hand-edited invalid definition is never run, is logged, and is
 #     reported by the Check Up assessment API;
 #   - the classifier folder, the definition files and state.db have exactly
@@ -339,9 +341,10 @@ if wait_for 30 md_decided g invoice && md_decided f newsletter; then
 else
     fail "md decisions after the edit: $(sql "SELECT item_id, category FROM dry_run WHERE classifier='md'" | tr '\n' ' ')"
 fi
-# A missing rules folder is accepted on save, then ends every run in error;
-# the failure is reported once (chat summary under on_problems, notice to
-# Alice), not again on the next failing run.
+# A missing rules folder is accepted on save, then ends every run in error.
+# The first failed run is reported (chat summary under on_problems, notice
+# to Alice), the second too, saying further errors are muted for 24 hours;
+# the third and later are only logged, folded into one run_failed row.
 MISSDEF="${MDDEF/\"id\":\"md\"/\"id\":\"md-missing\"}"
 MISSDEF="${MISSDEF/files\/classifiers\/md\/rules/files/classifiers/none}"
 MISSDEF="${MISSDEF/\"summary\":\"never\"/\"summary\":\"on_problems\"}"
@@ -358,29 +361,49 @@ else
     fail "md-missing did not run within 30s"
 fi
 if [ "$(sql "SELECT COUNT(*) FROM dry_run WHERE classifier='md-missing'")" = 0 ]; then pass "the run with a missing rules folder classified nothing"; else fail "md-missing classified items"; fi
-MISS_START="$(sql "SELECT started_at FROM runs WHERE classifier='md-missing'")"
-miss_rerun() { [ "$(sql "SELECT started_at FROM runs WHERE classifier='md-missing' AND ended_at IS NOT NULL")" != "$MISS_START" ]; }
+# miss_failed_runs: the count of the one run_failed row.
+miss_failed_runs() { sql "SELECT count FROM activity WHERE classifier='md-missing' AND outcome='run_failed'"; }
+miss_runs_at_least() { [ "$(miss_failed_runs)" -ge "$1" ] 2>/dev/null; }
 MISS_SUMMARY="Alice: Classifier md-missing (dry run): the run failed: classify.instructions_dir files/classifiers/none can't be read: it does not exist."
+MISS_MUTED="$MISS_SUMMARY Further errors won't be reported for 24 hours."
 miss_summaries() { grep 'telegram: chat=4242 ' "$STUB_LOG" | grep -cF "Classifier md-missing" || true; }
-if wait_for 15 miss_rerun && wait_for 15 grep -qF "text=\"$MISS_SUMMARY\"" "$STUB_LOG"; then
-    sleep 1 # a second summary, if one were sent, has been delivered
-    if [ "$(miss_summaries)" = 1 ]; then
-        pass "the failure was posted to Alice's chat once over two failing runs"
+miss_notices() { grep -c 'classifier=md-missing agent=alice: run failure reported to the agent' "$CLAW_LOG" || true; }
+if wait_for 30 miss_runs_at_least 4; then
+    sleep 1 # a notice of the last run, if one were sent, has been delivered
+    if [ "$(miss_summaries)" = 2 ] && grep -qF "text=\"$MISS_SUMMARY\"" "$STUB_LOG" && grep -qF "text=\"$MISS_MUTED\"" "$STUB_LOG"; then
+        pass "two failure summaries in Alice's chat over $(miss_failed_runs) failing runs, the second saying further errors are muted"
     else
-        fail "$(miss_summaries) failure summaries in Alice's chat, want 1"
+        fail "$(miss_summaries) failure summaries in Alice's chat, want the first and the muted one"
         grep 'telegram:' "$STUB_LOG" | sed 's/^/    /'
     fi
+    if [ "$(miss_notices)" = 2 ]; then pass "two failure notices to Alice, then silence"; else fail "$(miss_notices) failure notices to Alice, want 2"; fi
 else
-    fail "no second md-missing run, or no failure summary in Alice's chat"
-    grep 'telegram:' "$STUB_LOG" | sed 's/^/    /'
+    fail "md-missing did not fail four times within 30s: $(miss_failed_runs)"
 fi
-NOTICE_LOGS="$(grep -c 'classifier=md-missing agent=alice: run failure reported to the agent' "$CLAW_LOG" || true)"
-if [ "$NOTICE_LOGS" = 1 ]; then pass "the failure notice to Alice is logged once"; else fail "$NOTICE_LOGS failure notice log lines, want 1"; fi
-notice_in_session() { grep -rqF "[System: classifier] Classifier md-missing (dry run): the run failed:" "$WS/sessions"; }
-if wait_for 15 notice_in_session; then
-    pass "Alice's conversation received the failure notice"
+if [ "$(sql "SELECT COUNT(*) FROM activity WHERE classifier='md-missing' AND outcome='run_failed' AND item_id IS NULL AND dry_run=1")" = 1 ]; then
+    pass "the failed runs are one run_failed row with no item, marked dry"
 else
-    fail "no failure notice in Alice's conversation"
+    fail "run_failed rows: $(sql "SELECT item_id, count, dry_run FROM activity WHERE classifier='md-missing'" | tr '\n' ' ')"
+fi
+OUT="$(mcp classifier_activity '{"id":"md-missing","outcome":"run_failed"}')"
+if echo "$OUT" | grep -qF '"outcome": "run_failed"' && echo "$OUT" | grep -qE '"count": ([4-9]|[1-9][0-9])' &&
+    echo "$OUT" | grep -qF '"last_at"' && echo "$OUT" | grep -qF "can't be read: it does not exist"; then
+    pass "classifier_activity with outcome run_failed shows the folded failures with their count"
+else
+    fail "classifier_activity (run_failed): $OUT"
+fi
+OUT="$(mcp classifier_status '{"id":"md-missing"}')"
+if echo "$OUT" | grep -qF '"errors_reported": true' && echo "$OUT" | grep -qF '"errors_muted_until"'; then
+    pass "classifier_status shows that error notices are muted"
+else
+    fail "classifier_status (md-missing): $OUT"
+fi
+notice_in_session() { grep -rqF "[System: classifier] Classifier md-missing (dry run): the run failed:" "$WS/sessions"; }
+muted_in_session() { grep -rqF "Further errors from this classifier won't be reported for 24 hours. To report them again now, call classifier_update with" "$WS/sessions"; }
+if wait_for 15 notice_in_session && wait_for 15 muted_in_session; then
+    pass "Alice's conversation received both notices, the second saying how to report errors again"
+else
+    fail "the failure notices are not in Alice's conversation"
 fi
 # The stub model answers the notice's turn with "other"; the answer goes to
 # Alice's default chat.
@@ -389,6 +412,17 @@ if wait_for 15 grep -qF 'telegram: chat=4242 text="other"' "$STUB_LOG"; then
 else
     fail "no answer to the notice in Alice's chat"
 fi
+# Turning reporting back on lifts the mute: the next failure is reported.
+OUT="$(mcp classifier_update '{"id":"md-missing","changes":{"report":{"errors":true}}}')"
+if echo "$OUT" | grep -qF "Classifier md-missing updated."; then pass "classifier_update turns error reports back on"; else fail "classifier_update (report.errors): $OUT"; fi
+miss_notices_at_least() { [ "$(miss_notices)" -ge "$1" ]; }
+if wait_for 15 miss_notices_at_least 3; then
+    pass "the next failure after classifier_update is reported again"
+else
+    fail "no failure notice after classifier_update: $(miss_notices)"
+fi
+OUT="$(mcp classifier_update '{"id":"md-missing","changes":{"enabled":false}}')"
+if ! echo "$OUT" | grep -qF "Classifier md-missing updated."; then fail "classifier_update (disable md-missing): $OUT"; fi
 BADDEF="${MDDEF/\"id\":\"md\"/\"id\":\"md-bad\"}"
 BADDEF="${BADDEF/files\/classifiers\/md\/rules/../memory}"
 OUT="$(mcp classifier_create "{\"definition\":$BADDEF}")"
