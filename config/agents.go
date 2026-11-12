@@ -61,6 +61,10 @@ type AgentConfig struct {
 	Message     *MessageConfig   `json:"message,omitempty"`
 	Temperature *float64         `json:"temperature,omitempty"`
 
+	// MaxToolIterations caps the model/tool steps of one turn for this agent,
+	// overriding agents.defaults.max_tool_iterations. nil or <= 0: the default.
+	MaxToolIterations *int `json:"max_tool_iterations,omitempty"`
+
 	// GlobalCron lets this agent create and manage cron jobs for OTHER agents
 	// (by passing their agent id). Off by default: an agent can only schedule for
 	// itself. Typically exactly one orchestrator agent has this.

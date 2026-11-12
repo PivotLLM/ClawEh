@@ -78,6 +78,7 @@
           "window_count": 1
         },
         "temperature": 1.5,
+        "max_tool_iterations": 1,
         "global_cron": true,
         "maestro": {
           "enabled": true,

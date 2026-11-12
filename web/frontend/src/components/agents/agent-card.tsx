@@ -14,6 +14,7 @@ import { type ModelInfo } from "@/api/models"
 import {
   type AgentBindingView,
   type AllowedFolderEntry,
+  BUILTIN_MAX_TOOL_ITERATIONS,
   type CLIBypassWarning,
   MAX_FOLDER_NOTE_CHARS,
   MESSAGE_TOOL,
@@ -78,6 +79,10 @@ export interface AgentCardProps {
   messageWindowMinutes?: number
   messageWindowCount?: number
   temperature?: number
+  /** The agent's own step cap; undefined = the default. */
+  maxToolIterations?: number
+  /** The step cap that applies when the field is blank, shown in the hint. */
+  defaultMaxToolIterations?: number
   eventRetentionDays?: number
   retiredRetentionDays?: number
   summarizationModels?: string[]
@@ -144,6 +149,7 @@ export interface AgentCardProps {
   onEventRetentionDaysChange?: (v: number | undefined) => void
   onRetiredRetentionDaysChange?: (v: number | undefined) => void
   onTemperatureChange?: (t: number | undefined) => void
+  onMaxToolIterationsChange?: (v: number | undefined) => void
   onSummarizationModelsChange?: (models: string[]) => void
   onSubagentModelsChange?: (models: string[]) => void
   onShareCommonChange?: (share: boolean) => void
@@ -169,6 +175,8 @@ export function AgentCard({
   messageWindowMinutes = 0,
   messageWindowCount = 2,
   temperature = undefined,
+  maxToolIterations = undefined,
+  defaultMaxToolIterations = BUILTIN_MAX_TOOL_ITERATIONS,
   eventRetentionDays = undefined,
   retiredRetentionDays = undefined,
   summarizationModels = [],
@@ -218,6 +226,7 @@ export function AgentCard({
   onEventRetentionDaysChange = undefined,
   onRetiredRetentionDaysChange = undefined,
   onTemperatureChange = undefined,
+  onMaxToolIterationsChange = undefined,
   onSummarizationModelsChange = undefined,
   onSubagentModelsChange = undefined,
   onShareCommonChange = undefined,
@@ -684,6 +693,34 @@ export function AgentCard({
               <span className="text-muted-foreground text-xs">
                 (0–2; blank uses the default temperature, else the model's own;
                 not sent to Anthropic models)
+              </span>
+            </div>
+          </div>
+        )}
+
+        {!human && onMaxToolIterationsChange !== undefined && (
+          <div className="space-y-1.5">
+            <p className="text-foreground text-sm font-semibold">
+              {t("agents.maxToolIterations")}
+            </p>
+            <div className="flex items-center gap-2">
+              <Input
+                type="number"
+                min={1}
+                step={1}
+                value={maxToolIterations ?? ""}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value, 10)
+                  onMaxToolIterationsChange(v > 0 ? v : undefined)
+                }}
+                className="h-7 w-20 text-xs"
+                placeholder={String(defaultMaxToolIterations)}
+                aria-label={t("agents.maxToolIterations")}
+              />
+              <span className="text-muted-foreground text-xs">
+                {t("agents.maxToolIterationsHint", {
+                  steps: defaultMaxToolIterations,
+                })}
               </span>
             </div>
           </div>

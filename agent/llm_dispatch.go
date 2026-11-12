@@ -280,7 +280,8 @@ func (t *llmTurn) callModel(ctx context.Context, d *llmDispatch) (*providers.LLM
 	fallback := al.fallbackChain()
 	if len(t.candidates) == 0 || fallback == nil {
 		start := time.Now()
-		resp, err := d.runProvider.Chat(ctx, al.messagesForModel(t.messages, d.runModel, hasTools), d.defs, d.runModel, d.llmOpts)
+		t.sent = t.requestMessages(hasTools, d.runProvider)
+		resp, err := d.runProvider.Chat(ctx, al.messagesForModel(t.sent, d.runModel, hasTools), d.defs, d.runModel, d.llmOpts)
 		t.emitFinish(ctx, d.provider, t.model, d.runModel, time.Since(start), resp, err)
 		return resp, err
 	}
@@ -324,20 +325,22 @@ func (t *llmTurn) chatCandidate(
 	hasTools bool,
 ) (*providers.LLMResponse, error) {
 	al := t.al
-	// Image parts are dropped for a candidate whose model cannot take
-	// them: a screenshot in history would otherwise fail every turn on
-	// a non-vision candidate. Keyed by alias like GetModelConfig.
-	msgs := al.messagesForModel(t.messages, candidateModelName(c), hasTools)
+	provider := t.agent.Provider
 	if al.dispatcher != nil {
 		key := c.Alias
 		if key == "" {
 			key = c.Provider + "/" + c.Model
 		}
 		if p, getErr := al.dispatchProvider(t.agent, key); getErr == nil {
-			return p.Chat(ctx, msgs, d.defs, c.Model, d.llmOpts)
+			provider = p
 		}
 	}
-	return t.agent.Provider.Chat(ctx, msgs, d.defs, c.Model, d.llmOpts)
+	// Image parts are dropped for a candidate whose model cannot take
+	// them: a screenshot in history would otherwise fail every turn on
+	// a non-vision candidate. Keyed by alias like GetModelConfig.
+	t.sent = t.requestMessages(hasTools, provider)
+	msgs := al.messagesForModel(t.sent, candidateModelName(c), hasTools)
+	return provider.Chat(ctx, msgs, d.defs, c.Model, d.llmOpts)
 }
 
 // candidateModelName is the candidate's model_name, or its wire model when it

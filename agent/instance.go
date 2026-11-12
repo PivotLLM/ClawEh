@@ -406,13 +406,17 @@ type runLimits struct {
 }
 
 // resolveRunLimits resolves the agent's limits: the model's settings over
-// the agent's over the defaults, with built-in fallbacks (20 iterations,
-// 8192 tokens, a 128000-token context window).
+// the agent's (temperature, max_tool_iterations) over the defaults, with
+// built-in fallbacks (20 iterations, 8192 tokens, a 128000-token context
+// window).
 func resolveRunLimits(defaults *config.AgentDefaults, agentCfg *config.AgentConfig, cfg *config.Config, model string) runLimits {
 	l := runLimits{
 		maxIterations: defaults.MaxToolIterations,
 		maxTokens:     defaults.MaxTokens,
 		contextWindow: defaults.ContextWindow,
+	}
+	if agentCfg != nil && agentCfg.MaxToolIterations != nil && *agentCfg.MaxToolIterations > 0 {
+		l.maxIterations = *agentCfg.MaxToolIterations
 	}
 	if l.maxIterations == 0 {
 		l.maxIterations = 20

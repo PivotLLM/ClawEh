@@ -240,6 +240,20 @@
   reply. The message is sent at most once per reply, and never for
   scheduled jobs, webhooks, questions from other agents, sub-agents,
   background results or `/compact`.
+- **Per-agent step limit.** An agent can set its own
+  `max_tool_iterations` (`agents.list[].max_tool_iterations`), the number
+  of model and tool steps one turn may take; unset or 0 uses
+  `agents.defaults.max_tool_iterations`. On the Agents page it is
+  **Maximum tool steps per turn**.
+- **An agent is told when its turn is about to run out of steps.** On the
+  last four steps of a turn, each request to the model carries a short
+  note giving the tool steps left (one fewer than actually remain, so a
+  step is always spare) and asking it to reply with its findings and next
+  steps; on the last step it is told not to call tools. Before, an agent
+  busy with tools could use every step and leave the user with the generic
+  "no response" message. The note is sent only with that request: it is
+  not stored in the conversation. Command-line models and requests without
+  tools do not get it.
 
 ### Changed
 

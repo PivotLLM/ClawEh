@@ -35,6 +35,7 @@ Other model settings on the card:
 - **Sub-Agent models (tried in order)**: the models the agent's [sub-agents](./subagents.md#sub-agent-models) run on. Empty means they use the Models list above.
 - **Memory models (optional)**: models tried first when this agent's memory is consolidated or its conversation is summarized, ahead of the install's memory models. Use them when the default models refuse this agent's content.
 - **Temperature**: 0 to 2; blank uses **Default temperature** on the System page, else the model's own default. Anthropic models ignore it.
+- **Maximum tool steps per turn**: how many model and tool steps one reply may take; blank uses **Max tool iterations** on the System page (50 unless changed). On its last four steps the agent is told how many it has left, so it replies with what it found instead of running out.
 
 ## Turn an agent off or delete it
 

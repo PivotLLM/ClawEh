@@ -33,6 +33,30 @@ const maxIdenticalToolBatches = 4
 // graceful fallback rather than leaving the user with no answer.
 const maxEmptyRetries = 2
 
+// lowStepsWarnAt is the number of iterations remaining in the turn (the
+// current one included) at or below which each request tells the model how
+// many tool steps it has left.
+const lowStepsWarnAt = 4
+
+// lowStepsNote is the note added to the request of iteration iteration
+// (1-based) of a turn capped at maxIterations, or "" when enough steps remain.
+// It reports one step fewer than actually remain, so the model always has a
+// spare step to give its reply in.
+func lowStepsNote(iteration, maxIterations int) string {
+	remaining := maxIterations - iteration + 1
+	if remaining > lowStepsWarnAt || remaining < 1 {
+		return ""
+	}
+	switch told := remaining - 1; told {
+	case 0:
+		return "[System notice] This is your last step in this turn. Do not call tools; reply now with your findings and next steps."
+	case 1:
+		return "[System notice] You have 1 tool step left in this turn. Save any work in progress and give your reply with your findings and next steps before it runs out."
+	default:
+		return fmt.Sprintf("[System notice] You have %d tool steps left in this turn. Save any work in progress and give your reply with your findings and next steps before they run out.", told)
+	}
+}
+
 // llmTurn is one turn's model loop: what the turn was started with and the
 // state carried from one iteration to the next.
 type llmTurn struct {
@@ -45,6 +69,9 @@ type llmTurn struct {
 	// messages is the request as sent: stored history plus this turn's
 	// unsaved steering messages, with media already resolved.
 	messages []providers.Message
+	// sent is what the latest provider call was given before per-model
+	// adjustments: messages plus any per-request note. The dumps record it.
+	sent []providers.Message
 	// candidates and model are the turn's model choice. It is sticky for every
 	// iteration, so a multi-step tool chain never switches model mid-way.
 	candidates []providers.FallbackCandidate
@@ -229,9 +256,10 @@ func (t *llmTurn) iterate(ctx context.Context) (bool, error) {
 
 	defs := t.toolDefinitions()
 	promptEstimate := t.assemble(ctx, defs)
-	t.logRequest(defs)
+	d := t.newDispatch(defs, promptEstimate)
+	t.logRequest(d)
 
-	response, err := t.requestModel(ctx, t.newDispatch(defs, promptEstimate))
+	response, err := t.requestModel(ctx, d)
 	if err != nil {
 		return false, err
 	}
@@ -244,6 +272,28 @@ func (t *llmTurn) iterate(ctx context.Context) (bool, error) {
 		return t.directAnswer(response), nil
 	}
 	return t.runToolCalls(ctx, response)
+}
+
+// requestMessages is the slice sent to provider for this iteration: the
+// turn's messages plus, when few steps remain, the low-steps note as a
+// trailing user message. The note is never added to t.messages nor stored, so
+// each request carries only its own count and history never sees it. A
+// dispatch without tools has no steps to count, and a CLI provider finishes
+// the turn in one call, so neither gets the note.
+func (t *llmTurn) requestMessages(hasTools bool, provider providers.LLMProvider) []providers.Message {
+	if !hasTools {
+		return t.messages
+	}
+	if _, isCLI := provider.(providers.CLIProvider); isCLI {
+		return t.messages
+	}
+	note := lowStepsNote(t.iteration, t.agent.MaxIterations)
+	if note == "" {
+		return t.messages
+	}
+	// Clip so the append copies instead of writing into t.messages' spare
+	// capacity.
+	return append(slices.Clip(t.messages), providers.Message{Role: "user", Content: note})
 }
 
 // toolDefinitions are the tools offered to the model in this dispatch. A
@@ -282,9 +332,12 @@ func (t *llmTurn) assemble(ctx context.Context, defs []providers.ToolDefinition)
 	return asm.PromptTokenEstimate
 }
 
-// logRequest logs the session status and the request about to be sent; the
-// full messages only when log_message_content allows it.
-func (t *llmTurn) logRequest(defs []providers.ToolDefinition) {
+// logRequest logs the session status and the request about to be sent to
+// the dispatch's first provider; the full messages only when
+// log_message_content allows it.
+func (t *llmTurn) logRequest(d *llmDispatch) {
+	defs := d.defs
+	sent := t.requestMessages(len(defs) > 0, d.runProvider)
 	sessionSummary := t.agent.Sessions.GetSummary(t.opts.SessionKey)
 	logger.InfoCF("agent", "Session status",
 		map[string]any{
@@ -297,8 +350,8 @@ func (t *llmTurn) logRequest(defs []providers.ToolDefinition) {
 		})
 
 	systemPromptLen := 0
-	if len(t.messages) > 0 {
-		systemPromptLen = len(t.messages[0].Content)
+	if len(sent) > 0 {
+		systemPromptLen = len(sent[0].Content)
 	}
 	var temperature any = "model default"
 	if t.agent.Temperature != nil {
@@ -309,7 +362,7 @@ func (t *llmTurn) logRequest(defs []providers.ToolDefinition) {
 			"agent_id":          t.agent.ID,
 			"iteration":         t.iteration,
 			"model":             t.model,
-			"messages_count":    len(t.messages),
+			"messages_count":    len(sent),
 			"tools_count":       len(defs),
 			"max_tokens":        t.agent.MaxTokens,
 			"temperature":       temperature,
@@ -320,7 +373,7 @@ func (t *llmTurn) logRequest(defs []providers.ToolDefinition) {
 		logger.DebugCF("agent", "Full LLM request",
 			map[string]any{
 				"iteration":     t.iteration,
-				"messages_json": formatMessagesForLog(t.messages),
+				"messages_json": formatMessagesForLog(sent),
 				"tools_json":    formatToolsForLog(defs),
 			})
 	}
@@ -331,11 +384,15 @@ func (t *llmTurn) logRequest(defs []providers.ToolDefinition) {
 func (t *llmTurn) recordResponse(ctx context.Context, response *providers.LLMResponse) {
 	al := t.al
 	if cfg := al.GetConfig(); al.dumpsDir.Path != "" && cfg != nil {
+		sent := t.sent
+		if sent == nil {
+			sent = t.messages
+		}
 		isRefusal := response.FinishReason == "refusal"
 		if isRefusal && cfg.Logging.DumpRefusals {
-			al.dumpRefusal(t.agent, t.messages, response, t.opts, t.model, t.iteration)
+			al.dumpRefusal(t.agent, sent, response, t.opts, t.model, t.iteration)
 		} else if cfg.Logging.DumpAll {
-			al.dumpAll(t.agent, t.messages, response, t.opts, t.model, t.iteration)
+			al.dumpAll(t.agent, sent, response, t.opts, t.model, t.iteration)
 		}
 	}
 

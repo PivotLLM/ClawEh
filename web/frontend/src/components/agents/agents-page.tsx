@@ -183,6 +183,7 @@ export function AgentsPage() {
             }
           : null,
       temperature: edits.temperature,
+      max_tool_iterations: edits.maxToolIterations,
       event_retention_days: edits.eventRetentionDays,
       retired_retention_days: edits.retiredRetentionDays,
       summarization_models:
@@ -534,6 +535,13 @@ export function AgentsPage() {
                         edit(i, { message: { mins, count } })
                       }
                       onTemperatureChange={(tp) => edit(i, { temperature: tp })}
+                      maxToolIterations={e.maxToolIterations}
+                      defaultMaxToolIterations={
+                        agentsCfg.defaults.max_tool_iterations
+                      }
+                      onMaxToolIterationsChange={(v) =>
+                        edit(i, { maxToolIterations: v })
+                      }
                       eventRetentionDays={e.eventRetentionDays}
                       onEventRetentionDaysChange={(v) =>
                         edit(i, { eventRetentionDays: v })

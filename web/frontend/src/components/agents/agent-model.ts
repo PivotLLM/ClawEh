@@ -22,6 +22,8 @@ export interface AgentEntry {
   tools?: string[]
   message?: MessageConfig | null
   temperature?: number
+  /** Model/tool steps one turn may take; undefined = agents.defaults. */
+  max_tool_iterations?: number
   /** Days an `event` memory is kept. undefined = agents.defaults; 0 = the
    *  built-in default; negative = keep forever. */
   event_retention_days?: number
@@ -78,6 +80,9 @@ export interface AgentsConfig {
   defaults: {
     models?: string[]
     temperature?: number
+    /** The step cap an agent without its own gets: the configured default,
+     *  else BUILTIN_MAX_TOOL_ITERATIONS. */
+    max_tool_iterations?: number
   }
   list?: AgentEntry[]
 }
@@ -105,6 +110,18 @@ export function asString(value: unknown): string {
 
 export function asNumber(value: unknown, defaultVal = 0): number {
   return typeof value === "number" ? value : defaultVal
+}
+
+// BUILTIN_MAX_TOOL_ITERATIONS is the step cap the server falls back to when
+// agents.defaults.max_tool_iterations is 0 or missing (resolveRunLimits in
+// agent/instance.go).
+export const BUILTIN_MAX_TOOL_ITERATIONS = 20
+
+// positiveInt is value when it is a whole number above zero, else undefined.
+export function positiveInt(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value > 0
+    ? value
+    : undefined
 }
 
 // splitCsv parses a comma-separated MCP-allow string into trimmed, non-empty entries.
@@ -461,6 +478,7 @@ export function parseAgent(value: unknown): AgentEntry {
           }
         : null,
     temperature: typeof r.temperature === "number" ? r.temperature : undefined,
+    max_tool_iterations: positiveInt(r.max_tool_iterations),
     event_retention_days:
       typeof r.event_retention_days === "number"
         ? r.event_retention_days
@@ -560,6 +578,9 @@ export function parseAgentsConfig(appConfig: unknown): AgentsConfig {
         typeof defaults.temperature === "number"
           ? defaults.temperature
           : undefined,
+      max_tool_iterations:
+        positiveInt(defaults.max_tool_iterations) ??
+        BUILTIN_MAX_TOOL_ITERATIONS,
     },
     list: sortAgentList(asArray(agents.list).map(parseAgent)),
   }
@@ -762,6 +783,7 @@ const AGENT_PAGE_KEYS = [
   "tools",
   "message",
   "temperature",
+  "max_tool_iterations",
   "event_retention_days",
   "retired_retention_days",
   "summarization_models",
@@ -822,6 +844,9 @@ export function agentPayload(a: AgentEntry): Record<string, unknown> {
           }
         : null,
     ...(a.temperature !== undefined ? { temperature: a.temperature } : {}),
+    ...(positiveInt(a.max_tool_iterations) !== undefined
+      ? { max_tool_iterations: a.max_tool_iterations }
+      : {}),
     ...(a.event_retention_days !== undefined
       ? { event_retention_days: a.event_retention_days }
       : {}),

@@ -75,6 +75,7 @@ function renderCard(
 const allSettings: Partial<React.ComponentProps<typeof AgentCard>> = {
   onMessageChange: () => {},
   onTemperatureChange: () => {},
+  onMaxToolIterationsChange: () => {},
   onEventRetentionDaysChange: () => {},
   onRetiredRetentionDaysChange: () => {},
   onShareCommonChange: () => {},
@@ -105,6 +106,7 @@ const personIgnores = [
   "Cognitive memory",
   "Share common directory",
   "Temperature",
+  "Maximum tool steps per turn",
   "Event memory retention (days)",
   "Retired memory retention (days)",
   "Rotating Tokens",
@@ -766,5 +768,32 @@ describe("AgentCard task models while saving", () => {
         .getByLabelText("Allow task models: Images")
         .hasAttribute("disabled"),
     ).toBe(false)
+  })
+})
+
+describe("AgentCard maximum tool steps", () => {
+  it("shows the value and the default, and clearing it reports undefined", () => {
+    const onChange = vi.fn()
+    renderCard({
+      maxToolIterations: 120,
+      defaultMaxToolIterations: 50,
+      onMaxToolIterationsChange: onChange,
+    })
+    const input = screen.getByLabelText(
+      "Maximum tool steps per turn",
+    ) as HTMLInputElement
+    expect(input.value).toBe("120")
+    expect(input.placeholder).toBe("50")
+    expect(screen.getByText("(blank uses the default, 50)")).toBeTruthy()
+
+    fireEvent.change(input, { target: { value: "80" } })
+    expect(onChange).toHaveBeenLastCalledWith(80)
+    fireEvent.change(input, { target: { value: "" } })
+    expect(onChange).toHaveBeenLastCalledWith(undefined)
+  })
+
+  it("shows the server's built-in cap when no default is given", () => {
+    renderCard({ onMaxToolIterationsChange: () => {} })
+    expect(screen.getByText("(blank uses the default, 20)")).toBeTruthy()
   })
 })

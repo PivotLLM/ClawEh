@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 
 import toolGrantCases from "../../../../../config/testdata/tool_grant_cases.json"
 import {
+  BUILTIN_MAX_TOOL_ITERATIONS,
   CODING_TOOLS,
   agentsPayload,
   applyMaestroEdits,
@@ -891,6 +892,64 @@ describe("agent temperature", () => {
       list: (cfg.list ?? []).map((a) => ({ ...a, temperature: undefined })),
     }
     expect(payload(cleared)).not.toHaveProperty("temperature")
+  })
+})
+
+describe("agent max_tool_iterations", () => {
+  const payload = (cfg: ReturnType<typeof parseAgentsConfig>) =>
+    (agentsPayload(cfg) as { agents: { list: Record<string, unknown>[] } })
+      .agents.list[0]
+
+  it("reads the default and the agent's own value", () => {
+    const cfg = parseAgentsConfig({
+      agents: {
+        defaults: { max_tool_iterations: 50 },
+        list: [{ id: "alice", max_tool_iterations: 120 }],
+      },
+    })
+    expect(cfg.defaults.max_tool_iterations).toBe(50)
+    expect(cfg.list?.[0].max_tool_iterations).toBe(120)
+    expect(payload(cfg).max_tool_iterations).toBe(120)
+  })
+
+  it("falls back to the server's built-in cap when no default is set", () => {
+    for (const defaults of [{}, { max_tool_iterations: 0 }]) {
+      const cfg = parseAgentsConfig({
+        agents: { defaults, list: [{ id: "alice" }] },
+      })
+      expect(cfg.defaults.max_tool_iterations).toBe(BUILTIN_MAX_TOOL_ITERATIONS)
+    }
+    expect(BUILTIN_MAX_TOOL_ITERATIONS).toBe(20)
+  })
+
+  it("leaves an unset value out of the saved payload", () => {
+    const cfg = parseAgentsConfig({ agents: { list: [{ id: "alice" }] } })
+    expect(cfg.list?.[0].max_tool_iterations).toBeUndefined()
+    expect(payload(cfg)).not.toHaveProperty("max_tool_iterations")
+  })
+
+  it("removes a cleared value rather than keeping the loaded one", () => {
+    const cfg = parseAgentsConfig({
+      agents: { list: [{ id: "alice", max_tool_iterations: 80 }] },
+    })
+    const cleared = {
+      ...cfg,
+      list: (cfg.list ?? []).map((a) => ({
+        ...a,
+        max_tool_iterations: undefined,
+      })),
+    }
+    expect(payload(cleared)).not.toHaveProperty("max_tool_iterations")
+  })
+
+  it("treats zero, negative and fractional values as unset", () => {
+    for (const v of [0, -5, 2.5, "12"]) {
+      const cfg = parseAgentsConfig({
+        agents: { list: [{ id: "alice", max_tool_iterations: v }] },
+      })
+      expect(cfg.list?.[0].max_tool_iterations).toBeUndefined()
+      expect(payload(cfg)).not.toHaveProperty("max_tool_iterations")
+    }
   })
 })
 

@@ -90,6 +90,8 @@
     "eventRetention": "Event memory retention (days)",
     "retiredRetention": "Retired memory retention (days)",
     "retentionHint": "(blank = {{days}}, -1 = keep forever)",
+    "maxToolIterations": "Maximum tool steps per turn",
+    "maxToolIterationsHint": "(blank uses the default, {{steps}})",
     "human": "Represents a person: answers are typed by hand.",
     "humanNotRunning": "Not running: {{message}}",
     "humanIgnored": "Ignored: {{message}}",
