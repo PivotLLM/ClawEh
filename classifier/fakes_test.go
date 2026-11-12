@@ -112,8 +112,14 @@ func (m *fakeModel) setReply(f func(system, user string) (string, error)) {
 }
 
 type fakeNotifier struct {
-	mu    sync.Mutex
-	texts []string
+	mu      sync.Mutex
+	texts   []string
+	notices []notice
+}
+
+// notice is one failure notice delivered to an agent.
+type notice struct {
+	agent, classifier, text string
 }
 
 func (n *fakeNotifier) Summary(_ context.Context, _, text string) error {
@@ -121,6 +127,19 @@ func (n *fakeNotifier) Summary(_ context.Context, _, text string) error {
 	defer n.mu.Unlock()
 	n.texts = append(n.texts, text)
 	return nil
+}
+
+func (n *fakeNotifier) RunFailed(ctx context.Context, agentID, text string) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.notices = append(n.notices, notice{agent: agentID, classifier: ClassifierID(ctx), text: text})
+	return nil
+}
+
+func (n *fakeNotifier) allNotices() []notice {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return append([]notice(nil), n.notices...)
 }
 
 func (n *fakeNotifier) all() []string {

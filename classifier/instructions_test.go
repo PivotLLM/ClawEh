@@ -295,8 +295,13 @@ func TestRunMarkdownProblems(t *testing.T) {
 				!strings.Contains(sums[0].LastRun.Error, tc.want) {
 				t.Errorf("Inspect = %+v, %v", sums, err)
 			}
-			if texts := e.notifier.all(); len(texts) != 1 || !strings.Contains(texts[0], tc.want) {
-				t.Errorf("summaries = %q", texts)
+			// The summary names the classifier once, before the error.
+			want := "Classifier inbox-priority: the run failed: " + strings.TrimPrefix(tc.want, "classifier inbox-priority: ")
+			if strings.HasPrefix(tc.want, "classifier inbox-priority has") {
+				want = "Classifier inbox-priority: the run failed: " + tc.want
+			}
+			if texts := e.notifier.all(); len(texts) != 1 || !strings.HasPrefix(texts[0], want) {
+				t.Errorf("summaries = %q, want one starting %q", texts, want)
 			}
 			// classifier_test refuses with the same sentence.
 			if _, err := e.svc.Test(context.Background(), e.scope, "inbox-priority", ""); err == nil ||

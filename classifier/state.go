@@ -124,7 +124,8 @@ CREATE TABLE IF NOT EXISTS activity (
 CREATE INDEX IF NOT EXISTS activity_by_time ON activity (classifier, at DESC);
 CREATE TABLE IF NOT EXISTS runs (
   classifier TEXT PRIMARY KEY, started_at INTEGER, ended_at INTEGER, status TEXT, error TEXT,
-  listed INTEGER, new_items INTEGER, classified INTEGER, acted INTEGER, unclassified INTEGER, failed INTEGER, dry_run INTEGER);
+  listed INTEGER, new_items INTEGER, classified INTEGER, acted INTEGER, unclassified INTEGER, failed INTEGER, dry_run INTEGER,
+  reported_error TEXT);
 `
 
 // stateDB is one folder's state.db.
@@ -170,7 +171,10 @@ func openState(ctx context.Context, base string, dirMode, fileMode os.FileMode) 
 	if _, err := db.ExecContext(ctx, stateSchema); err != nil {
 		return nil, errors.Join(fmt.Errorf("schema %s: %w", path, err), db.Close())
 	}
-	if err := addActionArgsColumn(ctx, db); err != nil {
+	if err := addColumn(ctx, db, "activity", "action_args"); err != nil {
+		return nil, errors.Join(fmt.Errorf("schema %s: %w", path, err), db.Close())
+	}
+	if err := addColumn(ctx, db, "runs", "reported_error"); err != nil {
 		return nil, errors.Join(fmt.Errorf("schema %s: %w", path, err), db.Close())
 	}
 	for _, side := range []string{"-wal", "-shm"} {
@@ -181,17 +185,17 @@ func openState(ctx context.Context, base string, dirMode, fileMode os.FileMode) 
 	return &stateDB{db: db, path: path}, nil
 }
 
-// addActionArgsColumn adds activity.action_args to a state.db created
-// before the column existed.
-func addActionArgsColumn(ctx context.Context, db *sql.DB) error {
+// addColumn adds the TEXT column table.column to a state.db created before
+// the column existed. table and column are fixed names, never input.
+func addColumn(ctx context.Context, db *sql.DB, table, column string) error {
 	var n int
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('activity') WHERE name = 'action_args'`).Scan(&n); err != nil {
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, table, column).Scan(&n); err != nil {
 		return err
 	}
 	if n > 0 {
 		return nil
 	}
-	_, err := db.ExecContext(ctx, `ALTER TABLE activity ADD COLUMN action_args TEXT`)
+	_, err := db.ExecContext(ctx, `ALTER TABLE `+table+` ADD COLUMN `+column+` TEXT`) // #nosec G202 -- fixed names
 	return err
 }
 
@@ -460,6 +464,25 @@ ON CONFLICT (classifier) DO UPDATE SET started_at = excluded.started_at, ended_a
   failed = excluded.failed, dry_run = excluded.dry_run`,
 		cls, ms(r.StartedAt), ms(r.EndedAt), r.Status, nullable(r.Error), r.Listed, r.NewItems, r.Classified,
 		r.Acted, r.Unclassified, r.Failed, r.DryRun)
+	return err
+}
+
+// reportedError returns the run error last reported for cls (the chat
+// summary and the agent's notice of a failed run), "" when none is: no
+// failed run yet, or a run succeeded since.
+func (s *stateDB) reportedError(ctx context.Context, cls string) (string, error) {
+	var v sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT reported_error FROM runs WHERE classifier = ?`, cls).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return v.String, err
+}
+
+// setReportedError records the run error reported for cls; "" clears it.
+// The run's row must exist (setRun wrote it).
+func (s *stateDB) setReportedError(ctx context.Context, cls, text string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE runs SET reported_error = ? WHERE classifier = ?`, nullable(text), cls)
 	return err
 }
 

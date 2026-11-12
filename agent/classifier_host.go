@@ -18,10 +18,12 @@ import (
 	"github.com/PivotLLM/ClawEh/classifier"
 	"github.com/PivotLLM/ClawEh/classifier/classifierfs"
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/constants"
 	"github.com/PivotLLM/ClawEh/fileutil"
 	"github.com/PivotLLM/ClawEh/internal/audit"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/providers"
+	"github.com/PivotLLM/ClawEh/routing"
 	"github.com/PivotLLM/ClawEh/tools"
 	toolschedule "github.com/PivotLLM/ClawEh/tools/schedule"
 )
@@ -29,7 +31,8 @@ import (
 // ClassifierHost is ClawEh's side of the classifier package's host contract
 // over one agent loop: classifier.ToolRunner (the owning agent's own tool
 // registry), classifier.ModelCaller (the agent's classifier model),
-// classifier.Notifier (the run summary posted to the agent's default chat),
+// classifier.Notifier (the run summary posted to the agent's default chat,
+// the notice of a failed run in its conversation),
 // classifier.Auditor (the audit log), and the modes, maximums and scopes the
 // service reads. The gateway creates it before the loop, because the
 // classifier service must exist when the loop builds the agents' tools, and
@@ -381,6 +384,45 @@ func (h *ClassifierHost) Summary(ctx context.Context, agentID, text string) erro
 			}
 		},
 	})
+}
+
+// classifierNoticeSender is the sender id of a classifier's failure notice,
+// as the agent sees it ("[System: classifier] ...").
+const classifierNoticeSender = "classifier"
+
+// RunFailed implements classifier.Notifier: the notice of a failed run is
+// queued as a system message for the agent, in its one conversation, and
+// the call returns without waiting for the agent's turn. The agent's answer
+// goes to its default chat (its default binding); with none, it stays in
+// the conversation.
+func (h *ClassifierHost) RunFailed(ctx context.Context, agentID, text string) error {
+	al, cfg, err := h.bound()
+	if err != nil {
+		return err
+	}
+	// processSystemMessage keeps a message of the ask channel in the agent's
+	// main conversation and sends its answer to no chat.
+	channel, chatID := constants.AgentMessageChannel, ""
+	if c, id, _, ok := cfg.CronTarget(agentID); ok {
+		channel, chatID = c, id
+	}
+	pubCtx, cancel := context.WithTimeout(ctx, publishTimeout)
+	defer cancel()
+	if err := al.bus.PublishInbound(pubCtx, bus.InboundMessage{
+		Channel:    "system",
+		SenderID:   classifierNoticeSender,
+		ChatID:     chatID,
+		Content:    text,
+		SessionKey: routing.BuildAgentMainSessionKey(agentID),
+		Metadata: map[string]string{
+			metadataKeyPreresolvedAgentID: agentID,
+			bus.MetaOriginChannel:         channel,
+		},
+		Internal: true,
+	}); err != nil {
+		return fmt.Errorf("queue the notice for agent %s: %w", agentID, err)
+	}
+	return nil
 }
 
 // Record implements classifier.Auditor: a definition written is a

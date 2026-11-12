@@ -242,7 +242,8 @@ func (s *Service) handleItem(ctx context.Context, scope Scope, def *Definition, 
 // starting items after stop_after_failures consecutive failures, when stop is
 // closed (the classifier was disabled or deleted, or the agent's switch
 // turned off: the items in flight finish), or when the model cannot be used.
-// The run is recorded and, as report.summary says, summarised to the agent.
+// The run is recorded and, as report.summary says, summarised to the agent;
+// a failed run is also reported to the agent itself (reportFailure).
 func (s *Service) runClassifier(ctx context.Context, scope Scope, def *Definition, stop <-chan struct{}) RunRecord {
 	rec := RunRecord{StartedAt: s.host.clock().Now().UTC(), DryRun: def.DryRun, Status: RunOK}
 	cls := NormalizeID(def.ID)
@@ -255,6 +256,9 @@ func (s *Service) runClassifier(ctx context.Context, scope Scope, def *Definitio
 		return rec
 	}
 
+	// cooling: the run ended because the model is in cooldown, which ends
+	// by itself; it is not a failure to report to the agent.
+	cooling := false
 	finish := func() RunRecord {
 		rec.EndedAt = s.host.clock().Now().UTC()
 		if runErr := st.setRun(context.WithoutCancel(ctx), cls, rec); runErr != nil {
@@ -263,7 +267,11 @@ func (s *Service) runClassifier(ctx context.Context, scope Scope, def *Definitio
 		s.host.Logger.Infof("classifier=%s agent=%s: run %s: %d listed, %d new, %d classified, %d acted, %d unclassified, %d failed%s",
 			def.ID, scope.AgentID, rec.Status, rec.Listed, rec.NewItems, rec.Classified, rec.Acted, rec.Unclassified, rec.Failed,
 			errSuffix(rec.Error))
-		s.summarise(ctx, scope, def, rec)
+		failure := s.trackFailure(ctx, scope, def, st, rec, cooling)
+		s.summarise(ctx, scope, def, rec, failure)
+		if failure == failureNew {
+			s.reportFailure(ctx, scope, def, rec)
+		}
 		return rec
 	}
 	fail := func(cause error) RunRecord {
@@ -384,6 +392,7 @@ func (s *Service) runClassifier(ctx context.Context, scope Scope, def *Definitio
 	switch {
 	case fatal != nil:
 		rec.Status, rec.Error = RunError, fatal.Error()
+		_, cooling = errors.AsType[*CooldownError](fatal)
 	case stoppedBy != "":
 		rec.Status, rec.Error = RunStopped, stoppedBy
 	}
@@ -474,17 +483,77 @@ func (s *Service) prune(ctx context.Context, st *stateDB, def *Definition, proce
 	}
 }
 
-// summarise posts the run's summary to the owning agent's chat when
-// report.summary asks for it: always (a run that handled items or failed),
-// on_problems (default: a run with unclassified or failed items), never.
-func (s *Service) summarise(ctx context.Context, scope Scope, def *Definition, rec RunRecord) {
+// failureReport says whether a run is a failure to report.
+type failureReport int
+
+const (
+	failureNone   failureReport = iota // the run did not fail (or only its model is in cooldown)
+	failureNew                         // failed with an error not reported yet: report it
+	failureRepeat                      // failed with the error already reported: say nothing
+)
+
+// trackFailure decides whether a run's failure is reported, once per
+// distinct error: the error last reported is kept in state.db (so a restart
+// does not report it again) and cleared by a run that does not fail, so a
+// later failure is reported again. A run that ended on a model in cooldown
+// changes nothing.
+func (s *Service) trackFailure(ctx context.Context, scope Scope, def *Definition, st *stateDB, rec RunRecord, cooling bool) failureReport {
+	if cooling {
+		return failureNone
+	}
+	wctx := context.WithoutCancel(ctx)
+	cls := NormalizeID(def.ID)
+	if rec.Status != RunError {
+		if err := st.setReportedError(wctx, cls, ""); err != nil {
+			s.host.Logger.Errorf("classifier=%s agent=%s: store reported error: %v", def.ID, scope.AgentID, err)
+		}
+		return failureNone
+	}
+	prev, err := st.reportedError(wctx, cls)
+	if err != nil {
+		// Reported again rather than never.
+		s.host.Logger.Errorf("classifier=%s agent=%s: read reported error: %v", def.ID, scope.AgentID, err)
+	} else if prev == rec.Error {
+		return failureRepeat
+	}
+	if err := st.setReportedError(wctx, cls, rec.Error); err != nil {
+		s.host.Logger.Errorf("classifier=%s agent=%s: store reported error: %v", def.ID, scope.AgentID, err)
+	}
+	return failureNew
+}
+
+// reportFailure delivers the notice of a failed run to the owning agent,
+// whatever report.summary says, so it can fix the classifier.
+func (s *Service) reportFailure(ctx context.Context, scope Scope, def *Definition, rec RunRecord) {
 	if s.host.Notifier == nil {
 		return
 	}
-	switch def.summaryMode() {
-	case SummaryNever:
+	text := failureText(def, rec) + " " + failureAdvice
+	if err := s.host.Notifier.RunFailed(withClassifier(ctx, NormalizeID(def.ID)), scope.AgentID, text); err != nil {
+		s.host.Logger.Warnf("classifier=%s agent=%s: failure notice not delivered: %v", def.ID, scope.AgentID, err)
 		return
-	case SummaryAlways:
+	}
+	s.host.Logger.Infof("classifier=%s agent=%s: run failure reported to the agent", def.ID, scope.AgentID)
+}
+
+// failureAdvice ends the agent's notice of a failed run.
+const failureAdvice = "Check and fix the classifier's definition or its instructions files; classifier_test shows the result."
+
+// summarise posts the run's summary to the owning agent's chat when
+// report.summary asks for it: always (a run that handled items or failed),
+// on_problems (default: a run with unclassified or failed items, or that
+// failed), never. A failed run is posted once per distinct error (failure).
+func (s *Service) summarise(ctx context.Context, scope Scope, def *Definition, rec RunRecord, failure failureReport) {
+	if s.host.Notifier == nil {
+		return
+	}
+	text := summaryText(def, rec)
+	switch mode := def.summaryMode(); {
+	case mode == SummaryNever, failure == failureRepeat:
+		return
+	case failure == failureNew:
+		text = failureText(def, rec)
+	case mode == SummaryAlways:
 		if rec.NewItems == 0 && rec.Status != RunError {
 			return
 		}
@@ -493,7 +562,7 @@ func (s *Service) summarise(ctx context.Context, scope Scope, def *Definition, r
 			return
 		}
 	}
-	if err := s.host.Notifier.Summary(withClassifier(ctx, NormalizeID(def.ID)), scope.AgentID, summaryText(def, rec)); err != nil {
+	if err := s.host.Notifier.Summary(withClassifier(ctx, NormalizeID(def.ID)), scope.AgentID, text); err != nil {
 		s.host.Logger.Warnf("classifier=%s agent=%s: summary not delivered: %v", def.ID, scope.AgentID, err)
 	}
 }
@@ -508,5 +577,24 @@ func summaryText(def *Definition, rec RunRecord) string {
 	fmt.Fprintf(&b, ": %d new items, %d acted, %d unclassified, %d failed", rec.NewItems, rec.Acted, rec.Unclassified, rec.Failed)
 	b.WriteString(errSuffix(rec.Error))
 	b.WriteString(". Use classifier_activity for details.")
+	return b.String()
+}
+
+// failureText is the one-sentence report of a failed run, naming the
+// classifier and the error: "Classifier inbox: the run failed: <error>."
+func failureText(def *Definition, rec RunRecord) string {
+	var b strings.Builder
+	b.WriteString("Classifier " + def.ID)
+	if rec.DryRun {
+		b.WriteString(" (dry run)")
+	}
+	b.WriteString(": the run failed: ")
+	// The error of the Markdown instructions names the classifier already.
+	msg := strings.TrimPrefix(rec.Error, "classifier "+def.ID+": ")
+	msg = strings.Join(strings.Fields(msg), " ") // a validation error has one issue per line
+	b.WriteString(msg)
+	if !strings.HasSuffix(msg, ".") {
+		b.WriteString(".")
+	}
 	return b.String()
 }

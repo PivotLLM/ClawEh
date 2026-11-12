@@ -102,8 +102,8 @@ for you; a definition does not name one.
   the same time (1 by default), and consecutive failures that stop a run (5
   by default).
 - `report.summary`: `on_problems` (default) posts a summary to your chat
-  when items failed or were unclassified, `always` after every run that
-  handled items, `never` not at all.
+  when items failed or were unclassified, or the run failed, `always` after
+  every run that handled items or failed, `never` not at all.
 - `activity_hours`: how long the activity log is kept (72 by default).
 
 ClawEh writes `owner`, `created_at` and `updated_at`.
@@ -191,6 +191,14 @@ resolves to nothing fails that item; nothing empty is passed to a tool.
   entries show each action's arguments (`action_args`) after substitution.
 - When the model cannot be used (none set, or in cooldown), the run stops and
   its items are tried again on the next run.
+- When a run fails (your Markdown files can't be read or are too long, the
+  source tool fails, no usable model), you get a message in your
+  conversation, once per distinct failure:
+  `[System: classifier] Classifier inbox: the run failed: <reason>. Check and
+  fix the classifier's definition or its instructions files; classifier_test
+  shows the result.` Fix the cause, run `classifier_test` to verify, and tell
+  the user what you changed; your answer goes to your default chat. The same
+  failure is not reported again until a run succeeds or the reason changes.
 
 ## Tools
 

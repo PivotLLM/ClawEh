@@ -529,9 +529,16 @@ func TestRunStopsOnCooldown(t *testing.T) {
 	if got := e.notifier.all(); len(got) != 1 || !strings.Contains(got[0], "1 failed (model cheap is in cooldown for 2m30s)") {
 		t.Errorf("summary = %v", got)
 	}
+	// A cooldown ends by itself: the agent is not told to fix anything.
+	if got := e.notifier.allNotices(); len(got) != 0 {
+		t.Errorf("notices after a cooldown = %v", got)
+	}
 	e.model.setReply(func(string, string) (string, error) { return "", fmt.Errorf("x: %w", ErrNoModel) })
 	if rec = e.run("inbox-priority"); rec.Status != RunError || !strings.Contains(rec.Error, "no usable classifier model") {
 		t.Errorf("no-model run = %+v", rec)
+	}
+	if got := e.notifier.allNotices(); len(got) != 1 || !strings.Contains(got[0].text, "no usable classifier model") {
+		t.Errorf("notices after a run with no usable model = %v", got)
 	}
 }
 

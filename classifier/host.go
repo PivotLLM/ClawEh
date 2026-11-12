@@ -92,10 +92,14 @@ const (
 	MaxInstructionsDirBytes  = 1 << 20
 )
 
-// Notifier posts a run's summary to the owning agent's default chat. The host
-// names the agent; text names the classifier. Errors are logged only.
+// Notifier tells the owning agent and its person about runs. The host names
+// the agent; text names the classifier. Errors are logged only.
 type Notifier interface {
+	// Summary posts a run's summary to the agent's default chat.
 	Summary(ctx context.Context, agentID, text string) error
+	// RunFailed delivers the notice of a failed run to the agent itself, as
+	// a message in its main conversation, so it can fix the classifier.
+	RunFailed(ctx context.Context, agentID, text string) error
 }
 
 // Audit event kinds.
