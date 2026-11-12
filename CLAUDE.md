@@ -469,15 +469,32 @@ production instance directly; test against a dev instance.
   cooldowns honoured, the summary posted directly to the owner's default chat
   (`CronTarget`, no model turn; `report.summary` `on_problems`/`always`/
   `never`), audit kinds `classifier_write` and `classification`. A run in
-  `RunError` (not a model cooldown) is reported once per distinct error
-  (`trackFailure`: `runs.reported_error` in state.db, cleared by a run that
-  does not fail): the summary "Classifier <id>: the run failed: <error>."
-  (on_problems and always; never posts nothing; a repeat posts nothing) and,
-  in every mode, `Notifier.RunFailed`, a `system` inbound message (sender
-  `classifier`, `Internal`, the owner's main session, `MetaOriginChannel`/
-  `ChatID` its default chat, else the ask channel) with the same text and
-  "Check and fix ...; classifier_test shows the result.". A clone acts
-  as its source (`Scope.Clone` in audit details). Markdown instructions
+  `RunError` (not a model cooldown, which writes nothing and changes no
+  count) is a failed run (`trackFailure`): an activity row with outcome
+  `run_failed`, NULL `item_id`, its error, `count` and `last_at`
+  (`addRunFailure` folds the same error into the open row,
+  `run_failures.open_row`, until a run that does not fail, other activity, a
+  different error or dry-run flag; retention by `COALESCE(last_at, at)`;
+  `migrateActivity` rebuilds an older table), and error notices per
+  classifier from `run_failures` (`failures`, `muted_until`): the first
+  failure notifies, the second notifies with the mute text and sets
+  `muted_until` = now + `ErrorMute` (24h, a constant), later ones are silent
+  until a failure finds the mute expired (no timer), which starts a new
+  cycle. A run that does not fail resets `failures` (not the mute); a
+  successful `Create`/`Update` resets both (`clearFailures`);
+  `report.errors` false (`*bool`, default true) never notifies. A notice is
+  the summary "Classifier <id>: the run failed: <error>." (on_problems and
+  always; never posts nothing) plus, on the second, "Further errors won't be
+  reported for 24 hours.", and, in every summary mode,
+  `Notifier.RunFailed`, a `system` inbound message (sender `classifier`,
+  `Internal`, the owner's main session, `MetaOriginChannel`/`ChatID` its
+  default chat, else the ask channel) with the same text, "Check and fix
+  ...; classifier_test shows the result." and, on the second, the mute
+  sentence with the exact `classifier_update` call. `classifier_activity`
+  takes `outcome` (`ActivityOutcomes`, others refused) and searches the
+  error; `Status` has `errors_reported`, `failed_runs`,
+  `errors_muted_until`; Check Up's Classifiers table an "Error notices"
+  column. A clone acts as its source (`Scope.Clone` in audit details). Markdown instructions
   (`classifier/instructions.go`): `classify.instructions_file` (one `.md`)
   and `instructions_dir` (its `*.md`, any case, not recursive, hidden and
   non-regular skipped, sorted case-insensitively by name, ties by exact

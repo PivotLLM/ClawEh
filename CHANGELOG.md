@@ -243,17 +243,27 @@
 
 ### Changed
 
-- **A classifier run that fails is reported in the chat and to the agent,
-  once per distinct failure.** When a run fails outright (its instructions
-  files can't be read or are over the limit, the source tool fails, the
-  model can't be used), `report.summary: on_problems` now posts it to the
-  agent's default chat, as `always` did: "Classifier inbox: the run failed:
-  <reason>." The agent also gets the same text in its conversation, whatever
-  `report.summary` says, with a request to fix the classifier and check it
-  with `classifier_test`; its answer goes to its default chat. Both are sent
-  when the failure first appears or its reason changes, not again while the
-  same failure repeats (also across a restart), and again after a run that
-  succeeds. A model in cooldown is not reported this way.
+- **A classifier run that fails is logged and reported in the chat and to
+  the agent, twice, then muted for 24 hours.** When a run fails outright
+  (its instructions files can't be read or are over the limit, the source
+  tool fails, the model can't be used), it is written to the activity log as
+  `run_failed` with its error (the same error in a row is one entry with a
+  count and the first and latest time), and `report.summary: on_problems`
+  now posts it to the agent's default chat, as `always` did: "Classifier
+  inbox: the run failed: <reason>." The agent also gets the same text in its
+  conversation, whatever `report.summary` says, with a request to fix the
+  classifier and check it with `classifier_test`; its answer goes to its
+  default chat. The second failed run in a row is reported too, saying that
+  further errors won't be reported for 24 hours and telling the agent to
+  call `classifier_update` with `{"report": {"errors": true}}` to report them
+  again; after that, failures are only logged until the 24 hours are over.
+  Any `classifier_update` of the classifier lifts the mute, a run that
+  succeeds starts the count again, and both survive a restart. The new
+  `report.errors: false` only logs failed runs. `classifier_activity` takes
+  an `outcome` filter and its search matches errors; `classifier_status`
+  shows `errors_reported`, `failed_runs` and `errors_muted_until`; Check Up's
+  Classifiers table has an **Error notices** column (on, off, or muted until
+  a time). A model in cooldown is not a failed run.
 - **The voice alerts are now Normal priority, like every other alert.**
   "Voice message not transcribed" and "Speech backend not usable" (when no
   speech model was usable) were sent as Urgent.

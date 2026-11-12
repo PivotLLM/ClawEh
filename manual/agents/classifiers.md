@@ -104,7 +104,8 @@ You can edit a definition file by hand. ClawEh reads it again when it changes an
 | `classify` | The instructions, the rules (applied in order) and the categories. `unclassified` is reserved. `instructions_file` and `instructions_dir` add Markdown from the agent's `files/` (see [Rules in Markdown](#rules-in-markdown)); `instructions` may then be empty. |
 | `actions` | The tool run for each category. A category with no action is only recorded. |
 | `limits` | `items_per_run`: items taken per run, the rest wait for the next. `parallel`: items handled at the same time. `stop_after_failures`: consecutive failures that stop a run. |
-| `report.summary` | `on_problems` (default): a summary to the agent's default chat when items failed or were unclassified, or the run failed. `always`: after every run that handled items or failed. `never`. A failed run is posted once per distinct failure (see [Failed runs](#failed-runs)). |
+| `report.summary` | `on_problems` (default): a summary to the agent's default chat when items failed or were unclassified, or the run failed. `always`: after every run that handled items or failed. `never`. A failed run is posted as [Failed runs](#failed-runs) says. |
+| `report.errors` | `true` (default): failed runs are reported to the agent and your chat. `false`: they are only logged. |
 | `activity_hours` | How long the activity log is kept. |
 
 ClawEh writes `owner`, `created_at` and `updated_at`.
@@ -164,10 +165,17 @@ A placeholder must be the whole value: `"{{item.id}}"`, never `"id={{item.id}}"`
 
 A run fails when it can't start or can't go on: its Markdown files are missing, unreadable or too long, the source tool fails, or the agent has no usable classifier model. Nothing is classified, and the items wait for the next run.
 
+Every failed run is written to the [activity log](#activity-log). Error notices:
+
 - Your chat gets one line, unless `report.summary` is `never`: "Alice: Classifier inbox: the run failed: classify.instructions_dir files/classifiers/inbox/rules can't be read: it does not exist."
 - The agent gets the same text in its conversation, with a request to fix the classifier and check it with `classifier_test`. Its answer goes to its default chat (when it has none, the answer stays in the conversation).
-- Both are sent once per failure: not again while the same failure repeats, also after a restart, but again when the reason changes or after a run that succeeds. A successful run posts nothing extra.
+- The first and second failed runs in a row are reported. The second adds, in your chat, "Further errors won't be reported for 24 hours." and tells the agent how to report them again (`classifier_update` with `{"report": {"errors": true}}`). Later failures are only logged until those 24 hours are over; the next failure after that is reported again.
+- Any change the agent makes to the classifier with `classifier_update` reports errors again at once. A run that succeeds starts the count again; it does not end the 24 hours. The count and the 24 hours survive a restart.
+- With `report.errors` set to `false`, failed runs are only logged.
+- Failed items (a fetch, the model or an action failing on one item) are not failed runs: they are in the usual summary.
 - A model in cooldown is not a failure to fix: the run stops, its items wait, and only the usual summary is posted.
+
+`classifier_status` shows `errors_reported`, `failed_runs` (failed runs in a row) and, while muted, `errors_muted_until`.
 
 ### Dry run
 
@@ -175,7 +183,7 @@ With `dry_run` on, the classifier decides but runs no action; the log shows the 
 
 ### Activity log
 
-Every item handled (live or dry run) is logged with the fields sent to the model (each cut to 500 characters), the category, the reason, the action and its outcome. Ask the agent ("what did the inbox classifier do with mail from bob@example.com?"); it reads the log with `classifier_activity`. Nothing is sent to the agent unless you ask.
+Every item handled (live or dry run) is logged with the fields sent to the model (each cut to 500 characters), the category, the reason, the action and its outcome (`acted`, `recorded`, `unclassified` or `failed`). Every failed run is logged too, as `run_failed` with its error and no item; the same error in a row is one entry with `count`, the first time (`at`) and the latest (`last_at`). Entries are kept `activity_hours` (a `run_failed` entry from its latest time) and marked when they come from a dry run. Ask the agent ("what did the inbox classifier do with mail from bob@example.com?", "why did the inbox classifier fail?"); it reads the log with `classifier_activity`, which can filter by `outcome` and search the text, errors included. Nothing is sent to the agent unless you ask.
 
 ## Tools
 
@@ -185,10 +193,10 @@ Every item handled (live or dry run) is logged with the fields sent to the model
 | `classifier_list`, `classifier_get` | The agent's classifiers; one definition. |
 | `classifier_create`, `classifier_update`, `classifier_delete` | Save, change (a JSON merge patch) or remove a classifier. A save checks the definition and calls the source tool once. |
 | `classifier_validate` | The same checks, without saving. |
-| `classifier_status` | Last run, counts, recent decisions and the last error. |
+| `classifier_status` | Last run, counts, recent decisions, the last error and whether error notices are on, off or muted. |
 | `classifier_test` | Classifies one item without acting or storing anything, and shows the system prompt the model got. |
 | `classifier_rerun` | Classifies one item again and runs its action. |
-| `classifier_activity` | The activity log, newest first, with `limit`, `offset` and `search`. |
+| `classifier_activity` | The activity log, newest first, with `limit`, `offset`, `search` and `outcome`. |
 
 ## Limits
 
@@ -231,7 +239,7 @@ A definition that leaves its own settings out uses: `items_per_run` = `max_items
 - **Classifier model (agent)**: none set, or not in Classification (the row says so when the Classification list is empty).
 - **Classifier (agent: id)**: a definition file that is not run, with the reason.
 
-The full report lists, per agent, **Allow classifiers** and **Classifier model**, and a **Classifiers** table: each classifier with enabled, dry run, model, last run, its counts and last error. Invalid files and files owned by another agent are marked.
+The full report lists, per agent, **Allow classifiers** and **Classifier model**, and a **Classifiers** table: each classifier with enabled, dry run, model, last run, its counts, last error and error notices (`on`, `off`, or `muted until` a time). Invalid files and files owned by another agent are marked.
 
 ## Audit and backup
 
