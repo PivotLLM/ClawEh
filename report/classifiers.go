@@ -68,20 +68,21 @@ func classifiersDir(cfg *config.Config, a *config.AgentConfig) string {
 // classifiersTable is one row per definition file in the agent's
 // classifiers folder, or ok=false when the switch is off and the folder has
 // none. Invalid files, files owned by another agent and runs that ended in
-// an error are highlighted.
+// an error are highlighted. "Error notices" says whether failed runs are
+// reported: on, off (report.errors false) or muted until a time.
 func classifiersTable(ctx context.Context, cfg *config.Config, a *config.AgentConfig) (Table, bool) {
-	t := Table{Caption: "Classifiers", Columns: []string{"Classifier", "Enabled", "Dry run", "Model", "Last run", "Last run counts", "Last error"}}
+	t := Table{Caption: "Classifiers", Columns: []string{"Classifier", "Enabled", "Dry run", "Model", "Last run", "Last run counts", "Last error", "Error notices"}}
 	sums, err := classifier.Inspect(ctx, classifiersDir(cfg, a), classifierCeilings(cfg))
 	if err != nil {
 		t.Highlight = append(t.Highlight, 0)
-		t.Rows = append(t.Rows, row(none, "", "", "", "", "", "unreadable: "+err.Error()))
+		t.Rows = append(t.Rows, row(none, "", "", "", "", "", "unreadable: "+err.Error(), ""))
 		return t, true
 	}
 	if len(sums) == 0 && !a.ClassifiersEnabled() {
 		return t, false
 	}
 	if len(sums) == 0 {
-		t.Rows = append(t.Rows, row(none, "", "", "", "", "", ""))
+		t.Rows = append(t.Rows, row(none, "", "", "", "", "", "", ""))
 		return t, true
 	}
 	model := orValue(a.ClassifierModel(), none)
@@ -119,9 +120,23 @@ func classifiersTable(ctx context.Context, cfg *config.Config, a *config.AgentCo
 		if marked {
 			t.Highlight = append(t.Highlight, len(t.Rows))
 		}
-		t.Rows = append(t.Rows, row(s.ID, enabled, yesNo(s.DryRun), model, last, counts, lastErr))
+		t.Rows = append(t.Rows, row(s.ID, enabled, yesNo(s.DryRun), model, last, counts, lastErr, errorNotices(s)))
 	}
 	return t, true
+}
+
+// errorNotices is the "Error notices" value of a classifier: "" for an
+// invalid file, else on, off or muted until a time.
+func errorNotices(s classifier.Summary) string {
+	switch {
+	case s.ErrorsReported == nil:
+		return ""
+	case !*s.ErrorsReported:
+		return "off"
+	case !s.ErrorsMutedUntil.IsZero():
+		return "muted until " + s.ErrorsMutedUntil.Format(timeFormat)
+	}
+	return "on"
 }
 
 // truncateText cuts s to at most n runes, marking the cut.

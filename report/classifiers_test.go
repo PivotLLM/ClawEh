@@ -4,11 +4,14 @@
 package report
 
 import (
+	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/PivotLLM/ClawEh/classifier/classifierfs"
 	"github.com/PivotLLM/ClawEh/config"
@@ -120,10 +123,10 @@ func TestCollectAgents_ClassifiersTable(t *testing.T) {
 		rows[r[0]] = r
 		marked[r[0]] = isHighlighted(tb, i)
 	}
-	if r := rows["inbox"]; r == nil || r[1] != "yes" || r[2] != "yes" || r[3] != "GPT" || r[4] != "never" || r[6] != "" || marked["inbox"] {
+	if r := rows["inbox"]; r == nil || r[1] != "yes" || r[2] != "yes" || r[3] != "GPT" || r[4] != "never" || r[6] != "" || r[7] != "on" || marked["inbox"] {
 		t.Errorf("inbox row = %v marked=%v", r, marked["inbox"])
 	}
-	if r := rows["broken"]; r == nil || r[1] != "not run" || !strings.HasPrefix(r[6], "Invalid: ") || !marked["broken"] {
+	if r := rows["broken"]; r == nil || r[1] != "not run" || !strings.HasPrefix(r[6], "Invalid: ") || r[7] != "" || !marked["broken"] {
 		t.Errorf("broken row = %v marked=%v", r, marked["broken"])
 	}
 	if r := rows["alices"]; r == nil || r[1] != "not run" || r[6] != "Owned by alice." || !marked["alices"] {
@@ -197,5 +200,44 @@ func TestCollectData_Classifiers(t *testing.T) {
 	_, r := findRow(t, findTable(t, collectData(t.Context(), cfg, env), "Storage"), "Classifiers")
 	if r[1] != "<workspace>/classifiers" || r[2] != "definitions and run state per agent; processed items remembered 30 days" {
 		t.Errorf("classifiers row = %v", r)
+	}
+}
+
+// The Error notices column: on by default, off with report.errors false,
+// and muted until the time state.db holds while that is in the future.
+func TestCollectAgents_ClassifierErrorNotices(t *testing.T) {
+	cfg, env := fixtureConfig(t)
+	bob := &cfg.Agents.List[1]
+	bob.Classifiers = &config.AgentClassifiersConfig{Enabled: true, Model: "GPT"}
+	off := classifierDef("quiet", "bob")
+	off["report"] = map[string]any{"errors": false}
+	writeClassifier(t, cfg, "bob", "quiet", off)
+	writeClassifier(t, cfg, "bob", "muted", classifierDef("muted", "bob"))
+	writeClassifier(t, cfg, "bob", "expired", classifierDef("expired", "bob"))
+
+	until := time.Now().Add(time.Hour).Truncate(time.Second).UTC()
+	db, err := sql.Open("sqlite", filepath.Join(classifiersDir(cfg, bob), classifierfs.StateFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`CREATE TABLE run_failures (classifier TEXT PRIMARY KEY, failures INTEGER NOT NULL DEFAULT 0, muted_until INTEGER, open_row INTEGER)`,
+		fmt.Sprintf(`INSERT INTO run_failures VALUES ('muted', 3, %d, NULL)`, until.UnixMilli()),
+		fmt.Sprintf(`INSERT INTO run_failures VALUES ('expired', 3, %d, NULL)`, time.Now().Add(-time.Minute).UnixMilli()),
+	} {
+		if _, err = db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	tb := findTable(t, agentSub(t, collectAgents(t.Context(), cfg, env), "bob"), "Classifiers")
+	want := map[string]string{"quiet": "off", "muted": "muted until " + until.Format(timeFormat), "expired": "on"}
+	for _, r := range tb.Rows {
+		if r[7] != want[r[0]] {
+			t.Errorf("%s Error notices = %q, want %q", r[0], r[7], want[r[0]])
+		}
 	}
 }
