@@ -6,6 +6,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strings"
 	"sync"
 	"testing"
@@ -39,17 +40,33 @@ func TestLowStepsNote(t *testing.T) {
 	}
 }
 
+// optsChatFunc is a scripted model that also sees the request options.
+type optsChatFunc func(ctx context.Context, messages []providers.Message, options map[string]any) (*providers.LLMResponse, error)
+
+func (f optsChatFunc) Chat(ctx context.Context, messages []providers.Message, _ []providers.ToolDefinition, _ string, options map[string]any) (*providers.LLMResponse, error) {
+	return f(ctx, messages, options)
+}
+
+func (optsChatFunc) GetDefaultModel() string { return "mock-model" }
+
 // cliChatFunc is a scripted model that reports itself as a CLI provider.
-type cliChatFunc struct{ chatFunc }
+type cliChatFunc struct{ optsChatFunc }
 
 func (cliChatFunc) IsCLI() bool { return true }
 
+// lowStepsRequest is one request the model was sent.
+type lowStepsRequest struct {
+	messages []providers.Message
+	options  map[string]any
+}
+
 // lowStepsTurn runs a six-step turn in which the model calls a tool on every
-// step, and returns each request the model was sent and the stored history.
+// step, and returns each request the model was sent (messages and options)
+// and the stored history.
 // fallback routes the turn through the fallback chain (chatCandidate) rather
 // than straight to the provider; cli makes the model a CLI provider; noTools
 // offers the model no tools.
-func lowStepsTurn(t *testing.T, fallback, cli, noTools bool) ([][]providers.Message, []providers.Message) {
+func lowStepsTurn(t *testing.T, fallback, cli, noTools bool) ([]lowStepsRequest, []providers.Message) {
 	t.Helper()
 	al := newTestAgentLoop(t).al
 	agentInstance := al.registry.Default()
@@ -72,12 +89,15 @@ func lowStepsTurn(t *testing.T, fallback, cli, noTools bool) ([][]providers.Mess
 
 	var (
 		mu       sync.Mutex
-		requests [][]providers.Message
+		requests []lowStepsRequest
 	)
-	model := chatFunc(func(_ context.Context, messages []providers.Message) (*providers.LLMResponse, error) {
+	model := optsChatFunc(func(_ context.Context, messages []providers.Message, options map[string]any) (*providers.LLMResponse, error) {
 		mu.Lock()
 		defer mu.Unlock()
-		requests = append(requests, append([]providers.Message(nil), messages...))
+		requests = append(requests, lowStepsRequest{
+			messages: append([]providers.Message(nil), messages...),
+			options:  maps.Clone(options),
+		})
 		// Distinct arguments per call, so the repeated-batch guard never stops
 		// the turn early.
 		args := fmt.Sprintf(`{"text":"step %d"}`, len(requests))
@@ -141,7 +161,8 @@ func TestRunLLMIteration_LowStepsNotePerRequest(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requests, history := lowStepsTurn(t, tc.fallback, false, false)
-			for i, req := range requests {
+			for i, r := range requests {
+				req := r.messages
 				want := lowStepsNote(i+1, 6)
 				notes := lowStepsNotes(req)
 				switch {
@@ -158,7 +179,8 @@ func TestRunLLMIteration_LowStepsNotePerRequest(t *testing.T) {
 			}
 			// Requests 3 to 6 are the last four steps of the turn.
 			for i, want := range []string{"3 tool steps left", "2 tool steps left", "1 tool step left", "last step"} {
-				if got := requests[i+2][len(requests[i+2])-1].Content; !strings.Contains(got, want) {
+				msgs := requests[i+2].messages
+				if got := msgs[len(msgs)-1].Content; !strings.Contains(got, want) {
 					t.Errorf("request %d note = %q, want it to mention %q", i+3, got, want)
 				}
 			}
@@ -188,9 +210,42 @@ func TestRunLLMIteration_LowStepsNoteSkipped(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requests, _ := lowStepsTurn(t, tc.fallback, tc.cli, tc.noTools)
-			for i, req := range requests {
-				if notes := lowStepsNotes(req); len(notes) != 0 {
+			for i, r := range requests {
+				if notes := lowStepsNotes(r.messages); len(notes) != 0 {
 					t.Errorf("request %d carries notes %q, want none", i+1, notes)
+				}
+				if choice, set := r.options[providers.ToolChoiceOption]; set {
+					t.Errorf("request %d sets tool choice %v, want it unset", i+1, choice)
+				}
+			}
+		})
+	}
+}
+
+// TestRunLLMIteration_LastStepForbidsTools checks, on the direct path and
+// through the fallback chain, that the last step's request sets tool choice
+// none and every earlier request leaves it unset.
+func TestRunLLMIteration_LastStepForbidsTools(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		fallback bool
+	}{
+		{name: "direct", fallback: false},
+		{name: "fallback chain", fallback: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requests, _ := lowStepsTurn(t, tc.fallback, false, false)
+			last := len(requests) - 1
+			for i, r := range requests {
+				choice, set := r.options[providers.ToolChoiceOption]
+				if i == last {
+					if choice != providers.ToolChoiceNone {
+						t.Errorf("last request tool choice = %v (set %v), want %q", choice, set, providers.ToolChoiceNone)
+					}
+					continue
+				}
+				if set {
+					t.Errorf("request %d sets tool choice %v, want it unset", i+1, choice)
 				}
 			}
 		})

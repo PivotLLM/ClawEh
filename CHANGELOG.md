@@ -249,7 +249,8 @@
   last four steps of a turn, each request to the model carries a short
   note giving the tool steps left (one fewer than actually remain, so a
   step is always spare) and asking it to reply with its findings and next
-  steps; on the last step it is told not to call tools. Before, an agent
+  steps; on the last step it is told not to call tools, and the request
+  forbids tool calls so the model has to reply in text. Before, an agent
   busy with tools could use every step and leave the user with the generic
   "no response" message. The note is sent only with that request: it is
   not stored in the conversation. Command-line models and requests without

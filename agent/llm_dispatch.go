@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"math/rand/v2"
 	"strings"
 	"time"
@@ -281,7 +282,7 @@ func (t *llmTurn) callModel(ctx context.Context, d *llmDispatch) (*providers.LLM
 	if len(t.candidates) == 0 || fallback == nil {
 		start := time.Now()
 		t.sent = t.requestMessages(hasTools, d.runProvider)
-		resp, err := d.runProvider.Chat(ctx, al.messagesForModel(t.sent, d.runModel, hasTools), d.defs, d.runModel, d.llmOpts)
+		resp, err := d.runProvider.Chat(ctx, al.messagesForModel(t.sent, d.runModel, hasTools), d.defs, d.runModel, t.requestOptions(d, hasTools, d.runProvider))
 		t.emitFinish(ctx, d.provider, t.model, d.runModel, time.Since(start), resp, err)
 		return resp, err
 	}
@@ -340,7 +341,25 @@ func (t *llmTurn) chatCandidate(
 	// a non-vision candidate. Keyed by alias like GetModelConfig.
 	t.sent = t.requestMessages(hasTools, provider)
 	msgs := al.messagesForModel(t.sent, candidateModelName(c), hasTools)
-	return provider.Chat(ctx, msgs, d.defs, c.Model, d.llmOpts)
+	return provider.Chat(ctx, msgs, d.defs, c.Model, t.requestOptions(d, hasTools, provider))
+}
+
+// requestOptions are the options for one provider call. On the turn's last
+// step, where the low-steps notice tells the model not to call tools, the
+// call also forbids tool calls (tool_choice none). The tools stay declared,
+// so earlier tool calls in the history and the prompt cache stay valid.
+// d.llmOpts is shared by every candidate the fallback chain tries, so it is
+// copied rather than changed.
+func (t *llmTurn) requestOptions(d *llmDispatch, hasTools bool, provider providers.LLMProvider) map[string]any {
+	if !hasTools || t.iteration != t.agent.MaxIterations {
+		return d.llmOpts
+	}
+	if _, isCLI := provider.(providers.CLIProvider); isCLI {
+		return d.llmOpts
+	}
+	opts := maps.Clone(d.llmOpts)
+	opts[providers.ToolChoiceOption] = providers.ToolChoiceNone
+	return opts
 }
 
 // candidateModelName is the candidate's model_name, or its wire model when it
