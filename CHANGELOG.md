@@ -243,6 +243,17 @@
 
 ### Changed
 
+- **A classifier run that fails is reported in the chat and to the agent,
+  once per distinct failure.** When a run fails outright (its instructions
+  files can't be read or are over the limit, the source tool fails, the
+  model can't be used), `report.summary: on_problems` now posts it to the
+  agent's default chat, as `always` did: "Classifier inbox: the run failed:
+  <reason>." The agent also gets the same text in its conversation, whatever
+  `report.summary` says, with a request to fix the classifier and check it
+  with `classifier_test`; its answer goes to its default chat. Both are sent
+  when the failure first appears or its reason changes, not again while the
+  same failure repeats (also across a restart), and again after a run that
+  succeeds. A model in cooldown is not reported this way.
 - **The voice alerts are now Normal priority, like every other alert.**
   "Voice message not transcribed" and "Speech backend not usable" (when no
   speech model was usable) were sent as Urgent.

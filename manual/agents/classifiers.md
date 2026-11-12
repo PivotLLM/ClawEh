@@ -104,7 +104,7 @@ You can edit a definition file by hand. ClawEh reads it again when it changes an
 | `classify` | The instructions, the rules (applied in order) and the categories. `unclassified` is reserved. `instructions_file` and `instructions_dir` add Markdown from the agent's `files/` (see [Rules in Markdown](#rules-in-markdown)); `instructions` may then be empty. |
 | `actions` | The tool run for each category. A category with no action is only recorded. |
 | `limits` | `items_per_run`: items taken per run, the rest wait for the next. `parallel`: items handled at the same time. `stop_after_failures`: consecutive failures that stop a run. |
-| `report.summary` | `on_problems` (default): a summary to the agent's default chat when items failed or were unclassified. `always`: after every run that handled items. `never`. |
+| `report.summary` | `on_problems` (default): a summary to the agent's default chat when items failed or were unclassified, or the run failed. `always`: after every run that handled items or failed. `never`. A failed run is posted once per distinct failure (see [Failed runs](#failed-runs)). |
 | `activity_hours` | How long the activity log is kept. |
 
 ClawEh writes `owner`, `created_at` and `updated_at`.
@@ -159,6 +159,15 @@ A placeholder must be the whole value: `"{{item.id}}"`, never `"id={{item.id}}"`
 - Changing the rules (in the definition or its Markdown files), categories or actions does not reprocess items already handled. `classifier_rerun` classifies one item again on purpose.
 - Handled items are remembered for 30 days (`classifiers.processed_days`), so an item that comes back is not classified again.
 - One run at a time per classifier.
+
+### Failed runs
+
+A run fails when it can't start or can't go on: its Markdown files are missing, unreadable or too long, the source tool fails, or the agent has no usable classifier model. Nothing is classified, and the items wait for the next run.
+
+- Your chat gets one line, unless `report.summary` is `never`: "Alice: Classifier inbox: the run failed: classify.instructions_dir files/classifiers/inbox/rules can't be read: it does not exist."
+- The agent gets the same text in its conversation, with a request to fix the classifier and check it with `classifier_test`. Its answer goes to its default chat (when it has none, the answer stays in the conversation).
+- Both are sent once per failure: not again while the same failure repeats, also after a restart, but again when the reason changes or after a run that succeeds. A successful run posts nothing extra.
+- A model in cooldown is not a failure to fix: the run stops, its items wait, and only the usual summary is posted.
 
 ### Dry run
 

@@ -468,7 +468,15 @@ production instance directly; test against a dev instance.
   a per-call empty folder `internal/temp/classifier-<id>-*` (no bypass flags),
   cooldowns honoured, the summary posted directly to the owner's default chat
   (`CronTarget`, no model turn; `report.summary` `on_problems`/`always`/
-  `never`), audit kinds `classifier_write` and `classification`. A clone acts
+  `never`), audit kinds `classifier_write` and `classification`. A run in
+  `RunError` (not a model cooldown) is reported once per distinct error
+  (`trackFailure`: `runs.reported_error` in state.db, cleared by a run that
+  does not fail): the summary "Classifier <id>: the run failed: <error>."
+  (on_problems and always; never posts nothing; a repeat posts nothing) and,
+  in every mode, `Notifier.RunFailed`, a `system` inbound message (sender
+  `classifier`, `Internal`, the owner's main session, `MetaOriginChannel`/
+  `ChatID` its default chat, else the ask channel) with the same text and
+  "Check and fix ...; classifier_test shows the result.". A clone acts
   as its source (`Scope.Clone` in audit details). Markdown instructions
   (`classifier/instructions.go`): `classify.instructions_file` (one `.md`)
   and `instructions_dir` (its `*.md`, any case, not recursive, hidden and
