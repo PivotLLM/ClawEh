@@ -31,9 +31,12 @@ const timeoutRetryBackoff = 5 * time.Second
 // llmDispatch is one iteration's model request.
 type llmDispatch struct {
 	defs []providers.ToolDefinition
-	// llmOpts are the request options; a context-window retry may lower
-	// max_tokens.
+	// llmOpts are the request options every call shares; the per-model ones
+	// (max_tokens, thinking_level) are added for each call by requestOptions.
 	llmOpts map[string]any
+	// maxTokensHalvings is how many times a context-window retry halved
+	// max_tokens; each call halves its model's max_tokens that many times.
+	maxTokensHalvings int
 	// runProvider and runModel serve the request when no fallback chain runs.
 	runProvider providers.LLMProvider
 	runModel    string
@@ -52,22 +55,12 @@ func (t *llmTurn) newDispatch(defs []providers.ToolDefinition, promptEstimate in
 	runProvider, runModel := t.al.resolveRunProvider(agent, t.candidates, t.model)
 
 	llmOpts := map[string]any{
-		"max_tokens":       agent.MaxTokens,
 		"prompt_cache_key": agent.ID,
 	}
 	// CLI providers run a subprocess and take no HTTP request parameters.
 	// With no temperature configured none is sent: the model's default applies.
 	if _, isCLI := runProvider.(providers.CLIProvider); !isCLI && agent.Temperature != nil {
 		llmOpts["temperature"] = *agent.Temperature
-	}
-	// parseThinkingLevel guarantees ThinkingOff for empty/unknown values.
-	if agent.ThinkingLevel != ThinkingOff {
-		if tc, ok := runProvider.(providers.ThinkingCapable); ok && tc.SupportsThinking() {
-			llmOpts["thinking_level"] = string(agent.ThinkingLevel)
-		} else {
-			logger.WarnCF("agent", "thinking_level is set but current provider does not support it, ignoring",
-				map[string]any{"agent_id": agent.ID, "thinking_level": string(agent.ThinkingLevel)})
-		}
 	}
 	// Providers that cannot stream text deltas (CLI, Anthropic) ignore this.
 	if t.stream != nil {
@@ -101,7 +94,7 @@ func (t *llmTurn) requestModel(ctx context.Context, d *llmDispatch) (*providers.
 			"model":        t.model,
 			"num_messages": len(t.messages),
 			"num_tools":    len(d.defs),
-			"max_tokens":   t.agent.MaxTokens,
+			"max_tokens":   d.maxTokens(t.limits.maxTokens),
 		})
 		var response *providers.LLMResponse
 		response, err = t.callModel(ctx, d)
@@ -224,16 +217,18 @@ func (t *llmTurn) compressForRetry(ctx context.Context, d *llmDispatch, err erro
 	if len(t.messages) < prevMsgCount {
 		return
 	}
-	if current, ok := d.llmOpts["max_tokens"].(int); ok && current > 512 {
-		reduced := current / 2
-		d.llmOpts["max_tokens"] = reduced
-		logger.WarnCF("agent", "History already minimal; reducing max_tokens for retry",
-			map[string]any{
-				"agent_id":       t.agent.ID,
-				"old_max_tokens": current,
-				"new_max_tokens": reduced,
-			})
-	}
+	// Counted on every such retry: each model's max_tokens is halved by
+	// d.maxTokens down to its own floor, so a selected model already at the
+	// floor still lets a larger fallback be lowered.
+	current := d.maxTokens(t.limits.maxTokens)
+	d.maxTokensHalvings++
+	logger.WarnCF("agent", "History already minimal; reducing max_tokens for retry",
+		map[string]any{
+			"agent_id":       t.agent.ID,
+			"model":          t.model,
+			"old_max_tokens": current,
+			"new_max_tokens": d.maxTokens(t.limits.maxTokens),
+		})
 }
 
 // dispatchFailed is the error a dispatch that failed for good ends the turn
@@ -282,7 +277,7 @@ func (t *llmTurn) callModel(ctx context.Context, d *llmDispatch) (*providers.LLM
 	if len(t.candidates) == 0 || fallback == nil {
 		start := time.Now()
 		t.sent = t.requestMessages(hasTools, d.runProvider)
-		resp, err := d.runProvider.Chat(ctx, al.messagesForModel(t.sent, d.runModel, hasTools), d.defs, d.runModel, t.requestOptions(d, hasTools, d.runProvider))
+		resp, err := d.runProvider.Chat(ctx, al.messagesForModel(t.sent, d.runModel, hasTools), d.defs, d.runModel, t.requestOptions(d, hasTools, d.runProvider, t.model))
 		t.emitFinish(ctx, d.provider, t.model, d.runModel, time.Since(start), resp, err)
 		return resp, err
 	}
@@ -341,25 +336,56 @@ func (t *llmTurn) chatCandidate(
 	// a non-vision candidate. Keyed by alias like GetModelConfig.
 	t.sent = t.requestMessages(hasTools, provider)
 	msgs := al.messagesForModel(t.sent, candidateModelName(c), hasTools)
-	return provider.Chat(ctx, msgs, d.defs, c.Model, t.requestOptions(d, hasTools, provider))
+	return provider.Chat(ctx, msgs, d.defs, c.Model, t.requestOptions(d, hasTools, provider, candidateModelName(c)))
 }
 
-// requestOptions are the options for one provider call. On the turn's last
-// step, where the low-steps notice tells the model not to call tools, the
-// call also forbids tool calls (tool_choice none). The tools stay declared,
-// so earlier tool calls in the history and the prompt cache stay valid.
-// d.llmOpts is shared by every candidate the fallback chain tries, so it is
-// copied rather than changed.
-func (t *llmTurn) requestOptions(d *llmDispatch, hasTools bool, provider providers.LLMProvider) map[string]any {
+// requestOptions are the options for one provider call to model (a
+// model_name), served by provider: the shared options plus that model's
+// max_tokens (lowered by any context-window retry) and thinking level. On the
+// turn's last step, where the low-steps notice tells the model not to call
+// tools, the call also forbids tool calls (tool_choice none). The tools stay
+// declared, so earlier tool calls in the history and the prompt cache stay
+// valid. d.llmOpts is shared by every candidate the fallback chain tries, so
+// it is copied rather than changed.
+func (t *llmTurn) requestOptions(d *llmDispatch, hasTools bool, provider providers.LLMProvider, model string) map[string]any {
+	limits := t.agent.limitsFor(model)
+	opts := make(map[string]any, len(d.llmOpts)+3)
+	maps.Copy(opts, d.llmOpts)
+	opts["max_tokens"] = d.maxTokens(limits.maxTokens)
+	// parseThinkingLevel guarantees ThinkingOff for empty/unknown values.
+	if limits.thinkingLevel != ThinkingOff {
+		if tc, ok := provider.(providers.ThinkingCapable); ok && tc.SupportsThinking() {
+			opts["thinking_level"] = string(limits.thinkingLevel)
+		} else {
+			logger.WarnCF("agent", "thinking_level is set but current provider does not support it, ignoring",
+				map[string]any{"agent_id": t.agent.ID, "model": model, "thinking_level": string(limits.thinkingLevel)})
+		}
+	}
 	if !hasTools || t.iteration != t.agent.MaxIterations {
-		return d.llmOpts
+		return opts
 	}
 	if _, isCLI := provider.(providers.CLIProvider); isCLI {
-		return d.llmOpts
+		return opts
 	}
-	opts := maps.Clone(d.llmOpts)
 	opts[providers.ToolChoiceOption] = providers.ToolChoiceNone
 	return opts
+}
+
+// minHalvedMaxTokens is the max_tokens at or below which a context-window
+// retry stops halving it.
+const minHalvedMaxTokens = 512
+
+// maxTokens is the max_tokens a call to a model whose own is base sends:
+// base halved once per context-window retry that lowered it, never from a
+// value at or below minHalvedMaxTokens.
+func (d *llmDispatch) maxTokens(base int) int {
+	for range d.maxTokensHalvings {
+		if base <= minHalvedMaxTokens {
+			break
+		}
+		base /= 2
+	}
+	return base
 }
 
 // candidateModelName is the candidate's model_name, or its wire model when it
@@ -464,6 +490,21 @@ func (al *AgentLoop) resolveRunProvider(
 		}
 	}
 	return agent.Provider, activeModel
+}
+
+// turnModel is a turn's model choice, made once when the turn starts so its
+// assembly, tools, context window and requests all follow the same model:
+// the candidates with the active one first, its model_name, and its limits.
+type turnModel struct {
+	candidates []providers.FallbackCandidate
+	model      string
+	limits     runLimits
+}
+
+// selectTurnModel makes the model choice for a turn of agent on sessionKey.
+func (al *AgentLoop) selectTurnModel(agent *AgentInstance, sessionKey string) *turnModel {
+	candidates, model := al.selectCandidates(agent, sessionKey)
+	return &turnModel{candidates: candidates, model: model, limits: agent.limitsFor(model)}
 }
 
 // selectCandidates returns the model candidates and resolved model name to use

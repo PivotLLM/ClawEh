@@ -490,6 +490,23 @@
 
 ### Fixed
 
+- **After `/model`, or on a fallback model, requests use that model's
+  `max_tokens` and `context_window`.** Both were taken from the agent's first
+  model for every request, so a switched-to model with a smaller limit was
+  sent the first model's `max_tokens` and its history was not trimmed to its
+  own context window (a local model loaded with a 32k context refused the
+  request). Each request now carries the `max_tokens` and `thinking_level` of
+  the model it is sent to, from its `model_list` entry, else
+  `agents.defaults` (a model that is not in `model_list` keeps the agent's
+  first model's values). The conversation, and tool results added to it, are
+  trimmed and compacted to the context window of the model `/model` selected,
+  from the next turn, and that model's `no_tools` decides whether tools are
+  sent: an agent whose first model has `no_tools` now sends tools after
+  `/model` to a model that takes them, and the reverse. Within one turn,
+  history is prepared for the selected model, so a fallback model with a
+  smaller context window may still need the context-window retry, and a
+  fallback model gets the selected model's tools.
+
 - **The device channel no longer warns that nobody can connect.** With
   `channels.device.allow_from` empty, any paired device may talk to the
   agents (devices are let in by token and pairing approval), so the start-up

@@ -76,6 +76,9 @@ type llmTurn struct {
 	// iteration, so a multi-step tool chain never switches model mid-way.
 	candidates []providers.FallbackCandidate
 	model      string
+	// limits are model's: its tools setting and context window, and the
+	// max_tokens and thinking level of a request sent to it.
+	limits runLimits
 	// notifier spans the whole turn so its de-dup memory covers all
 	// iterations: a primary that fails over on every iteration posts its
 	// heads-up once.
@@ -185,7 +188,11 @@ func (al *AgentLoop) newLLMTurn(
 		messages:     messages,
 		finishReason: "max_iterations",
 	}
-	t.candidates, t.model = al.selectCandidates(agent, opts.SessionKey)
+	tm := opts.turnModel
+	if tm == nil {
+		tm = al.selectTurnModel(agent, opts.SessionKey)
+	}
+	t.candidates, t.model, t.limits = tm.candidates, tm.model, tm.limits
 	t.notifier = al.fallbackNotifier(ctx, opts)
 	// Breadcrumbs go to a user chat, never the internal "system" channel.
 	t.showToolActivity = opts.Channel != "" && opts.Channel != "system" && opts.ChatID != "" &&
@@ -301,7 +308,7 @@ func (t *llmTurn) requestMessages(hasTools bool, provider providers.LLMProvider)
 // toolset: recursion is bounded by the spawner's depth limit, not by
 // withholding tools.
 func (t *llmTurn) toolDefinitions() []providers.ToolDefinition {
-	if t.agent.NoTools {
+	if t.limits.noTools {
 		return nil
 	}
 	return t.agent.Tools.ToProviderDefs()
@@ -364,7 +371,7 @@ func (t *llmTurn) logRequest(d *llmDispatch) {
 			"model":             t.model,
 			"messages_count":    len(sent),
 			"tools_count":       len(defs),
-			"max_tokens":        t.agent.MaxTokens,
+			"max_tokens":        t.limits.maxTokens,
 			"temperature":       temperature,
 			"system_prompt_len": systemPromptLen,
 		})

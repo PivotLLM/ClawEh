@@ -135,7 +135,12 @@ func (al *AgentLoop) buildCommandsRuntime(
 	}
 	if agent != nil {
 		rt.AgentName = agent.DisplayName()
-		rt.GetContextWindow = func() int { return agent.ContextWindow }
+		rt.GetContextWindow = func() int {
+			if opts == nil {
+				return agent.ContextWindow
+			}
+			return al.sessionLimits(agent, opts.SessionKey).contextWindow
+		}
 		al.addModelHooks(rt, cfg, agent, opts)
 		al.addSessionToggleHooks(rt, agent, opts)
 		al.addHistoryHooks(rt, agent, opts, msg) //nolint:contextcheck // compaction reporter: ctxengine's callback has no context, so it publishes on its own

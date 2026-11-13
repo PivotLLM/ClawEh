@@ -543,7 +543,7 @@ func (al *AgentLoop) buildSessionEntry(bk sessionBuildKey, done chan struct{}, a
 		engineArchiveDir = ""
 	}
 	opts := append([]ctxengine.Option{
-		ctxengine.WithContextWindow(agent.ContextWindow),
+		ctxengine.WithContextWindow(al.sessionLimits(agent, sessionKey).contextWindow),
 		ctxengine.WithArchiveDir(engineArchiveDir),
 		ctxengine.WithFolderPermissions(stateModes.Dir),
 		ctxengine.WithFilePermissions(stateModes.File),

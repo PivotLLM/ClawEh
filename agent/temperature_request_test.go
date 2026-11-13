@@ -70,12 +70,12 @@ func TestNewDispatch_TemperatureInRequest(t *testing.T) {
 				al:         al,
 				agent:      inst,
 				candidates: []providers.FallbackCandidate{{Provider: "test", Model: "test-model", Alias: "alice-model"}},
-				model:      "test-model",
+				model:      "alice-model",
 			}
 			d := turn.newDispatch(nil, 0)
 
 			msgs := []providers.Message{{Role: "user", Content: "hi"}}
-			if _, err := d.runProvider.Chat(context.Background(), msgs, nil, d.runModel, d.llmOpts); err != nil {
+			if _, err := d.runProvider.Chat(context.Background(), msgs, nil, d.runModel, turn.requestOptions(d, false, d.runProvider, turn.model)); err != nil {
 				t.Fatalf("Chat: %v", err)
 			}
 			got, present := body["temperature"]
@@ -149,12 +149,12 @@ func TestNewDispatch_AnthropicRequest(t *testing.T) {
 				al:         al,
 				agent:      inst,
 				candidates: []providers.FallbackCandidate{{Provider: "test", Model: "claude-test", Alias: "alice-model"}},
-				model:      "claude-test",
+				model:      "alice-model",
 			}
 			d := turn.newDispatch(nil, 0)
 
 			msgs := []providers.Message{{Role: "user", Content: "hi"}}
-			if _, err := d.runProvider.Chat(context.Background(), msgs, nil, d.runModel, d.llmOpts); err != nil {
+			if _, err := d.runProvider.Chat(context.Background(), msgs, nil, d.runModel, turn.requestOptions(d, false, d.runProvider, turn.model)); err != nil {
 				t.Fatalf("Chat: %v", err)
 			}
 			if got, present := body["temperature"]; present {

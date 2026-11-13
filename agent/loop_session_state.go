@@ -82,6 +82,13 @@ func (al *AgentLoop) getActiveModelIndex(agent *AgentInstance, sessionKey string
 	return idx
 }
 
+// sessionLimits are the limits of the model the session's turns run on: the
+// one /model selected, else the agent's first.
+func (al *AgentLoop) sessionLimits(agent *AgentInstance, sessionKey string) runLimits {
+	_, model := al.selectCandidates(agent, sessionKey)
+	return agent.limitsFor(model)
+}
+
 // setActiveModelIndex sets the session's active model index, updating the cache
 // and persisting it through the session store's CompactionState. Persistence is
 // best-effort: a store error is logged but does not fail the call.

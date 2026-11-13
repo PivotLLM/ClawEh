@@ -66,6 +66,7 @@ func (c *capturingContextManager) Assemble(ctx context.Context, req ctxengine.As
 	return ctxengine.Assembly{Messages: []providers.Message{{Role: "user", Content: "hi"}}}, nil
 }
 func (c *capturingContextManager) ObserveUsage(_, _ int)                             {}
+func (c *capturingContextManager) SetContextWindow(int) error                        { return nil }
 func (c *capturingContextManager) Compact(_ context.Context) error                   { return nil }
 func (c *capturingContextManager) CompactIfDue(_ context.Context) (bool, error)      { return false, nil }
 func (c *capturingContextManager) LastCompactionReport() *ctxengine.CompactionReport { return nil }

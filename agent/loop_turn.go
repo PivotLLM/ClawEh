@@ -59,6 +59,19 @@ type processOptions struct {
 	// of the reply ended (bus.OutboundMessage.OnDelivery), with the reply.
 	// It must not block.
 	OnReplyDelivery func(reply string, err error)
+	// turnModel is the turn's model choice, made by runAgentLoop when the
+	// turn starts; nil when the model loop is entered without one, which
+	// then makes it.
+	turnModel *turnModel
+}
+
+// turnLimits are the limits of the turn's model: the choice made when the
+// turn started, else the session's active model.
+func (al *AgentLoop) turnLimits(agent *AgentInstance, opts processOptions) runLimits {
+	if opts.turnModel != nil {
+		return opts.turnModel.limits
+	}
+	return al.sessionLimits(agent, opts.SessionKey)
 }
 
 // setOutcome records how the turn ended in opts.OutcomeOut, when requested.
@@ -104,6 +117,15 @@ func (al *AgentLoop) runAgentLoop(
 	// without it) of this session.
 	cm, mem, releaseCtxMgr := al.getSessionContext(agent, opts.SessionKey) //nolint:contextcheck // compaction reporter: ctxengine's callback has no context, so it publishes on its own
 	defer releaseCtxMgr()
+
+	// The turn's model is chosen once, and the session's history is trimmed
+	// and compacted to its context window: /model may have changed it since
+	// the manager was built (a no-op when it has not).
+	opts.turnModel = al.selectTurnModel(agent, opts.SessionKey)
+	if werr := cm.SetContextWindow(opts.turnModel.limits.contextWindow); werr != nil {
+		logger.WarnCF("agent", "Context window not set for the turn's model",
+			map[string]any{"agent_id": agent.ID, "model": opts.turnModel.model, "error": werr.Error()})
+	}
 
 	// An age-only compaction the engine deferred runs once the reply is out,
 	// however the turn ends.
@@ -618,7 +640,7 @@ func (al *AgentLoop) evictionNotifyUser(agent *AgentInstance) bool {
 // may be nil.
 func (al *AgentLoop) assembleRequest(ctx context.Context, agent *AgentInstance, mem *cogmem.Session, opts processOptions) ctxengine.AssembleRequest {
 	defs := agent.Tools.ToProviderDefs()
-	if agent.NoTools {
+	if al.turnLimits(agent, opts).noTools {
 		defs = nil
 	}
 	// The turn's request is not built yet: the stored history is what it

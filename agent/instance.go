@@ -37,13 +37,16 @@ type AgentInstance struct {
 	// Spec is how the registry built the agent: its origin, the source of a
 	// clone, whether its memory is ephemeral, whether it is a fresh temporary
 	// agent (no tools).
-	Spec           agentreg.Spec
-	MaxIterations  int
-	MaxTokens      int
-	Temperature    *float64 // nil: no temperature is sent, the model default applies
-	ThinkingLevel  ThinkingLevel
-	NoTools        bool
-	ContextWindow  int
+	Spec          agentreg.Spec
+	MaxIterations int
+	MaxTokens     int
+	Temperature   *float64 // nil: no temperature is sent, the model default applies
+	ThinkingLevel ThinkingLevel
+	NoTools       bool
+	ContextWindow int
+	// modelLimits are the limits of each model in Candidates, by model_name:
+	// a request runs with those of the model it is sent to (see limitsFor).
+	modelLimits    map[string]runLimits
 	CompressOpts   []ctxengine.Option
 	Provider       providers.LLMProvider
 	Sessions       session.SessionStore
@@ -122,6 +125,22 @@ func (a *AgentInstance) SessionsDir() string {
 
 // toolless reports whether the agent gets no tools at all: a fresh temporary
 // agent, or a human agent (which runs no model to call them).
+// limitsFor returns the limits a request to model (a model_name) runs with:
+// that model's own, or the agent's for a model it has none recorded for.
+func (a *AgentInstance) limitsFor(model string) runLimits {
+	if l, ok := a.modelLimits[model]; ok {
+		return l
+	}
+	return runLimits{
+		maxIterations: a.MaxIterations,
+		maxTokens:     a.MaxTokens,
+		temperature:   a.Temperature,
+		contextWindow: a.ContextWindow,
+		thinkingLevel: a.ThinkingLevel,
+		noTools:       a.NoTools,
+	}
+}
+
 func (a *AgentInstance) toolless() bool { return a.Spec.Fresh || a.HumanModel != "" }
 
 // IsTemp reports whether the agent is a temporary agent.
@@ -216,6 +235,7 @@ func newAgentInstance(
 
 	candidates := resolveAgentCandidates(cfg, models, agentID)
 	workerCandidates := resolveWorkerCandidates(cfg, subagents, candidates, agentID)
+	modelLimits := resolveModelLimits(defaults, agentCfg, cfg, candidates)
 
 	// Config is never nil after construction: a nil config is equivalent to
 	// an empty allowlist (deny all tools), so callers need not guard on nil.
@@ -244,6 +264,7 @@ func newAgentInstance(
 		ThinkingLevel:    limits.thinkingLevel,
 		NoTools:          limits.noTools,
 		ContextWindow:    limits.contextWindow,
+		modelLimits:      modelLimits,
 		CompressOpts:     compressOpts,
 		Provider:         provider,
 		Sessions:         sessions,
@@ -449,6 +470,20 @@ func resolveRunLimits(defaults *config.AgentDefaults, agentCfg *config.AgentConf
 	}
 	l.thinkingLevel = parseThinkingLevel(thinkingLevelStr)
 	return l
+}
+
+// resolveModelLimits resolves the limits of each candidate that names a
+// model_list entry, by its model_name, so a request to a fallback model or to
+// the one /model selected runs with that model's max_tokens, context window
+// and thinking level rather than the first model's.
+func resolveModelLimits(defaults *config.AgentDefaults, agentCfg *config.AgentConfig, cfg *config.Config, candidates []providers.FallbackCandidate) map[string]runLimits {
+	limits := make(map[string]runLimits, len(candidates))
+	for _, c := range candidates {
+		if c.Alias != "" {
+			limits[c.Alias] = resolveRunLimits(defaults, agentCfg, cfg, c.Alias)
+		}
+	}
+	return limits
 }
 
 // agentCompressOptions are the context engine options for the agent: the
