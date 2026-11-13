@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"regexp"
+	"strings"
 )
 
 // Preamble is the single line that precedes every wrapped block.
@@ -35,6 +36,31 @@ func Wrap(content string) string {
 		Neutralise(content) + "\n" +
 		"<<<END_UNTRUSTED_CONTENT id=" + id + ">>>"
 }
+
+// Unwrap returns the content of a block Wrap made, for code that reads a
+// tool's result as data rather than showing it to a model (a classifier's
+// source and fetch). ok is false, and s is returned as it is, when s is not
+// exactly one wrapped block: the Preamble, an opening marker, and a closing
+// marker with the same id at the very end. Tokens Wrap neutralised stay
+// replaced by Placeholder.
+func Unwrap(s string) (content string, ok bool) {
+	rest, found := strings.CutPrefix(s, Preamble+"\n<<<UNTRUSTED_CONTENT id=")
+	if !found {
+		return s, false
+	}
+	id, rest, found := strings.Cut(rest, ">>>\n")
+	if !found || !wrapID.MatchString(id) {
+		return s, false
+	}
+	content, found = strings.CutSuffix(rest, "\n<<<END_UNTRUSTED_CONTENT id="+id+">>>")
+	if !found {
+		return s, false
+	}
+	return content, true
+}
+
+// wrapID matches the id newID makes.
+var wrapID = regexp.MustCompile(`^[0-9a-f]{16}$`)
 
 // Neutralise replaces model control tokens in s with Placeholder.
 func Neutralise(s string) string {
