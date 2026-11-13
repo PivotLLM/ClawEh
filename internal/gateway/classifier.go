@@ -34,6 +34,7 @@ func newClassifierService(host *agent.ClassifierHost) *classifier.Service {
 		Modes:        host.Modes,
 		Ceilings:     host.Ceilings,
 		Scopes:       host.Scopes,
+		Redact:       host.Redact,
 	})
 	toolsclassifier.SetService(svc)
 	return svc

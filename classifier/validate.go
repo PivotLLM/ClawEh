@@ -224,40 +224,89 @@ func categoryName(def *Definition, name string) string {
 	return c.Name
 }
 
-// toolsNamed lists every tool the definition calls, in order: source, fetch,
-// then the actions by category.
-func toolsNamed(def *Definition) []string {
-	out := []string{def.Source.Tool}
-	if def.Fetch != nil {
-		out = append(out, def.Fetch.Tool)
-	}
-	for _, name := range sortedKeys(def.Actions) {
-		out = append(out, def.Actions[name].Tool)
-	}
-	seen := map[string]bool{}
-	uniq := out[:0]
-	for _, t := range out {
-		if t != "" && !seen[t] {
-			seen[t] = true
-			uniq = append(uniq, t)
-		}
-	}
-	return uniq
+// grantIssue is a tool the definition names that the agent cannot use, in
+// its role: the source, the fetch, or the action of categories.
+type grantIssue struct {
+	role       string
+	categories []string // an action's categories, in name order
+	tool       string
+	err        error // the host's refusal, naming the tool
 }
 
-// validateGrants checks that agentID has every tool the definition names
-// (design 6.1c); the issues name the tool.
-func validateGrants(def *Definition, agentID string, tools ToolRunner) error {
-	var issues []string
-	for _, t := range toolsNamed(def) {
-		if err := tools.Has(agentID, t); err != nil {
-			issues = append(issues, err.Error()+".")
+// String is the issue as one sentence: "action for category urgent: tool
+// mail_move is not available to agent alice."
+func (g grantIssue) String() string {
+	label := g.role
+	switch len(g.categories) {
+	case 0:
+	case 1:
+		label = roleLabel(g.role, g.categories[0])
+	default:
+		label += " for categories " + strings.Join(g.categories, ", ")
+	}
+	return label + ": " + strings.TrimSuffix(g.err.Error(), ".") + "."
+}
+
+// missingGrants checks that agentID has every tool the definition names
+// (design 6.1c), each tool asked once, and returns the ones it lacks in
+// order: the source, the fetch, then the actions by tool in category order.
+func missingGrants(def *Definition, agentID string, tools ToolRunner) []grantIssue {
+	checked := map[string]error{}
+	has := func(tool string) error {
+		err, ok := checked[tool]
+		if !ok {
+			err = tools.Has(agentID, tool)
+			checked[tool] = err
+		}
+		return err
+	}
+	var out []grantIssue
+	if t := def.Source.Tool; t != "" {
+		if err := has(t); err != nil {
+			out = append(out, grantIssue{role: roleSource, tool: t, err: err})
 		}
 	}
+	if def.Fetch != nil && def.Fetch.Tool != "" {
+		if err := has(def.Fetch.Tool); err != nil {
+			out = append(out, grantIssue{role: roleFetch, tool: def.Fetch.Tool, err: err})
+		}
+	}
+	byTool := map[string]int{} // index in out of an action tool's issue
+	for _, name := range sortedKeys(def.Actions) {
+		t := def.Actions[name].Tool
+		if t == "" {
+			continue
+		}
+		err := has(t)
+		if err == nil {
+			continue
+		}
+		if i, ok := byTool[t]; ok {
+			out[i].categories = append(out[i].categories, name)
+			continue
+		}
+		byTool[t] = len(out)
+		out = append(out, grantIssue{role: roleAction, categories: []string{name}, tool: t, err: err})
+	}
+	return out
+}
+
+// grantsError is the refusal of the issues, one sentence each; nil for none.
+func grantsError(issues []grantIssue) error {
 	if len(issues) == 0 {
 		return nil
 	}
-	return &ValidationError{Issues: issues}
+	ve := &ValidationError{}
+	for _, g := range issues {
+		ve.Issues = append(ve.Issues, g.String())
+	}
+	return ve
+}
+
+// validateGrants checks that agentID has every tool the definition names;
+// the issues name the role and the tool.
+func validateGrants(def *Definition, agentID string, tools ToolRunner) error {
+	return grantsError(missingGrants(def, agentID, tools))
 }
 
 // listedItem is one element of the source's list with its id.
@@ -275,11 +324,11 @@ func listItems(ctx context.Context, def *Definition, agentID string, tools ToolR
 	ctx = withClassifier(ctx, NormalizeID(def.ID))
 	result, err := tools.Call(ctx, agentID, def.Source.Tool, plainArgs(def.Source.Args))
 	if err != nil {
-		return nil, fmt.Errorf("source %s: %w", def.Source.Tool, err)
+		return nil, &toolError{role: roleSource, tool: def.Source.Tool, err: err}
 	}
 	decoded, err := decodeJSON(result)
 	if err != nil {
-		return nil, fmt.Errorf("source %s did not return JSON", def.Source.Tool)
+		return nil, errors.New(notJSON(roleSource, def.Source.Tool, err, result))
 	}
 	list, ok := dotpath.Get(decoded, def.Source.Items).([]any)
 	if !ok {

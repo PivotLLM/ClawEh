@@ -10,9 +10,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/PivotLLM/ClawEh/classifier/classifierfs"
 )
 
 // itemMode says what handling one item may write.
@@ -29,11 +32,16 @@ const (
 // data (fields for the activity log, fetched values for the action), and a
 // run-wide error (no usable model, cooldown) that ends the run. system is
 // the system prompt of the first model request, "" when none was made.
+// cause is what a failure is down to. interrupted is a failure because the
+// service stopped (its context was cancelled): nothing about it is stored
+// or counted, so the next run takes the item again.
 type decision struct {
 	Decision
-	data   itemData
-	fatal  error
-	system string
+	data        itemData
+	fatal       error
+	system      string
+	cause       cause
+	interrupted bool
 }
 
 // decide fetches one item and classifies it. reuse, when it holds a
@@ -42,20 +50,26 @@ type decision struct {
 func (s *Service) decide(ctx context.Context, scope Scope, def *Definition, in instructions, item listedItem, reuse *processedRow) decision {
 	var d decision
 	d.ItemID = item.id
-	if def.Fetch != nil {
-		args, err := substitute(def.Fetch.Args, item.value, nil, "")
+	if f := def.Fetch; f != nil {
+		args, err := substitute(f.Args, item.value, nil, "")
 		if err != nil {
-			return d.failed(fmt.Errorf("fetch.args: %w", err))
+			return d.fetchFailed(item, fmt.Errorf("fetch.args: %w", err))
 		}
-		result, err := s.host.Tools.Call(ctx, scope.AgentID, def.Fetch.Tool, nonNilArgs(args))
+		result, err := s.host.Tools.Call(ctx, scope.AgentID, f.Tool, nonNilArgs(args))
 		if err != nil {
-			return d.failed(fmt.Errorf("fetch %s: %w", def.Fetch.Tool, err))
+			return d.fetchFailed(item, &toolError{role: roleFetch, tool: f.Tool, err: err})
 		}
-		d.data = fieldsFromFetch(result, def.Fetch)
+		d.data = fieldsFromFetch(result, f)
+		d.MissingFields = d.data.missing
+		if len(d.data.fields) == 0 {
+			// Nothing to classify: the item is not decided blind.
+			return d.fetchFailed(item, noFetchFields(f.Tool, d.data, result))
+		}
 	} else {
 		d.data = fieldsFromElement(item.value)
 	}
 	d.data.fields = truncate(d.data.fields, def.itemBudget(s.host.ceilings()))
+	d.ShortenedFields = d.data.shortened()
 
 	if reuse != nil && reuse.category != "" {
 		if c, ok := def.categoryNamed(reuse.category); ok {
@@ -69,19 +83,21 @@ func (s *Service) decide(ctx context.Context, scope Scope, def *Definition, in i
 	d.system = system
 	reply, model, err := s.host.Model.Complete(ctx, scope.AgentID, system, user)
 	if err != nil {
-		return d.modelFailed(err)
+		return d.modelFailed(model, err)
 	}
 	d.Model = model
 	category, reason, ok := parseReply(reply, def)
 	if !ok {
+		first := reply
 		system, user = buildPrompt(def, in, d.data, reply, newDelimiter())
 		reply, model, err = s.host.Model.Complete(ctx, scope.AgentID, system, user)
 		if err != nil {
-			return d.modelFailed(err)
+			return d.modelFailed(model, err)
 		}
 		d.Model = model
 		if category, reason, ok = parseReply(reply, def); !ok {
 			d.Outcome = OutcomeUnclassified
+			d.Replies = []string{cutRunes(first, ActivityValueMax), cutRunes(reply, ActivityValueMax)}
 			return d
 		}
 	}
@@ -89,23 +105,44 @@ func (s *Service) decide(ctx context.Context, scope Scope, def *Definition, in i
 	return d
 }
 
+// noFetchFields is the failure of a fetch result in which no fetch field
+// resolved, naming the missing fields (and, when the result is not JSON,
+// the parse error and what came back).
+func noFetchFields(tool string, data itemData, result string) error {
+	missing := strings.Join(data.missing, ", ")
+	if data.notJSON != nil {
+		return fmt.Errorf("%s %s did not return JSON (%w), so no fetch field resolved (missing: %s); it returned %s",
+			roleFetch, tool, data.notJSON, missing, excerpt(result))
+	}
+	return fmt.Errorf("%s %s: no fetch field resolved (missing: %s)", roleFetch, tool, missing)
+}
+
 func (d decision) failed(err error) decision {
-	d.Outcome, d.Error = OutcomeFailed, err.Error()
+	d.Outcome, d.Error, d.cause = OutcomeFailed, err.Error(), causeOf(err)
 	return d
 }
 
-// modelFailed is a model call that failed: the item fails; no usable model
-// and a cooldown also end the run (fatal), so the other items are not each
-// sent to fail.
-func (d decision) modelFailed(err error) decision {
-	if _, cooling := errors.AsType[*CooldownError](err); cooling || errors.Is(err, ErrNoModel) {
-		d.fatal = err
-	}
+// fetchFailed is an item whose fetch failed: its activity row shows the
+// list entry's own fields instead, so the item can be recognised.
+func (d decision) fetchFailed(item listedItem, err error) decision {
+	d.data = fieldsFromElement(item.value)
 	return d.failed(err)
 }
 
+// modelFailed is a model call of model that failed: the item fails; no
+// usable model and a cooldown also end the run (fatal), so the other items
+// are not each sent to fail.
+func (d decision) modelFailed(model string, err error) decision {
+	if _, cooling := errors.AsType[*CooldownError](err); cooling || errors.Is(err, ErrNoModel) {
+		d.fatal = err
+		return d.failed(err)
+	}
+	return d.failed(&modelError{model: model, err: err})
+}
+
 // act runs the action for the decision's category (design 6): none is
-// recorded only; a substitution or tool error fails the item.
+// recorded only; a substitution or tool error fails the item, and a tool
+// error records the arguments it was called with.
 func (s *Service) act(ctx context.Context, scope Scope, def *Definition, item listedItem, d *decision) {
 	action, ok := def.Actions[d.Category]
 	if !ok {
@@ -115,20 +152,36 @@ func (s *Service) act(ctx context.Context, scope Scope, def *Definition, item li
 	d.Action = action.Tool
 	args, err := substitute(action.Args, item.value, d.data.fetched, d.Category)
 	if err != nil {
-		d.Outcome, d.Error = OutcomeFailed, fmt.Sprintf("actions.%s.args: %v", d.Category, err)
+		*d = d.failed(fmt.Errorf("actions.%s.args: %w", d.Category, err))
 		return
 	}
 	if _, err := s.host.Tools.Call(ctx, scope.AgentID, action.Tool, nonNilArgs(args)); err != nil {
-		d.Outcome, d.Error = OutcomeFailed, fmt.Sprintf("action %s: %v", action.Tool, err)
+		if text, encErr := encodeArgs(args); encErr == nil {
+			d.ActionArgs = text
+		}
+		*d = d.failed(&toolError{role: roleAction, category: d.Category, tool: action.Tool, err: err})
+		d.Error = s.host.redact(d.Error)
 		return
 	}
 	d.Outcome = OutcomeActed
 }
 
+// encodeArgs is an action's arguments after substitution as compact JSON,
+// cut to ActivityValueMax characters.
+func encodeArgs(args map[string]any) (string, error) {
+	var buf strings.Builder
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(nonNilArgs(args)); err != nil {
+		return "", err
+	}
+	return cutRunes(strings.TrimSuffix(buf.String(), "\n"), ActivityValueMax), nil
+}
+
 // previewAction records, without running it, the action the decision's
-// category would run: its tool and its arguments after substitution, as
-// compact JSON cut to ActivityValueMax characters. A substitution error
-// fails the item as it would fail a live one.
+// category would run: its tool and its arguments after substitution
+// (encodeArgs). A substitution error fails the item as it would fail a
+// live one.
 func previewAction(def *Definition, item listedItem, d *decision) {
 	action, ok := def.Actions[d.Category]
 	if !ok {
@@ -137,17 +190,15 @@ func previewAction(def *Definition, item listedItem, d *decision) {
 	d.Action = action.Tool
 	args, err := substitute(action.Args, item.value, d.data.fetched, d.Category)
 	if err != nil {
-		d.Outcome, d.Error = OutcomeFailed, fmt.Sprintf("actions.%s.args: %v", d.Category, err)
+		*d = d.failed(fmt.Errorf("actions.%s.args: %w", d.Category, err))
 		return
 	}
-	var buf strings.Builder
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(nonNilArgs(args)); err != nil {
-		d.Outcome, d.Error = OutcomeFailed, fmt.Sprintf("actions.%s.args: %v", d.Category, err)
+	text, err := encodeArgs(args)
+	if err != nil {
+		*d = d.failed(fmt.Errorf("actions.%s.args: %w", d.Category, err))
 		return
 	}
-	d.ActionArgs = cutRunes(strings.TrimSuffix(buf.String(), "\n"), ActivityValueMax)
+	d.ActionArgs = text
 }
 
 func nonNilArgs(args map[string]any) map[string]any {
@@ -168,6 +219,11 @@ func (s *Service) handleItem(ctx context.Context, scope Scope, def *Definition, 
 	ctx = withClassifier(ctx, NormalizeID(def.ID))
 	dry := mode == modeDry || (mode == modeRerun && def.DryRun)
 	d := s.decide(ctx, scope, def, in, item, reuse)
+	d.Error = s.host.redact(d.Error)
+	if d.Outcome == OutcomeFailed && ctx.Err() != nil && mode != modeTest {
+		d.interrupted = true // the service stopped: the next run takes the item again
+		return d
+	}
 	now := s.host.clock().Now().UTC()
 	d.At, d.DryRun, d.Rerun = now, dry, mode == modeRerun
 	cls := NormalizeID(def.ID)
@@ -212,6 +268,12 @@ func (s *Service) handleItem(ctx context.Context, scope Scope, def *Definition, 
 			}
 		}
 		s.act(ctx, scope, def, item, &d)
+		if d.Outcome == OutcomeFailed && ctx.Err() != nil {
+			// The service stopped during the action: the item stays
+			// classified with its action pending, so the next run runs it.
+			d.interrupted = true
+			return d
+		}
 		if d.Outcome == OutcomeFailed {
 			storeErr(st.setFailed(wctx, cls, item.id, d.Error, s.host.clock().Now().UTC()))
 		} else {
@@ -239,23 +301,30 @@ func (s *Service) handleItem(ctx context.Context, scope Scope, def *Definition, 
 // state, checks the definition against the current maximums and the agent's
 // grants, lists the items, skips those already handled, and handles up to
 // items_per_run of the rest, parallel at a time, in source order. It stops
-// starting items after stop_after_failures consecutive failures, when stop is
-// closed (the classifier was disabled or deleted, or the agent's switch
-// turned off: the items in flight finish), or when the model cannot be used.
-// The run is recorded and, as report.summary says, summarised to the agent;
-// a failed run is also written to the activity log and, as trackFailure
-// decides, reported to the agent itself (reportFailure).
+// starting items after stop_after_failures consecutive failures (a failed
+// run, quoting the last item's error), when stop is closed (the classifier
+// was disabled or deleted, or the agent's switch turned off: the items in
+// flight finish), or when the model cannot be used. A shutdown (ctx
+// cancelled) stops it without a failure: what it interrupted is neither
+// recorded nor reported. The run is recorded and, as report.summary says,
+// summarised to the agent; a failed run is also logged at warn, written to
+// the activity log and, as trackFailure decides, reported to the agent
+// itself (reportFailure).
 func (s *Service) runClassifier(ctx context.Context, scope Scope, def *Definition, stop <-chan struct{}) RunRecord {
 	rec := RunRecord{StartedAt: s.host.clock().Now().UTC(), DryRun: def.DryRun, Status: RunOK}
 	cls := NormalizeID(def.ID)
 	s.host.Logger.Infof("classifier=%s agent=%s: run started", def.ID, scope.AgentID)
 
 	st, err := s.state(ctx, scope.BaseDirectory)
-	if err != nil {
-		s.host.Logger.Errorf("classifier=%s agent=%s: open state: %v", def.ID, scope.AgentID, err)
-		rec.Status, rec.Error, rec.EndedAt = RunError, "the classifier's state could not be opened", s.host.clock().Now().UTC()
+	switch {
+	case err != nil && (ctx.Err() != nil || errors.Is(err, ErrClosed)):
+		rec.Status, rec.Error, rec.EndedAt = RunStopped, stoppedByService, s.host.clock().Now().UTC()
+		s.host.Logger.Infof("classifier=%s agent=%s: run stopped (%s)", def.ID, scope.AgentID, rec.Error)
 		return rec
+	case err != nil:
+		return s.stateFailed(ctx, scope, def, rec, err)
 	}
+	s.stateOpened(entryKey(scope.BaseDirectory, def.ID))
 
 	// cooling: the run ended because the model is in cooldown, which ends
 	// by itself; it is not a failure to report to the agent.
@@ -265,20 +334,26 @@ func (s *Service) runClassifier(ctx context.Context, scope Scope, def *Definitio
 		if runErr := st.setRun(context.WithoutCancel(ctx), cls, rec); runErr != nil {
 			s.host.Logger.Errorf("classifier=%s agent=%s: store run: %v", def.ID, scope.AgentID, runErr)
 		}
-		s.host.Logger.Infof("classifier=%s agent=%s: run %s: %d listed, %d new, %d classified, %d acted, %d unclassified, %d failed%s",
+		logf := s.host.Logger.Infof
+		if rec.Status == RunError {
+			logf = s.host.Logger.Warnf
+		}
+		logf("classifier=%s agent=%s: run %s: %d listed, %d new, %d classified, %d acted, %d unclassified, %d failed%s",
 			def.ID, scope.AgentID, rec.Status, rec.Listed, rec.NewItems, rec.Classified, rec.Acted, rec.Unclassified, rec.Failed,
 			errSuffix(rec.Error))
-		failure := s.trackFailure(ctx, scope, def, st, rec, cooling)
-		s.summarise(ctx, scope, def, rec, failure)
-		if failure == failureFirst || failure == failureSecond {
-			s.reportFailure(ctx, scope, def, rec, failure)
-		}
+		s.afterRun(ctx, scope, def, st, rec, cooling)
 		return rec
 	}
-	fail := func(cause error) RunRecord {
-		rec.Status, rec.Error = RunError, cause.Error()
+	failWith := func(text string, c cause) RunRecord {
+		if ctx.Err() != nil {
+			// The service stopped (a call was cancelled): not a failure.
+			rec.Status, rec.Error = RunStopped, stoppedByService
+			return finish()
+		}
+		rec.Status, rec.Error, rec.cause = RunError, s.host.redact(text), c
 		return finish()
 	}
+	fail := func(err error) RunRecord { return failWith(err.Error(), causeOf(err)) }
 
 	if !sameAgent(def.Owner, scope.AgentID) {
 		return fail(fmt.Errorf("the classifier is owned by %s", def.Owner))
@@ -286,8 +361,8 @@ func (s *Service) runClassifier(ctx context.Context, scope Scope, def *Definitio
 	if err = ValidateStatic(def, s.host.ceilings()); err != nil {
 		return fail(err)
 	}
-	if err = validateGrants(def, scope.AgentID, s.host.Tools); err != nil {
-		return fail(err)
+	if issues := missingGrants(def, scope.AgentID, s.host.Tools); len(issues) > 0 {
+		return failWith(grantsError(issues).Error(), cause{kind: causeToolMissing, subject: issues[0].tool})
 	}
 	// Read on every run, before the source is called: a missing or
 	// unreadable Markdown file, or a prompt over max_prompt_chars, classifies
@@ -304,8 +379,10 @@ func (s *Service) runClassifier(ctx context.Context, scope Scope, def *Definitio
 
 	todo, reuse, err := s.pending(ctx, st, def, items)
 	if err != nil {
-		s.host.Logger.Errorf("classifier=%s agent=%s: read state: %v", def.ID, scope.AgentID, err)
-		return fail(errors.New("the classifier's state could not be read"))
+		if ctx.Err() == nil {
+			s.host.Logger.Errorf("classifier=%s agent=%s: read state: %v", def.ID, scope.AgentID, err)
+		}
+		return failWith("the classifier's state could not be read", cause{kind: causeOperator})
 	}
 	// After pending marked every listed item seen: an item still listed is
 	// never pruned.
@@ -325,6 +402,8 @@ func (s *Service) runClassifier(ctx context.Context, scope Scope, def *Definitio
 		consecutive int
 		fatal       error
 		stoppedBy   string
+		failedOut   bool  // stopped by stop_after_failures: a failed run
+		lastCause   cause // of the last failure in a row
 	)
 	slots := make(chan struct{}, def.parallel())
 	stopping := func() bool {
@@ -336,7 +415,7 @@ func (s *Service) runClassifier(ctx context.Context, scope Scope, def *Definitio
 		// The service context first: a shutdown also closes every run's stop
 		// channel, and a select over both would pick either reason at random.
 		if ctx.Err() != nil {
-			stoppedBy = "the service stopped"
+			stoppedBy = stoppedByService
 			return true
 		}
 		select {
@@ -367,6 +446,9 @@ func (s *Service) runClassifier(ctx context.Context, scope Scope, def *Definitio
 			d := s.handleItem(ctx, scope, def, in, st, item, reuse[item.id], mode)
 			mu.Lock()
 			defer mu.Unlock()
+			if d.interrupted {
+				return // not handled: the service stopped
+			}
 			switch d.Outcome {
 			case OutcomeFailed:
 				rec.Failed++
@@ -385,19 +467,85 @@ func (s *Service) runClassifier(ctx context.Context, scope Scope, def *Definitio
 				fatal = d.fatal
 			}
 			if consecutive >= limit && stoppedBy == "" {
-				stoppedBy = fmt.Sprintf("stopped after %d consecutive failures", consecutive)
+				// The last item's error is quoted, so a failure that every
+				// item meets reaches the agent as the run's.
+				stoppedBy = fmt.Sprintf("stopped after %d consecutive failures; the last: %s", consecutive, d.Error)
+				failedOut, lastCause = true, d.cause
 			}
 		}(item)
 	}
 	wg.Wait()
+	if fatal == nil && stoppedBy == "" && ctx.Err() != nil {
+		stoppedBy = stoppedByService // an item in flight was interrupted
+	}
 	switch {
 	case fatal != nil:
-		rec.Status, rec.Error = RunError, fatal.Error()
+		rec.Status, rec.Error, rec.cause = RunError, s.host.redact(fatal.Error()), causeOf(fatal)
 		_, cooling = errors.AsType[*CooldownError](fatal)
+	case failedOut:
+		rec.Status, rec.Error, rec.cause = RunError, stoppedBy, lastCause
 	case stoppedBy != "":
 		rec.Status, rec.Error = RunStopped, stoppedBy
 	}
 	return finish()
+}
+
+// stoppedByService is the error of a run the service's shutdown stopped.
+const stoppedByService = "the service stopped"
+
+// afterRun is what a run's end means for error notices: trackFailure
+// counts it, the summary goes to the chat, and the notice to the agent.
+func (s *Service) afterRun(ctx context.Context, scope Scope, def *Definition, st *stateDB, rec RunRecord, cooling bool) {
+	failure := s.trackFailure(ctx, scope, def, st, rec, cooling)
+	s.summarise(ctx, scope, def, rec, failure)
+	if failure == failureFirst || failure == failureSecond {
+		s.reportFailure(ctx, scope, def, rec, failure)
+	}
+}
+
+// stateFailed ends a run whose folder's state.db cannot be opened: it is
+// logged at error and, on the first failure of a classifier since its state
+// last opened and again once ErrorMute has passed, raises the operator
+// alert and reports the run as failed to the agent and its chat (the count
+// and mute of error notices live in that state.db, so they are kept in
+// memory here). report.errors false reports nothing to the agent.
+func (s *Service) stateFailed(ctx context.Context, scope Scope, def *Definition, rec RunRecord, err error) RunRecord {
+	s.host.Logger.Errorf("classifier=%s agent=%s: open state: %v", def.ID, scope.AgentID, err)
+	now := s.host.clock().Now().UTC()
+	rec.Status, rec.Error, rec.EndedAt = RunError, ErrStateUnavailable.Error(), now
+	rec.cause = cause{kind: causeOperator}
+	if !s.stateNotice(entryKey(scope.BaseDirectory, def.ID), now) {
+		return rec
+	}
+	if s.host.Notifier != nil {
+		s.host.Notifier.StateFailed(withClassifier(ctx, NormalizeID(def.ID)), scope.AgentID,
+			filepath.Join(scope.BaseDirectory, classifierfs.StateFile), err)
+	}
+	if def.reportErrors() {
+		s.summarise(ctx, scope, def, rec, failureFirst)
+		s.reportFailure(ctx, scope, def, rec, failureFirst)
+	}
+	return rec
+}
+
+// stateNotice reports whether a classifier whose state cannot be opened is
+// reported now: the first time since it last opened, then once per
+// ErrorMute.
+func (s *Service) stateNotice(key string, now time.Time) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if until, ok := s.stateMuted[key]; ok && now.Before(until) {
+		return false
+	}
+	s.stateMuted[key] = now.Add(ErrorMute)
+	return true
+}
+
+// stateOpened ends a classifier's streak of state failures.
+func (s *Service) stateOpened(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.stateMuted, key)
 }
 
 func errSuffix(e string) string {
@@ -553,7 +701,7 @@ func (s *Service) reportFailure(ctx context.Context, scope Scope, def *Definitio
 	if s.host.Notifier == nil {
 		return
 	}
-	text := failureText(def, rec) + " " + failureAdvice
+	text := failureText(def, rec) + " " + advice(rec.cause)
 	if failure == failureSecond {
 		text += " " + muteNotice
 	}
@@ -563,9 +711,6 @@ func (s *Service) reportFailure(ctx context.Context, scope Scope, def *Definitio
 	}
 	s.host.Logger.Infof("classifier=%s agent=%s: run failure reported to the agent", def.ID, scope.AgentID)
 }
-
-// failureAdvice follows the failure in the agent's notice of a failed run.
-const failureAdvice = "Check and fix the classifier's definition or its instructions files; classifier_test shows the result."
 
 // muteHours is ErrorMute in whole hours, for the notices.
 var muteHours = int(ErrorMute / time.Hour)
@@ -623,17 +768,21 @@ func summaryText(def *Definition, rec RunRecord) string {
 }
 
 // failureText is the one-sentence report of a failed run, naming the
-// classifier and the error: "Classifier inbox: the run failed: <error>."
+// classifier and the error: "Classifier inbox: the run failed: <error>.",
+// or for a definition file that is not valid "Classifier inbox is not run:
+// <why>."
 func failureText(def *Definition, rec RunRecord) string {
 	var b strings.Builder
 	b.WriteString("Classifier " + def.ID)
 	if rec.DryRun {
 		b.WriteString(" (dry run)")
 	}
-	b.WriteString(": the run failed: ")
-	// The error of the Markdown instructions names the classifier already.
-	msg := strings.TrimPrefix(rec.Error, "classifier "+def.ID+": ")
-	msg = strings.Join(strings.Fields(msg), " ") // a validation error has one issue per line
+	if rec.cause.kind == causeInvalidFile {
+		b.WriteString(" is not run: ")
+	} else {
+		b.WriteString(": the run failed: ")
+	}
+	msg := strings.Join(strings.Fields(rec.Error), " ") // a validation error has one issue per line
 	b.WriteString(msg)
 	if !strings.HasSuffix(msg, ".") {
 		b.WriteString(".")

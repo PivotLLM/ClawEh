@@ -11,8 +11,11 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/classifier"
@@ -26,6 +29,7 @@ import (
 	"github.com/PivotLLM/ClawEh/routing"
 	"github.com/PivotLLM/ClawEh/tools"
 	toolschedule "github.com/PivotLLM/ClawEh/tools/schedule"
+	"github.com/PivotLLM/ClawEh/tools/untrusted"
 )
 
 // ClassifierHost is ClawEh's side of the classifier package's host contract
@@ -185,11 +189,15 @@ func (h *ClassifierHost) Has(agentID, tool string) error {
 
 // Call implements classifier.ToolRunner: tool runs as agentID through the
 // agent's own registry, unattended (no session, no chat) and bounded by the
-// same timeout, exactly as a scheduled watch probe does. A call that times
-// out fails with the tool named.
+// same timeout, exactly as a scheduled watch probe does. A tool the agent
+// lacks, a session-scoped one and a classifier tool are refused with
+// classifier.ToolUnavailable; the tool's own error and a timeout carry the
+// reason only (the classifier names the tool with its role). A result marked
+// as untrusted external content (an MCP server's, a web tool's) is returned
+// unwrapped, so the classifier reads its JSON; a model never sees it here.
 func (h *ClassifierHost) Call(ctx context.Context, agentID, tool string, args map[string]any) (string, error) {
 	if classifier.IsClassifierTool(tool) {
-		return "", errors.New(classifier.ClassifierToolRefusal(tool, ""))
+		return "", classifier.ToolUnavailable(classifier.ClassifierToolRefusal(tool, ""))
 	}
 	al, _, err := h.bound()
 	if err != nil {
@@ -203,15 +211,25 @@ func (h *ClassifierHost) Call(ctx context.Context, agentID, tool string, args ma
 	defer cancel()
 	out, err := reg.ExecuteUnattended(callCtx, tool, args)
 	if ctx.Err() == nil && errors.Is(callCtx.Err(), context.DeadlineExceeded) {
-		return "", fmt.Errorf("tool %s did not answer within %s", tool, toolschedule.WatchProbeTimeout)
+		return "", fmt.Errorf("no answer within %s", toolschedule.WatchProbeTimeout)
 	}
 	switch {
 	case errors.Is(err, tools.ErrToolNotRegistered):
-		return "", fmt.Errorf("tool %s is not available to agent %s", tool, agentID)
+		return "", classifier.ToolUnavailable(fmt.Sprintf("tool %s is not available to agent %s", tool, agentID))
 	case errors.Is(err, tools.ErrToolSessionScoped):
-		return "", fmt.Errorf("tool %s works only in a conversation and cannot be used by a classifier", tool)
+		return "", classifier.ToolUnavailable(fmt.Sprintf("tool %s works only in a conversation and cannot be used by a classifier", tool))
+	case err != nil:
+		// ExecuteUnattended names the tool; the classifier names it with
+		// its role, so only the tool's message is kept.
+		if msg, ok := strings.CutPrefix(err.Error(), fmt.Sprintf("tool %q failed: ", tool)); ok {
+			return "", errors.New(msg)
+		}
+		return "", err
 	}
-	return out, err
+	if content, ok := untrusted.Unwrap(out); ok {
+		return content, nil
+	}
+	return out, nil
 }
 
 // Complete implements classifier.ModelCaller: one request, with no tools, on
@@ -424,6 +442,38 @@ func (h *ClassifierHost) RunFailed(ctx context.Context, agentID, text string) er
 	}
 	return nil
 }
+
+// classifierStateAlertPrefix starts the alert id of an agent whose
+// classifier state cannot be opened ("classifier-state:<agent>").
+const classifierStateAlertPrefix = "classifier-state:"
+
+// StateFailed implements classifier.Notifier: the operator alert for an
+// agent whose classifiers' state.db cannot be opened, so none of them runs.
+// Nothing runs before Bind, so an unbound host has nothing to raise.
+func (h *ClassifierHost) StateFailed(_ context.Context, agentID, path string, err error) {
+	al, cfg, bErr := h.bound()
+	if bErr != nil {
+		return
+	}
+	name := agentID
+	if a := cfg.AgentByID(agentID); a != nil {
+		name = a.DisplayName()
+	}
+	details := ""
+	if err != nil {
+		details = err.Error()
+	}
+	al.Alerter().Send(alerter.Alert{
+		Title:       "Classifier state unavailable",
+		Description: "agent " + name + ": " + path + " cannot be opened, so its classifiers do not run",
+		Details:     details,
+		EventID:     classifierStateAlertPrefix + agentID,
+	})
+}
+
+// Redact is classifier.Host.Redact: the secrets of a provider's or tool's
+// error text (API keys, credentials) replaced, as for a chat or the log.
+func (h *ClassifierHost) Redact(s string) string { return redactSecrets(s) }
 
 // Record implements classifier.Auditor: a definition written is a
 // classifier_write row, an item handled a classification row, both under

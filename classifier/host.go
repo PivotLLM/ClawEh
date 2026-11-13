@@ -30,10 +30,30 @@ type ToolRunner interface {
 	// (registered, not session-scoped); the error names the tool and the
 	// agent.
 	Has(agentID, tool string) error
-	// Call runs tool as agentID through its own registry; a tool error is
-	// returned as an error carrying the tool's message.
+	// Call runs tool as agentID through its own registry. A tool the agent
+	// does not have, or that may not run unattended, is an error matching
+	// ErrToolUnavailable whose text names the tool; any other failure (the
+	// tool's own error, no answer in time) is an error carrying the reason
+	// without the tool's name, which the caller adds with the tool's role.
+	// A result the host marked as untrusted external content is returned
+	// unwrapped: the classifier reads it as data.
 	Call(ctx context.Context, agentID, tool string, args map[string]any) (result string, err error)
 }
+
+// ErrToolUnavailable matches a ToolRunner.Call error for a tool the agent
+// does not have or that a classifier may not use (ToolUnavailable).
+var ErrToolUnavailable = errors.New("tool not available")
+
+// unavailableError is ToolUnavailable's error.
+type unavailableError struct{ text string }
+
+func (e unavailableError) Error() string        { return e.text }
+func (e unavailableError) Is(target error) bool { return target == ErrToolUnavailable }
+
+// ToolUnavailable is a ToolRunner's error for a tool the agent cannot use
+// from a classifier: text is the sentence naming the tool, and the error
+// matches ErrToolUnavailable.
+func ToolUnavailable(text string) error { return unavailableError{text: text} }
 
 // classifierKey is the context key of the classifier a call is made for.
 type classifierKey struct{}
@@ -92,14 +112,19 @@ const (
 	MaxInstructionsDirBytes  = 1 << 20
 )
 
-// Notifier tells the owning agent and its person about runs. The host names
-// the agent; text names the classifier. Errors are logged only.
+// Notifier tells the owning agent and its person about runs, and the
+// operator about what only the operator can fix. The host names the agent;
+// text names the classifier. Errors are logged only.
 type Notifier interface {
 	// Summary posts a run's summary to the agent's default chat.
 	Summary(ctx context.Context, agentID, text string) error
 	// RunFailed delivers the notice of a failed run to the agent itself, as
 	// a message in its main conversation, so it can fix the classifier.
 	RunFailed(ctx context.Context, agentID, text string) error
+	// StateFailed raises the operator alert for an agent whose classifier
+	// state (path, its state.db) cannot be opened: its classifiers do not
+	// run until the operator fixes it.
+	StateFailed(ctx context.Context, agentID, path string, err error)
 }
 
 // Audit event kinds.
@@ -170,6 +195,10 @@ type Host struct {
 	// Scopes returns every configured agent whose classifiers switch is on.
 	// nil: none.
 	Scopes func() []Scope
+	// Redact removes secrets (API keys, credentials) from an error's text
+	// before it is stored, logged, sent in a notice or returned by a tool.
+	// nil: texts are kept as they are.
+	Redact func(string) string
 }
 
 func (h *Host) clock() Clock {
@@ -197,6 +226,13 @@ func (h *Host) modes(base string) (dir, file os.FileMode) {
 		file = 0o600
 	}
 	return dir, file
+}
+
+func (h *Host) redact(s string) string {
+	if h.Redact == nil {
+		return s
+	}
+	return h.Redact(s)
 }
 
 func (h *Host) audit(ev AuditEvent) {
@@ -234,6 +270,10 @@ var ErrNoItems = errors.New("the source lists no items")
 
 // ErrClosed: the service is closed.
 var ErrClosed = errors.New("classifier service closed")
+
+// ErrStateUnavailable: a folder's state.db cannot be opened. Only the
+// operator can fix it.
+var ErrStateUnavailable = errors.New("the classifier's state could not be opened")
 
 // ValidationError is a refused definition: one plain sentence per issue.
 type ValidationError struct {

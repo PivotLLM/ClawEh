@@ -145,23 +145,23 @@ func (s *Service) readInstructions(scope Scope, def *Definition, missingOK bool)
 
 // loadInstructions reads the definition's Markdown for a run or a test and
 // checks the prompt against the install's max_prompt_chars. Its error is
-// one sentence naming the classifier, without a final period (a run's
-// error).
+// one sentence, without a final period (a run's error); it does not name
+// the classifier, which every place showing it names already.
 func (s *Service) loadInstructions(scope Scope, def *Definition) (instructions, error) {
 	in, err := s.readInstructions(scope, def, false)
 	if err != nil {
-		return in, fmt.Errorf("classifier %s: %w", def.ID, err)
+		return in, err
 	}
 	if def.Classify.InstructionsFile == "" && def.Classify.InstructionsDir == "" {
 		return in, nil // ValidateStatic counted it all
 	}
 	if limit := s.host.ceilings().MaxPromptChars; limit > 0 {
 		if n := promptChars(def, in); n > limit {
-			return in, fmt.Errorf("classifier %s: its instructions, rules and Markdown files have %d characters together; this install allows %d", def.ID, n, limit)
+			return in, fmt.Errorf("classify.instructions, classify.rules and the Markdown files have %d characters together; this install allows %d", n, limit)
 		}
 	}
 	if strings.TrimSpace(def.Classify.Instructions) == "" && strings.TrimSpace(in.file) == "" && !slicesAnyText(in.dir) {
-		return in, fmt.Errorf("classifier %s has no instructions: classify.instructions is empty and its Markdown files are empty", def.ID)
+		return in, errors.New("classify.instructions and its Markdown files are all empty, so there are no instructions")
 	}
 	return in, nil
 }

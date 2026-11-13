@@ -191,15 +191,40 @@ resolves to nothing fails that item; nothing empty is passed to a tool.
 - `dry_run` records decisions without running actions, kept apart from the
   live state: switching to live classifies everything again. Its activity
   entries show each action's arguments (`action_args`) after substitution.
+- Each activity entry says what went wrong with an item: `replies` (the
+  model's two answers when it named no category), `missing_fields` (fetch
+  fields that resolved to nothing), `shortened_fields` (cut to
+  `fetch.max_chars`), `action_args` of an action that failed, and for a
+  failed fetch the list entry's own fields. An item none of whose fetch
+  fields resolved fails; it is never classified blind. `classifier_test`
+  shows the same.
 - When the model cannot be used (none set, or in cooldown), the run stops and
   its items are tried again on the next run.
 - When a run fails (your Markdown files can't be read or are too long, the
-  source tool fails, no usable model), it is logged and you get a message in
-  your conversation:
-  `[System: classifier] Classifier inbox: the run failed: <reason>. Check and
-  fix the classifier's definition or its instructions files; classifier_test
-  shows the result.` Fix the cause, run `classifier_test` to verify, and tell
-  the user what you changed; your answer goes to your default chat.
+  source tool fails, no usable model, `stop_after_failures` items failed in a
+  row, or someone edited the definition file by hand and it is no longer
+  valid), it is logged and you get a message in your conversation:
+  `[System: classifier] Classifier inbox: the run failed: <reason>. <advice>`
+  (for a file that is not valid: `Classifier inbox is not run: <reason>.`).
+  The advice fits the cause:
+  - your definition or its Markdown files: `Check and fix the classifier's
+    definition or its instructions files; classifier_test shows the result.`
+  - a tool or the model failed (credentials, an outage): `This looks like a
+    problem with <tool> itself (credentials or an outage); check it before
+    changing the classifier.`
+  - a tool you no longer have (the reason names its role: `source`, `fetch`,
+    or `action for category <name>`): `If <tool> should be available, tell
+    the user; otherwise change the classifier.`
+  - no usable classifier model: `Only the operator can fix this on the Task
+    models page; tell the user.`
+  - the classifier's state can't be opened: `Only the operator can fix this;
+    tell the user.`
+  - a definition file that is not valid: `Fix it with classifier_update, or
+    delete it and create it again.`
+
+  Fix what is yours to fix, run `classifier_test` to verify (it shows the
+  source's own error when the source fails), and tell the user what you
+  changed; your answer goes to your default chat.
 - The second failed run in a row adds: `Further errors from this classifier
   won't be reported for 24 hours. To report them again now, call
   classifier_update with {"report": {"errors": true}}.` Later failures are

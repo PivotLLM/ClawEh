@@ -15,8 +15,8 @@ import (
 	"github.com/PivotLLM/ClawEh/routing"
 )
 
-const classifierNoticeText = "Classifier inbox: the run failed: source mail_list: boom. " +
-	"Check and fix the classifier's definition or its instructions files; classifier_test shows the result."
+const classifierNoticeText = "Classifier inbox: the run failed: source mail_list failed: boom. " +
+	"This looks like a problem with mail_list itself (credentials or an outage); check it before changing the classifier."
 
 // aliceDefaultChat binds Alice's default chat to telegram/u1.
 func aliceDefaultChat(cfg *config.Config) {

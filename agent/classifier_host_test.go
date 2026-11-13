@@ -183,12 +183,15 @@ func TestClassifierHost_Tools(t *testing.T) {
 		if err := host.Has(tc.agent, tc.tool); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("Has(%s, %s) = %v, want %q", tc.agent, tc.tool, err, tc.want)
 		}
-		if _, err := host.Call(ctx, tc.agent, tc.tool, map[string]any{}); err == nil || !strings.Contains(err.Error(), tc.want) {
-			t.Errorf("Call(%s, %s) = %v, want %q", tc.agent, tc.tool, err, tc.want)
+		if _, err := host.Call(ctx, tc.agent, tc.tool, map[string]any{}); err == nil || !strings.Contains(err.Error(), tc.want) ||
+			!errors.Is(err, classifier.ErrToolUnavailable) {
+			t.Errorf("Call(%s, %s) = %v, want ErrToolUnavailable with %q", tc.agent, tc.tool, err, tc.want)
 		}
 	}
-	if _, err := host.Call(ctx, "alice", "inbox_broken", map[string]any{}); err == nil || !strings.Contains(err.Error(), "the mailbox is locked") {
-		t.Errorf("Call(inbox_broken) = %v, want the tool's message", err)
+	// The tool's own message only: the classifier names the tool with its role.
+	if _, err := host.Call(ctx, "alice", "inbox_broken", map[string]any{}); err == nil || err.Error() != "the mailbox is locked" ||
+		errors.Is(err, classifier.ErrToolUnavailable) {
+		t.Errorf("Call(inbox_broken) = %v, want the tool's message alone", err)
 	}
 	if _, err := host.Call(ctx, "nobody", "inbox_list", map[string]any{}); err == nil {
 		t.Error("Call for an unknown agent succeeded")
@@ -199,7 +202,8 @@ func TestClassifierHost_Tools(t *testing.T) {
 	if err := host.Has("alice", "classifier_update"); err == nil || err.Error() != refusal {
 		t.Errorf("Has(classifier_update) = %v, want %q", err, refusal)
 	}
-	if _, err := host.Call(ctx, "alice", "classifier_update", map[string]any{}); err == nil || err.Error() != refusal {
+	if _, err := host.Call(ctx, "alice", "classifier_update", map[string]any{}); err == nil || err.Error() != refusal ||
+		!errors.Is(err, classifier.ErrToolUnavailable) {
 		t.Errorf("Call(classifier_update) = %v, want %q", err, refusal)
 	}
 	if err := NewClassifierHost().Has("alice", "inbox_list"); !errors.Is(err, errLoopNotReady) {
@@ -539,7 +543,7 @@ func (h *hangingTool) Execute(ctx context.Context, _ map[string]any) *tools.Tool
 }
 
 // A classifier tool call is bounded by the watch probe's timeout; one that
-// runs past it fails with the tool named.
+// runs past it fails saying so (the classifier names the tool).
 func TestClassifierHost_ToolCallTimeout(t *testing.T) {
 	al, host, _ := newClassifierHostLoop(t, classifierHostConfig(t, "http://127.0.0.1:0"))
 	fc := fakeClock(al)
@@ -553,8 +557,8 @@ func TestClassifierHost_ToolCallTimeout(t *testing.T) {
 	advanceWhenWaiting(t, fc, 1, toolschedule.WatchProbeTimeout)
 	select {
 	case err := <-done:
-		if err == nil || !strings.Contains(err.Error(), "tool inbox_list did not answer within 1m0s") {
-			t.Fatalf("Call = %v, want the timeout naming the tool", err)
+		if err == nil || err.Error() != "no answer within 1m0s" {
+			t.Fatalf("Call = %v, want the timeout", err)
 		}
 	case <-time.After(30 * time.Second):
 		t.Fatal("the call did not end at the timeout")

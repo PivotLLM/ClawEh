@@ -240,7 +240,7 @@ func TestRunReadsMarkdownEveryRun(t *testing.T) {
 // A missing or unreadable file or folder, a prompt over max_prompt_chars
 // with the Markdown, and no instructions at all each fail the run before the
 // source is called: nothing is classified, and the run's error names the
-// classifier and the path.
+// path (not the classifier, which the summary names once).
 func TestRunMarkdownProblems(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -249,10 +249,10 @@ func TestRunMarkdownProblems(t *testing.T) {
 	}{
 		{"missing file", func(e *env) {
 			e.instr.setDir("files/classifiers/inbox/rules")
-		}, "classifier inbox-priority: classify.instructions_file files/classifiers/inbox/guide.md can't be read: it does not exist"},
+		}, "classify.instructions_file files/classifiers/inbox/guide.md can't be read: it does not exist"},
 		{"missing folder", func(e *env) {
 			e.instr.setFile("files/classifiers/inbox/guide.md", "GUIDE")
-		}, "classifier inbox-priority: classify.instructions_dir files/classifiers/inbox/rules can't be read: it does not exist"},
+		}, "classify.instructions_dir files/classifiers/inbox/rules can't be read: it does not exist"},
 		{"refused file", func(e *env) {
 			e.instr.setDir("files/classifiers/inbox/rules")
 			e.instr.setErr("files/classifiers/inbox/guide.md", errors.New("it leads outside files/"))
@@ -263,11 +263,11 @@ func TestRunMarkdownProblems(t *testing.T) {
 			e.mu.Lock()
 			e.ceilings.MaxPromptChars = 200
 			e.mu.Unlock()
-		}, "classifier inbox-priority: its instructions, rules and Markdown files have 250 characters together; this install allows 200"},
+		}, "classify.instructions, classify.rules and the Markdown files have 250 characters together; this install allows 200"},
 		{"no instructions", func(e *env) {
 			e.instr.setFile("files/classifiers/inbox/guide.md", " \n")
 			e.instr.setDir("files/classifiers/inbox/rules")
-		}, "classifier inbox-priority has no instructions"},
+		}, "classify.instructions and its Markdown files are all empty, so there are no instructions"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := newEnv(t)
@@ -296,10 +296,7 @@ func TestRunMarkdownProblems(t *testing.T) {
 				t.Errorf("Inspect = %+v, %v", sums, err)
 			}
 			// The summary names the classifier once, before the error.
-			want := "Classifier inbox-priority: the run failed: " + strings.TrimPrefix(tc.want, "classifier inbox-priority: ")
-			if strings.HasPrefix(tc.want, "classifier inbox-priority has") {
-				want = "Classifier inbox-priority: the run failed: " + tc.want
-			}
+			want := "Classifier inbox-priority: the run failed: " + tc.want
 			if texts := e.notifier.all(); len(texts) != 1 || !strings.HasPrefix(texts[0], want) {
 				t.Errorf("summaries = %q, want one starting %q", texts, want)
 			}

@@ -119,4 +119,31 @@ func TestNewClassifierService(t *testing.T) {
 	if err != nil || len(sums) != 1 || sums[0].ID != "inbox" || sums[0].Owner != "alice" {
 		t.Fatalf("List = %+v, %v; want inbox owned by alice", sums, err)
 	}
+
+	// A tool's error is redacted with the host's redaction before it is
+	// shown (here a live validation's refusal).
+	const key = "sk-live-0123456789abcdefghij"
+	alice.Tools.Register(secretTool{msg: "401 Unauthorized: api_key " + key})
+	secret, err := json.Marshal(map[string]any{
+		"id": "secret", "enabled": true, "trigger": map[string]any{"every_seconds": 60},
+		"source":   map[string]any{"tool": "probe_secret", "items": "items", "id": "id"},
+		"classify": map[string]any{"instructions": "Sort.", "categories": []any{map[string]any{"name": "keep"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = svc.Validate(context.Background(), scope, secret, true)
+	if err == nil || strings.Contains(err.Error(), key) || !strings.Contains(err.Error(), "source probe_secret failed: 401 Unauthorized") {
+		t.Errorf("Validate with a failing source = %v, want the error with the key redacted", err)
+	}
+}
+
+// secretTool is a source tool whose error carries a credential.
+type secretTool struct{ msg string }
+
+func (secretTool) Name() string               { return "probe_secret" }
+func (secretTool) Description() string        { return "fails" }
+func (secretTool) Parameters() map[string]any { return map[string]any{"type": "object"} }
+func (s secretTool) Execute(context.Context, map[string]any) *tools.ToolResult {
+	return tools.ErrorResult(s.msg)
 }

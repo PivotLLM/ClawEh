@@ -27,11 +27,24 @@ type Field struct {
 
 // itemData is what one item gives the prompt and the substitution: the
 // fields in name order, the names whose path resolved to nothing, and the
-// fetched values with their JSON types (for {{fetched.<name>}}).
+// fetched values with their JSON types (for {{fetched.<name>}}). notJSON is
+// the parse error of a fetch result that is not JSON.
 type itemData struct {
 	fields  []Field
 	missing []string
 	fetched map[string]any
+	notJSON error
+}
+
+// shortened is the names of the fields cut to fit the item's budget.
+func (d itemData) shortened() []string {
+	var out []string
+	for _, f := range d.fields {
+		if f.Shortened {
+			out = append(out, f.Name)
+		}
+	}
+	return out
 }
 
 // fieldsFromElement is the item's data when the definition has no fetch:
@@ -58,11 +71,13 @@ func fieldsFromElement(el any) itemData {
 // plain text in which no path resolves), reducing the fields fetch.html names
 // from HTML to text.
 func fieldsFromFetch(result string, f *Fetch) itemData {
+	d := itemData{fetched: map[string]any{}}
 	var decoded any = result
 	if v, err := decodeJSON(result); err == nil {
 		decoded = v
+	} else {
+		d.notJSON = err
 	}
-	d := itemData{fetched: map[string]any{}}
 	for _, name := range sortedKeys(f.Fields) {
 		v := dotpath.Get(decoded, f.Fields[name])
 		if v == nil {

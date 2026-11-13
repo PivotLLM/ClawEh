@@ -58,13 +58,21 @@ type Decision struct {
 	Action   string `json:"action,omitempty"`
 	// ActionArgs is the action's arguments after substitution, as compact
 	// JSON cut to ActivityValueMax characters: set in a dry run and by
-	// classifier_test only, since no action runs there.
-	ActionArgs string    `json:"action_args,omitempty"`
-	Outcome    string    `json:"outcome"`
-	Error      string    `json:"error,omitempty"`
-	DryRun     bool      `json:"dry_run,omitempty"`
-	Rerun      bool      `json:"rerun,omitempty"`
-	At         time.Time `json:"at"`
+	// classifier_test (no action runs there), and when the action failed.
+	ActionArgs string `json:"action_args,omitempty"`
+	// Replies are the model's replies to an item left unclassified, the
+	// first and the retry's, each cut to ActivityValueMax characters.
+	Replies []string `json:"replies,omitempty"`
+	// MissingFields are the fetch fields whose path resolved to nothing in
+	// the fetch result; ShortenedFields are the fields cut to fit the
+	// item's budget (fetch.max_chars).
+	MissingFields   []string  `json:"missing_fields,omitempty"`
+	ShortenedFields []string  `json:"shortened_fields,omitempty"`
+	Outcome         string    `json:"outcome"`
+	Error           string    `json:"error,omitempty"`
+	DryRun          bool      `json:"dry_run,omitempty"`
+	Rerun           bool      `json:"rerun,omitempty"`
+	At              time.Time `json:"at"`
 }
 
 // ActivityEntry is one activity log row: a Decision and the fields sent to
@@ -91,13 +99,16 @@ type RunRecord struct {
 	Unclassified int       `json:"unclassified"`
 	Failed       int       `json:"failed"`
 	DryRun       bool      `json:"dry_run,omitempty"`
+	// cause is what a failed run is down to (not stored): the advice of
+	// the agent's notice.
+	cause cause
 }
 
 // Run statuses.
 const (
 	RunOK      = "ok"
-	RunError   = "error"   // the run could not list its items, or its model could not be used
-	RunStopped = "stopped" // stop_after_failures, or the classifier stopped mid-run
+	RunError   = "error"   // the run could not list its items, its model could not be used, or stop_after_failures items failed in a row
+	RunStopped = "stopped" // the classifier was stopped, or the service stopped, mid-run
 )
 
 // ActivityQuery selects activity entries: newest first, Limit (default
@@ -141,12 +152,18 @@ CREATE TABLE IF NOT EXISTS run_failures (
 `
 
 // activityTable creates the activity table. A run_failed row has no item_id
-// (NULL) and has count and last_at.
+// (NULL) and has count and last_at. replies, missing_fields and
+// shortened_fields are JSON lists of strings, NULL when empty.
 const activityTable = `CREATE TABLE IF NOT EXISTS activity (
   id INTEGER PRIMARY KEY, classifier TEXT NOT NULL, at INTEGER NOT NULL, item_id TEXT,
   fields TEXT NOT NULL,
   category TEXT, reason TEXT, model TEXT, action TEXT, outcome TEXT NOT NULL, error TEXT,
-  dry_run INTEGER NOT NULL, rerun INTEGER NOT NULL, action_args TEXT, count INTEGER, last_at INTEGER)`
+  dry_run INTEGER NOT NULL, rerun INTEGER NOT NULL, action_args TEXT, count INTEGER, last_at INTEGER,
+  replies TEXT, missing_fields TEXT, shortened_fields TEXT)`
+
+// activityLists are the activity columns holding a JSON list of strings,
+// added to a state.db written before they existed.
+var activityLists = []string{"replies", "missing_fields", "shortened_fields"}
 
 // stateDB is one folder's state.db.
 type stateDB struct {
@@ -191,8 +208,10 @@ func openState(ctx context.Context, base string, dirMode, fileMode os.FileMode) 
 	if _, err := db.ExecContext(ctx, stateSchema); err != nil {
 		return nil, errors.Join(fmt.Errorf("schema %s: %w", path, err), db.Close())
 	}
-	if err := addColumn(ctx, db, "activity", "action_args"); err != nil {
-		return nil, errors.Join(fmt.Errorf("schema %s: %w", path, err), db.Close())
+	for _, column := range append([]string{"action_args"}, activityLists...) {
+		if err := addColumn(ctx, db, "activity", column); err != nil {
+			return nil, errors.Join(fmt.Errorf("schema %s: %w", path, err), db.Close())
+		}
 	}
 	if err := migrateActivity(ctx, db); err != nil {
 		return nil, errors.Join(fmt.Errorf("schema %s: %w", path, err), db.Close())
@@ -417,11 +436,17 @@ func (s *stateDB) addActivity(ctx context.Context, cls string, e ActivityEntry) 
 	if err != nil {
 		return err
 	}
+	replies := make([]string, len(e.Replies))
+	for i, r := range e.Replies {
+		replies[i] = cutRunes(r, ActivityValueMax)
+	}
 	_, err = s.db.ExecContext(ctx, `
-INSERT INTO activity (classifier, at, item_id, fields, category, reason, model, action, action_args, outcome, error, dry_run, rerun)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+INSERT INTO activity (classifier, at, item_id, fields, category, reason, model, action, action_args, outcome, error, dry_run, rerun,
+  replies, missing_fields, shortened_fields)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		cls, ms(e.At), e.ItemID, string(data), nullable(e.Category), nullable(e.Reason), nullable(e.Model),
-		nullable(e.Action), nullable(cutRunes(e.ActionArgs, ActivityValueMax)), e.Outcome, nullable(e.Error), e.DryRun, e.Rerun)
+		nullable(e.Action), nullable(cutRunes(e.ActionArgs, ActivityValueMax)), e.Outcome, nullable(e.Error), e.DryRun, e.Rerun,
+		jsonList(replies), jsonList(e.MissingFields), jsonList(e.ShortenedFields))
 	return err
 }
 
@@ -430,6 +455,31 @@ func nullable(s string) any {
 		return nil
 	}
 	return s
+}
+
+// jsonList is list as a JSON array for a column, NULL when empty.
+func jsonList(list []string) any {
+	if len(list) == 0 {
+		return nil
+	}
+	data, err := json.Marshal(list)
+	if err != nil {
+		return nil // a []string always marshals
+	}
+	return string(data)
+}
+
+// fromJSONList reads a column written by jsonList; "" or an unreadable
+// value is nil.
+func fromJSONList(s string) []string {
+	if s == "" {
+		return nil
+	}
+	var list []string
+	if json.Unmarshal([]byte(s), &list) != nil {
+		return nil
+	}
+	return list
 }
 
 // activity returns cls's activity entries for q, newest first.
@@ -442,7 +492,8 @@ func (s *stateDB) activity(ctx context.Context, cls string, q ActivityQuery) (_ 
 	offset := max(q.Offset, 0)
 	query := `SELECT at, COALESCE(item_id,''), fields, COALESCE(category,''), COALESCE(reason,''), COALESCE(model,''),
   COALESCE(action,''), COALESCE(action_args,''), outcome, COALESCE(error,''), dry_run, rerun,
-  COALESCE(count,0), last_at FROM activity WHERE classifier = ?`
+  COALESCE(count,0), last_at, COALESCE(replies,''), COALESCE(missing_fields,''), COALESCE(shortened_fields,'')
+  FROM activity WHERE classifier = ?`
 	args := []any{cls}
 	if q.Outcome != "" {
 		query += ` AND outcome = ?`
@@ -471,12 +522,14 @@ func (s *stateDB) activity(ctx context.Context, cls string, q ActivityQuery) (_ 
 		var e ActivityEntry
 		var at int64
 		var lastAt sql.NullInt64
-		var fields string
+		var fields, replies, missing, shortened string
 		if err := rows.Scan(&at, &e.ItemID, &fields, &e.Category, &e.Reason, &e.Model, &e.Action,
-			&e.ActionArgs, &e.Outcome, &e.Error, &e.DryRun, &e.Rerun, &e.Count, &lastAt); err != nil {
+			&e.ActionArgs, &e.Outcome, &e.Error, &e.DryRun, &e.Rerun, &e.Count, &lastAt,
+			&replies, &missing, &shortened); err != nil {
 			return nil, err
 		}
 		e.At, e.LastAt = time.UnixMilli(at).UTC(), fromMS(lastAt)
+		e.Replies, e.MissingFields, e.ShortenedFields = fromJSONList(replies), fromJSONList(missing), fromJSONList(shortened)
 		if err := json.Unmarshal([]byte(fields), &e.Fields); err != nil {
 			e.Fields = nil
 		}

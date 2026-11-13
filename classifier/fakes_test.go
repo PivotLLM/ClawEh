@@ -49,7 +49,7 @@ func (f *fakeTools) Call(ctx context.Context, agentID, tool string, args map[str
 	f.calls = append(f.calls, toolCall{agent: agentID, tool: tool, classifier: ClassifierID(ctx), args: args})
 	f.mu.Unlock()
 	if !ok {
-		return "", fmt.Errorf("tool %s is not available to agent %s", tool, agentID)
+		return "", ToolUnavailable(fmt.Sprintf("tool %s is not available to agent %s", tool, agentID))
 	}
 	return h(args)
 }
@@ -115,6 +115,25 @@ type fakeNotifier struct {
 	mu      sync.Mutex
 	texts   []string
 	notices []notice
+	alerts  []stateAlert
+}
+
+// stateAlert is one operator alert of a state.db that cannot be opened.
+type stateAlert struct {
+	agent, classifier, path string
+	err                     error
+}
+
+func (n *fakeNotifier) StateFailed(ctx context.Context, agentID, path string, err error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.alerts = append(n.alerts, stateAlert{agent: agentID, classifier: ClassifierID(ctx), path: path, err: err})
+}
+
+func (n *fakeNotifier) allAlerts() []stateAlert {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return append([]stateAlert(nil), n.alerts...)
 }
 
 // notice is one failure notice delivered to an agent.

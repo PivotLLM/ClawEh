@@ -443,7 +443,7 @@ func TestRunParallel(t *testing.T) {
 }
 
 // After stop_after_failures consecutive failures the run starts no more
-// items; they are taken next run (design 6.1d).
+// items and fails; they are taken next run (design 6.1d).
 func TestRunStopsAfterFailures(t *testing.T) {
 	e := newEnv(t)
 	e.setInbox([]string{"a1", "a2", "a3", "a4", "a5"})
@@ -452,7 +452,7 @@ func TestRunStopsAfterFailures(t *testing.T) {
 	e.create(def)
 	e.tools.set("mail_move", func(map[string]any) (string, error) { return "", errBoom })
 	rec := e.run("inbox-priority")
-	if rec.Status != RunStopped || rec.Failed != 2 || e.model.count() != 2 || !strings.Contains(rec.Error, "2 consecutive failures") {
+	if rec.Status != RunError || rec.Failed != 2 || e.model.count() != 2 || rec.Error != "stopped after 2 consecutive failures; the last: action mail_move failed: boom" {
 		t.Fatalf("run = %+v, model calls %d", rec, e.model.count())
 	}
 	// A success in between resets the count.

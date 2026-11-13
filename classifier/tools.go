@@ -34,8 +34,9 @@ const readFirst = "Call classifier_readme first if you have not."
 
 // Tools returns the eleven classifier tools over svc. Every failure of an
 // operation is a Result with IsError and plain sentences: an unknown
-// classifier, a refused definition (one issue per line), an item the source
-// does not list, or an internal failure (logged; no path or error chain
+// classifier, a refused definition (one issue per line), a source that
+// failed (its real reason), an item the source does not list, state that
+// cannot be opened, or an internal failure (logged; no path or error chain
 // reaches the agent).
 func Tools(svc *Service, host ToolHost) []toolspec.ToolDefinition {
 	t := &toolSuite{svc: svc, host: host}
@@ -166,7 +167,14 @@ func (t *toolSuite) fail(scope Scope, id string, err error) (*toolspec.Result, e
 	case errors.Is(err, ErrNoItems):
 		return errResult("The source lists no items."), nil
 	case errors.As(err, &ve):
-		return errResult(ve.Error()), nil
+		// An expected refusal (a definition refused, a source that failed):
+		// logged by the registry as refused, not as a fault.
+		return &toolspec.Result{ForLLM: ve.Error(), IsError: true, Err: ve}, nil
+	case errors.Is(err, ErrStateUnavailable):
+		t.svc.host.Logger.Errorf("classifier tool (agent %s, classifier %s): %v", scope.AgentID, id, err)
+		return errResult("The classifier's state could not be opened. Only the operator can fix this; tell the user."), nil
+	case errors.Is(err, ErrClosed):
+		return errResult("Classifiers are stopping because the service is shutting down; try again later."), nil
 	}
 	t.svc.host.Logger.Errorf("classifier tool (agent %s, classifier %s): %v", scope.AgentID, id, err)
 	return &toolspec.Result{ForLLM: "The operation failed because of an internal error.", IsError: true, Err: err}, nil

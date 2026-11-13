@@ -7,9 +7,13 @@ package classifier
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // The scheduler (design 8): every enabled, valid classifier of an agent
@@ -17,8 +21,8 @@ import (
 // run at a time; a trigger during a run is coalesced into one more run right
 // after it. The table follows the definition files: a new, changed or
 // removed file is picked up at the next tick (mtime and size, as the cron
-// store does), an invalid file is logged once per change and never run or
-// deleted. The scopes are re-read every scopeRefresh and on Reload; an agent
+// store does), an invalid file is logged and reported to its agent once
+// per change (reportInvalid) and never run or deleted. The scopes are re-read every scopeRefresh and on Reload; an agent
 // that left them has its runs stopped (definitions are kept).
 
 const (
@@ -218,6 +222,10 @@ func (s *Service) scanBase(ctx context.Context, base string, scopes []Scope, see
 		s.mu.Unlock()
 		if fi.def == nil {
 			s.host.Logger.Warnf("classifier file %s (agent %s) is not run: %s", path, scope.AgentID, fi.invalid)
+			// An unreadable owner is the folder's agent when it is the only one.
+			if sameAgent(fi.owner, scope.AgentID) || (fi.owner == "" && len(scopes) == 1) {
+				s.reportInvalid(ctx, scope, path, fi)
+			}
 			continue
 		}
 		if !known {
@@ -226,6 +234,49 @@ func (s *Service) scanBase(ctx context.Context, base string, scopes []Scope, see
 			}
 		}
 	}
+}
+
+// reportInvalid tells the owning agent that a definition file it read when
+// the file changed (a hand edit, or a change of the install's maximums
+// found at the next change) is not valid and is not run, as a failed run
+// is told: a run_failed activity row and the notices, counted and muted
+// alike (afterRun).
+func (s *Service) reportInvalid(ctx context.Context, scope Scope, path string, fi fileInfo) {
+	def := lenientDefinition(fi.raw, filepathStem(path))
+	st, err := s.state(ctx, scope.BaseDirectory)
+	if err != nil {
+		if ctx.Err() == nil && !errors.Is(err, ErrClosed) {
+			s.host.Logger.Errorf("classifier=%s agent=%s: open state: %v", def.ID, scope.AgentID, err)
+		}
+		return
+	}
+	rec := RunRecord{
+		Status: RunError, Error: s.host.redact(lowerFirst(fi.invalid)), DryRun: def.DryRun,
+		cause: cause{kind: causeInvalidFile},
+	}
+	s.afterRun(ctx, scope, def, st, rec, false)
+}
+
+// lenientDefinition is what can be read of a definition file that is not
+// valid, for its notices (report, dry_run); its id is the file's.
+func lenientDefinition(raw []byte, id string) *Definition {
+	var def Definition
+	if err := json.Unmarshal(raw, &def); err != nil {
+		def = Definition{} // not JSON: every setting has its default
+	}
+	def.ID = id
+	return &def
+}
+
+// lowerFirst lowers the first letter of a sentence starting with a
+// capitalised word ("The definition ..."), for use after a colon.
+func lowerFirst(s string) string {
+	r, n := utf8.DecodeRuneInString(s)
+	next, _ := utf8.DecodeRuneInString(s[n:])
+	if unicode.IsUpper(r) && unicode.IsLower(next) {
+		return string(unicode.ToLower(r)) + s[n:]
+	}
+	return s
 }
 
 func filepathStem(path string) string {

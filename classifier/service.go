@@ -38,6 +38,9 @@ type Service struct {
 	entries map[string]*entry        // the scheduler's table, by entry key
 	closing bool                     // Close has begun: no run or rerun starts
 	closed  bool                     // the state databases are closed
+	// stateMuted is, by entry key, until when a classifier whose state.db
+	// cannot be opened is not reported again (stateNotice).
+	stateMuted map[string]time.Time
 
 	fileMu sync.Mutex // serialises definition writes
 
@@ -54,11 +57,12 @@ type Service struct {
 // New returns a service over host. Nothing runs until Start.
 func New(host Host) *Service {
 	return &Service{
-		host:    host,
-		states:  map[string]*stateDB{},
-		locks:   map[string]chan struct{}{},
-		entries: map[string]*entry{},
-		kick:    make(chan struct{}, 1),
+		host:       host,
+		states:     map[string]*stateDB{},
+		locks:      map[string]chan struct{}{},
+		entries:    map[string]*entry{},
+		stateMuted: map[string]time.Time{},
+		kick:       make(chan struct{}, 1),
 	}
 }
 
@@ -99,7 +103,8 @@ func definitionPath(base, id string) string {
 	return filepath.Join(base, NormalizeID(id)+classifierfs.DefinitionExt)
 }
 
-// state returns base's state database, opening it on first use.
+// state returns base's state database, opening it on first use. An error
+// opening it matches ErrStateUnavailable; a closed service is ErrClosed.
 func (s *Service) state(ctx context.Context, base string) (*stateDB, error) {
 	base = filepath.Clean(base)
 	s.mu.Lock()
@@ -113,7 +118,7 @@ func (s *Service) state(ctx context.Context, base string) (*stateDB, error) {
 	dir, file := s.host.modes(base)
 	st, err := openState(ctx, base, dir, file)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", ErrStateUnavailable, err)
 	}
 	s.states[base] = st
 	return st, nil
@@ -283,9 +288,24 @@ func (s *Service) check(ctx context.Context, scope Scope, def *Definition, live 
 		return err
 	}
 	if _, err := listItems(ctx, def, scope.AgentID, s.host.Tools); err != nil {
-		return &ValidationError{Issues: []string{err.Error() + "."}}
+		return s.sourceRefusal(err)
 	}
 	return nil
+}
+
+// sourceRefusal is a tool's refusal of a source that failed (its tool's
+// error, a result that is not JSON or holds no list), with the real reason
+// so the agent can act on it.
+func (s *Service) sourceRefusal(err error) error {
+	return &ValidationError{Issues: []string{withPeriod(s.host.redact(err.Error()))}}
+}
+
+// withPeriod is text ending with a period.
+func withPeriod(text string) string {
+	if strings.HasSuffix(text, ".") {
+		return text
+	}
+	return text + "."
 }
 
 // Validate checks a definition without saving it; live also calls its
@@ -536,7 +556,7 @@ func (s *Service) pickItem(ctx context.Context, scope Scope, def *Definition, it
 	}
 	items, err := listItems(ctx, def, scope.AgentID, s.host.Tools)
 	if err != nil {
-		return listedItem{}, err
+		return listedItem{}, s.sourceRefusal(err)
 	}
 	if len(items) == 0 {
 		return listedItem{}, ErrNoItems
@@ -563,8 +583,7 @@ type TestResult struct {
 // instructionsRefusal is a tool's refusal of Markdown instructions that
 // could not be loaded: loadInstructions' sentence.
 func instructionsRefusal(err error) error {
-	msg := err.Error()
-	return &ValidationError{Issues: []string{strings.ToUpper(msg[:1]) + msg[1:] + "."}}
+	return &ValidationError{Issues: []string{withPeriod(err.Error())}}
 }
 
 // Test classifies one item (itemID, or the first the source lists) with the
@@ -656,6 +675,37 @@ func Inspect(ctx context.Context, base string, c Ceilings) ([]Summary, error) {
 		out = append(out, sum)
 	}
 	return out, nil
+}
+
+// CheckState reports, for the configuration report, whether base's
+// state.db can be opened as a run opens it: nil when it does not exist yet
+// (the first run creates it), else an error when it is not a regular file,
+// cannot be opened for writing, or cannot be read.
+func CheckState(ctx context.Context, base string) error {
+	path := filepath.Join(base, classifierfs.StateFile)
+	info, err := os.Stat(path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil
+	case err != nil:
+		return err
+	case !info.Mode().IsRegular():
+		return fmt.Errorf("%s is not a file", path)
+	}
+	f, err := os.OpenFile(path, os.O_RDWR, 0) // #nosec G304 -- <base>/state.db
+	if err != nil {
+		return err
+	}
+	if err = f.Close(); err != nil {
+		return err
+	}
+	db, err := sql.Open("sqlite", stateDSN(path, true))
+	if err != nil {
+		return err
+	}
+	defer closeQuietly(db)
+	var n int
+	return db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master`).Scan(&n)
 }
 
 // lastRun reads a classifier's last run; a read failure is logged and
