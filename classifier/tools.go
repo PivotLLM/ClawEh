@@ -173,6 +173,8 @@ func (t *toolSuite) fail(scope Scope, id string, err error) (*toolspec.Result, e
 	case errors.Is(err, ErrStateUnavailable):
 		t.svc.host.Logger.Errorf("classifier tool (agent %s, classifier %s): %v", scope.AgentID, id, err)
 		return errResult("The classifier's state could not be opened. Only the operator can fix this; tell the user."), nil
+	case errors.Is(err, ErrActionPending):
+		return errResult("The classification was saved, but the classifier stopped before running its action; the next run will run it."), nil
 	case errors.Is(err, ErrInterrupted):
 		return errResult("The classifier stopped before the item was handled; nothing was recorded. Try again."), nil
 	case errors.Is(err, ErrClosed):

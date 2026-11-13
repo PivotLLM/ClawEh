@@ -490,7 +490,7 @@ production instance directly; test against a dev instance.
   shares, ties by roleRank>", the last item's full error in the row's
   `detail`; a cancelled context, i.e. shutdown, is `RunStopped` "the service
   stopped", even after a streak, and an item it interrupted is not stored or
-  counted; a test/rerun cut short is `ErrInterrupted`) is a failed run
+  counted; a test/rerun cut short is `ErrInterrupted`, or `ErrActionPending` when a rerun stopped in its action after storing the classification; an item whose classification cannot be stored fails with the operator cause `errStateWrite`) is a failed run
   (`trackFailure`, logged at warn), and a definition file that turns
   invalid is reported through the same path once per content
   (`reportInvalid`, sha256 in state.db `invalid_reports`, dropped when the
@@ -527,7 +527,7 @@ production instance directly; test against a dev instance.
   one chat line naming no classifier; Check Up marks it
   (`classifier.CheckState`: the file, or with none whether the folder can
   take it; else `classifier.LastStateError`, what the service last met,
-  kept per folder until it opens). Activity rows also carry
+  kept per folder until it opens or nothing met it for `ErrorMute`; only a classifier with `report.errors` on reports it and starts the mute). Activity rows also carry
   `replies` (both model replies of an unclassified item), `missing_fields`,
   `shortened_fields`, `action_args` of a failed action, and a failed
   fetch's list-entry fields; a fetch where no field resolved fails the item.

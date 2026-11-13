@@ -544,7 +544,7 @@ func TestStateCannotBeOpened(t *testing.T) {
 	if len(alerts) != 1 || alerts[0].agent != "alice" || alerts[0].classifier != "inbox-priority" || alerts[0].path != statePath || alerts[0].err == nil {
 		t.Errorf("alerts = %+v", alerts)
 	}
-	if p, ok := LastStateError(e.scope.BaseDirectory); !ok || !strings.Contains(p.Error, "state.db") || !p.At.Equal(testStart) {
+	if p, ok := LastStateError(e.scope.BaseDirectory, e.clock.Now()); !ok || !strings.Contains(p.Error, "state.db") || !p.At.Equal(testStart) {
 		t.Errorf("LastStateError = %+v, %v", p, ok)
 	}
 	run()
@@ -579,7 +579,7 @@ func TestStateCannotBeOpened(t *testing.T) {
 	if rec := run(); rec.Status != RunOK {
 		t.Errorf("run after the fix = %+v", rec)
 	}
-	if p, ok := LastStateError(e.scope.BaseDirectory); ok {
+	if p, ok := LastStateError(e.scope.BaseDirectory, e.clock.Now()); ok {
 		t.Errorf("LastStateError after it opened = %+v", p)
 	}
 }

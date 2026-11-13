@@ -42,6 +42,9 @@ type decision struct {
 	system      string
 	cause       cause
 	interrupted bool
+	// actionPending: interrupted during the action, after the
+	// classification was stored, so the next run runs the action.
+	actionPending bool
 }
 
 // decide fetches one item and classifies it. reuse, when it holds a
@@ -268,7 +271,7 @@ func (s *Service) handleItem(ctx context.Context, scope Scope, def *Definition, 
 		if reuse == nil || reuse.category != d.Category || mode == modeRerun {
 			if err := st.setClassified(wctx, cls, item.id, d.Category, d.Reason, d.Model, now); err != nil {
 				storeErr(err)
-				d.Outcome, d.Error = OutcomeFailed, "the classification could not be recorded; the action was not run"
+				d = d.failed(errStateWrite)
 				break
 			}
 		}
@@ -276,7 +279,7 @@ func (s *Service) handleItem(ctx context.Context, scope Scope, def *Definition, 
 		if d.Outcome == OutcomeFailed && ctx.Err() != nil {
 			// The service stopped during the action: the item stays
 			// classified with its action pending, so the next run runs it.
-			d.interrupted = true
+			d.interrupted, d.actionPending = true, true
 			return d
 		}
 		if d.Outcome == OutcomeFailed {
@@ -406,9 +409,9 @@ func (s *Service) runClassifier(ctx context.Context, scope Scope, def *Definitio
 		consecutive int
 		fatal       error
 		stoppedBy   string
-		failedOut   bool    // stopped by stop_after_failures: a failed run
-		lastCause   cause   // the run's cause when failedOut
-		streak      []cause // the causes of the failures in a row
+		failedOut   bool            // stopped by stop_after_failures: a failed run
+		lastCause   cause           // the run's cause when failedOut
+		streak      []streakFailure // the failures in a row
 	)
 	slots := make(chan struct{}, def.parallel())
 	stopping := func() bool {
@@ -458,7 +461,11 @@ func (s *Service) runClassifier(ctx context.Context, scope Scope, def *Definitio
 			case OutcomeFailed:
 				rec.Failed++
 				consecutive++
-				streak = append(streak, d.cause)
+				c := d.cause
+				if c.summary == "" {
+					c.summary = d.Error // never an empty cause in the run's error
+				}
+				streak = append(streak, streakFailure{cause: c, itemError: d.Error})
 			case OutcomeUnclassified:
 				rec.Unclassified++
 				consecutive, streak = 0, nil
@@ -475,11 +482,12 @@ func (s *Service) runClassifier(ctx context.Context, scope Scope, def *Definitio
 			if consecutive >= limit && stoppedBy == "" {
 				// The run's error names the cause the streak's failures
 				// share most (not any item's text), so the same failure
-				// reads the same every run and folds; the last item's full
-				// error is the detail.
-				lastCause = commonCause(streak)
+				// reads the same every run and folds; the full error of the
+				// latest item with that cause is the detail.
+				var detail string
+				lastCause, detail = streakCause(streak)
 				stoppedBy = "stopped after " + failurePlural(consecutive) + ": " + lastCause.summary
-				lastCause.summary, lastCause.detail = stoppedBy, d.Error
+				lastCause.summary, lastCause.detail = stoppedBy, detail
 				failedOut = true
 			}
 		}(item)
@@ -525,15 +533,18 @@ const (
 // stateFailed ends a run whose folder's state.db cannot be opened. Per
 // folder (so per agent), the first failure since it last opened and again
 // once ErrorMute has passed is logged at error, raises the operator alert
-// and is reported once to the agent and its chat (report.errors of the
-// classifier that met it decides); the failures between are logged at
-// debug. The mute is kept in memory, since the count of error notices
+// and is reported once to the agent and its chat; the failures between are
+// logged at debug. Only a classifier with report.errors on reports it and
+// starts the mute: one with it off only logs at debug, leaving the others
+// to report it. The mute is kept in memory, since the count of error notices
 // lives in that state.db: a restart can report it once more.
 func (s *Service) stateFailed(ctx context.Context, scope Scope, def *Definition, rec RunRecord, err error) RunRecord {
 	now := s.host.clock().Now().UTC()
 	rec.Status, rec.Error, rec.EndedAt = RunError, ErrStateUnavailable.Error(), now
 	rec.cause = cause{kind: causeOperator, summary: rec.Error}
-	if !s.stateNotice(scope.BaseDirectory, now) {
+	// A classifier whose errors are not reported neither reports this nor
+	// starts the folder's mute, so it cannot silence the others.
+	if !def.reportErrors() || !s.stateNotice(scope.BaseDirectory, now) {
 		s.host.Logger.Debugf("classifier=%s agent=%s: open state: %v", def.ID, scope.AgentID, err)
 		return rec
 	}
@@ -543,9 +554,6 @@ func (s *Service) stateFailed(ctx context.Context, scope Scope, def *Definition,
 	}
 	nctx := withClassifier(ctx, NormalizeID(def.ID))
 	s.host.Notifier.StateFailed(nctx, scope.AgentID, filepath.Join(scope.BaseDirectory, classifierfs.StateFile), err)
-	if !def.reportErrors() {
-		return rec
-	}
 	if def.summaryMode() != SummaryNever {
 		if sErr := s.host.Notifier.Summary(nctx, scope.AgentID, stateSummaryText); sErr != nil {
 			s.host.Logger.Warnf("classifier=%s agent=%s: summary not delivered: %v", def.ID, scope.AgentID, sErr)

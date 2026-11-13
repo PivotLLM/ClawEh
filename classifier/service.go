@@ -158,10 +158,18 @@ func recordStateProblem(base string, err error, at time.Time) {
 
 // LastStateError is the last error this process met opening base's
 // state.db, while it has not opened since; ok is false when there is none.
-func LastStateError(base string) (p StateProblem, ok bool) {
+// Every run that fails to open it records it again, so a problem older
+// than ErrorMute at now is one nothing has met since (the classifiers were
+// deleted or turned off): it is dropped rather than shown stale.
+func LastStateError(base string, now time.Time) (p StateProblem, ok bool) {
 	stateProblems.Lock()
 	defer stateProblems.Unlock()
-	p, ok = stateProblems.m[filepath.Clean(base)]
+	base = filepath.Clean(base)
+	p, ok = stateProblems.m[base]
+	if ok && now.Sub(p.At) > ErrorMute {
+		delete(stateProblems.m, base)
+		return StateProblem{}, false
+	}
 	return p, ok
 }
 
@@ -350,6 +358,10 @@ func (s *Service) sourceRefusal(err error) error {
 // ErrInterrupted: a test or rerun was cut short (its call or the service
 // stopped) before the item was handled.
 var ErrInterrupted = errors.New("the classifier stopped before the item was handled")
+
+// ErrActionPending: a rerun was cut short during its action, after the
+// classification was stored; the next run runs the action.
+var ErrActionPending = errors.New("the classifier stopped before running the action")
 
 // withPeriod is text ending with a period.
 func withPeriod(text string) string {
@@ -703,7 +715,10 @@ func (s *Service) Rerun(ctx context.Context, scope Scope, id, itemID string) (De
 		return Decision{}, err
 	}
 	d := s.handleItem(ctx, scope, def, in, st, item, nil, modeRerun)
-	if d.interrupted {
+	switch {
+	case d.actionPending:
+		return Decision{}, ErrActionPending // the classification is stored
+	case d.interrupted:
 		return Decision{}, ErrInterrupted // nothing was recorded
 	}
 	return d.Decision, nil

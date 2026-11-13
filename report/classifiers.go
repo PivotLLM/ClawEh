@@ -6,6 +6,7 @@ package report
 import (
 	"context"
 	"path/filepath"
+	"time"
 
 	"github.com/PivotLLM/ClawEh/classifier"
 	"github.com/PivotLLM/ClawEh/classifier/classifierfs"
@@ -140,7 +141,7 @@ func classifierStateProblem(ctx context.Context, dir string) string {
 	if err := classifier.CheckState(ctx, dir); err != nil {
 		return err.Error()
 	}
-	if p, ok := classifier.LastStateError(dir); ok {
+	if p, ok := classifier.LastStateError(dir, time.Now()); ok {
 		return p.Error + " (at " + p.At.Format(timeFormat) + ")"
 	}
 	return ""

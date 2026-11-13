@@ -8,6 +8,7 @@ package classifier
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -215,6 +216,18 @@ func causeOf(err error) cause {
 	return c
 }
 
+// stateError is a failure of ClawEh's own state: only the operator can fix
+// it (it matches ErrStateUnavailable, so its cause is causeOperator).
+type stateError string
+
+func (e stateError) Error() string        { return string(e) }
+func (e stateError) Is(target error) bool { return target == ErrStateUnavailable }
+
+// errStateWrite fails an item whose classification could not be stored:
+// its action is not run, so a later run never repeats an action it did not
+// know had run.
+const errStateWrite = stateError("the classifier's state could not be written; the action was not run")
+
 // failureAdvice follows the failure in the agent's notice when the
 // definition or its instructions files are to fix.
 const failureAdvice = "Check and fix the classifier's definition or its instructions files; classifier_test shows the result."
@@ -272,6 +285,29 @@ func commonCause(causes []cause) cause {
 		}
 	}
 	return best
+}
+
+// streakFailure is one failed item of a streak: its cause and full error.
+type streakFailure struct {
+	cause     cause
+	itemError string
+}
+
+// streakCause is the streak's common cause (commonCause) and the full
+// error of the latest item with that cause, so the detail always belongs
+// to the cause it is shown under.
+func streakCause(streak []streakFailure) (cause, string) {
+	causes := make([]cause, len(streak))
+	for i, f := range streak {
+		causes[i] = f.cause
+	}
+	c := commonCause(causes)
+	for _, f := range slices.Backward(streak) {
+		if f.cause.summary == c.summary {
+			return c, f.itemError
+		}
+	}
+	return c, ""
 }
 
 // failurePlural is "1 consecutive item failure" or "N consecutive item
