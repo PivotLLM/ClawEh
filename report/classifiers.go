@@ -68,11 +68,14 @@ func classifiersDir(cfg *config.Config, a *config.AgentConfig) string {
 // classifiersTable is one row per definition file in the agent's
 // classifiers folder, or ok=false when the switch is off and the folder has
 // none. Invalid files, files owned by another agent and runs that ended in
-// an error are highlighted. "Error notices" says whether failed runs are
-// reported: on, off (report.errors false) or muted until a time.
+// an error are highlighted, and so is a first row for a state.db that
+// cannot be opened (none of the agent's classifiers runs). "Error notices"
+// says whether failed runs are reported: on, off (report.errors false) or
+// muted until a time.
 func classifiersTable(ctx context.Context, cfg *config.Config, a *config.AgentConfig) (Table, bool) {
 	t := Table{Caption: "Classifiers", Columns: []string{"Classifier", "Enabled", "Dry run", "Model", "Last run", "Last run counts", "Last error", "Error notices"}}
-	sums, err := classifier.Inspect(ctx, classifiersDir(cfg, a), classifierCeilings(cfg))
+	dir := classifiersDir(cfg, a)
+	sums, err := classifier.Inspect(ctx, dir, classifierCeilings(cfg))
 	if err != nil {
 		t.Highlight = append(t.Highlight, 0)
 		t.Rows = append(t.Rows, row(none, "", "", "", "", "", "unreadable: "+err.Error(), ""))
@@ -81,7 +84,11 @@ func classifiersTable(ctx context.Context, cfg *config.Config, a *config.AgentCo
 	if len(sums) == 0 && !a.ClassifiersEnabled() {
 		return t, false
 	}
-	if len(sums) == 0 {
+	if stateErr := classifier.CheckState(ctx, dir); stateErr != nil {
+		t.Highlight = append(t.Highlight, len(t.Rows))
+		t.Rows = append(t.Rows, row(classifierfs.StateFile, "not run", "", "", "", "", "Cannot be opened: "+stateErr.Error(), ""))
+	}
+	if len(sums) == 0 && len(t.Rows) == 0 {
 		t.Rows = append(t.Rows, row(none, "", "", "", "", "", "", ""))
 		return t, true
 	}
@@ -151,7 +158,8 @@ func truncateText(s string, n int) string {
 // classifierAssessment is the assessment rows for classifiers: per enabled
 // agent with the switch on (a person's agent excluded), a missing or
 // unusable classifier model (noting when the Classification list is empty at
-// all) and every definition file that is not run because it is invalid.
+// all), a state.db that cannot be opened, and every definition file that
+// is not run because it is invalid.
 func classifierAssessment(ctx context.Context, cfg *config.Config) []assessRow {
 	var rows []assessRow
 	for _, a := range enabledAgents(cfg) {
@@ -170,7 +178,11 @@ func classifierAssessment(ctx context.Context, cfg *config.Config) []assessRow {
 		case !cfg.ClassifierModelUsable(model):
 			rows = append(rows, assessRow{true, "Classifier model (" + name + ")", model + " is not in Classification."})
 		}
-		sums, err := classifier.Inspect(ctx, classifiersDir(cfg, a), classifierCeilings(cfg))
+		dir := classifiersDir(cfg, a)
+		if err := classifier.CheckState(ctx, dir); err != nil {
+			rows = append(rows, assessRow{true, "Classifier state (" + name + ")", "Cannot be opened, so no classifier of this agent runs: " + err.Error()})
+		}
+		sums, err := classifier.Inspect(ctx, dir, classifierCeilings(cfg))
 		if err != nil {
 			continue
 		}

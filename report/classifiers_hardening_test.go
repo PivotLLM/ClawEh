@@ -135,6 +135,34 @@ func TestCollectAgents_ClassifiersUnreadable(t *testing.T) {
 	}
 }
 
+// A state.db that cannot be opened is a marked first row of the Classifiers
+// table and an assessment row; none is shown while it opens (or does not
+// exist yet).
+func TestCollectAgents_ClassifierStateUnavailable(t *testing.T) {
+	cfg, env := fixtureConfig(t)
+	bob := &cfg.Agents.List[1]
+	bob.Classifiers = &config.AgentClassifiersConfig{Enabled: true, Model: "GPT"}
+	writeClassifier(t, cfg, "bob", "inbox", classifierDef("inbox", "bob"))
+	tb := findTable(t, agentSub(t, collectAgents(t.Context(), cfg, env), "bob"), "Classifiers")
+	for _, r := range tb.Rows {
+		if r[0] == classifierfs.StateFile {
+			t.Fatalf("a state row with no state.db: %v", r)
+		}
+	}
+	if err := os.Mkdir(filepath.Join(classifiersDir(cfg, bob), classifierfs.StateFile), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	tb = findTable(t, agentSub(t, collectAgents(t.Context(), cfg, env), "bob"), "Classifiers")
+	if len(tb.Rows) != 2 || tb.Rows[0][0] != classifierfs.StateFile || tb.Rows[0][1] != "not run" ||
+		!strings.HasPrefix(tb.Rows[0][6], "Cannot be opened: ") || !isHighlighted(tb, 0) {
+		t.Errorf("rows = %v highlight=%v, want a marked state.db row first", tb.Rows, tb.Highlight)
+	}
+	r := assessmentRow(t, collectAssessment(t.Context(), cfg, env), "Classifier state (Bob)")
+	if r[0] != actionMark || !strings.HasPrefix(r[2], "Cannot be opened, so no classifier of this agent runs: ") {
+		t.Errorf("assessment row = %v", r)
+	}
+}
+
 // The switch reads on, off, or on but ignored for an agent that represents a
 // person.
 func TestClassifiersSwitch(t *testing.T) {
