@@ -25,12 +25,18 @@
 // returns nothing, and every sendMessage is logged on stdout as one
 // "telegram: chat=<id> text=..." line.
 //
+// It is also an external MCP server (streamable HTTP at /mcp) with a
+// mailbox: "list" returns {"items":[{"id":"x1"}]} and "read" the message
+// with that id, whose body says INVOICE. ClawEh marks such results as
+// untrusted content for the model; a classifier must read them as JSON.
+//
 // With -admin-credentials <CLAW_HOME> it instead writes the WebUI admin
 // account from CLAW_ADMIN_USER and CLAW_ADMIN_PASSWORD (what `claw install`
 // does without a terminal) and exits, so the test can log in to the API.
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -43,8 +49,28 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
+
 	"github.com/PivotLLM/ClawEh/internal/admin"
 )
+
+// mailServer is the MCP mailbox: list and read, each answering JSON text.
+func mailServer() *server.MCPServer {
+	s := server.NewMCPServer("mail", "0.0.1")
+	s.AddTool(mcp.NewTool("list", mcp.WithDescription("List the messages")),
+		func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			log.Printf("mcp: list")
+			return mcp.NewToolResultText(`{"items":[{"id":"x1"}]}`), nil
+		})
+	s.AddTool(mcp.NewTool("read", mcp.WithDescription("Read one message"), mcp.WithString("id", mcp.Required())),
+		func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			id := req.GetString("id", "")
+			log.Printf("mcp: read id=%s", id)
+			return mcp.NewToolResultText(fmt.Sprintf(`{"subject":"Bill %s","body":"INVOICE for %s"}`, id, id)), nil
+		})
+	return s
+}
 
 func main() {
 	listen := flag.String("listen", "127.0.0.1:0", "address to listen on")
@@ -61,6 +87,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/chat/completions", handleChat)
+	mux.Handle("/mcp", server.NewStreamableHTTPServer(mailServer()))
 	mux.HandleFunc("/", handleTelegram) // /bot<token>/<method>
 	ln, err := net.Listen("tcp", *listen)
 	if err != nil {

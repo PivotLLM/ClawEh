@@ -33,6 +33,12 @@
 #     turns reports back on; and a folder outside files/ is refused;
 #   - a hand-edited invalid definition is never run, is logged, and is
 #     reported by the Check Up assessment API;
+#   - tools of an external MCP server (the stub's /mcp), whose results are
+#     marked untrusted for the model, work as source and fetch;
+#   - classifier_test on a source that fails gives the tool's own error;
+#   - a run stopped by stop_after_failures is a failed run: a run_failed row
+#     quoting the last item's error, logged at warn, and a notice to Alice
+#     whose advice points at the tool;
 #   - the classifier folder, the definition files and state.db have exactly
 #     the agents area's modes.
 #
@@ -170,6 +176,7 @@ cat >"$HOME_DIR/config.json" <<EOF
     "list": [
       {"id": "alice", "name": "Alice", "default": true, "models": ["stub"],
        "tools": ["shell_exec", "file_read_bytes", "file_move"],
+       "mcp_tools": ["mail"],
        "classifiers": {"enabled": true, "model": "stub"}}
     ]
   },
@@ -183,6 +190,7 @@ cat >"$HOME_DIR/config.json" <<EOF
     ]
   },
   "classifiers": {"limits": {"min_every_seconds": 1}},
+  "tools": {"mcp": {"servers": {"mail": {"type": "http", "url": "http://127.0.0.1:$STUB_PORT/mcp", "enabled": true}}}},
   "task_models": {"classify": [{"model": "stub"}]},
   "security": {"permissions": {"agents": {"dir_mode": "0750", "file_mode": "0640"}}},
   "gateway": {"host": "127.0.0.1", "port": $GW_PORT, "tls": {"mode": "off"}},
@@ -352,8 +360,8 @@ OUT="$(mcp classifier_create "{\"definition\":$MISSDEF}")"
 if echo "$OUT" | grep -qF "Classifier md-missing created."; then pass "a rules folder that does not exist yet is accepted"; else fail "classifier_create (md-missing): $OUT"; fi
 if wait_for 30 run_done md-missing; then
     RUN="$(sql "SELECT status, new_items, error FROM runs WHERE classifier='md-missing'")"
-    if [ "$RUN" = "error|0|classifier md-missing: classify.instructions_dir files/classifiers/none can't be read: it does not exist" ]; then
-        pass "a missing rules folder ends the run in error, naming the classifier and the path"
+    if [ "$RUN" = "error|0|classify.instructions_dir files/classifiers/none can't be read: it does not exist" ]; then
+        pass "a missing rules folder ends the run in error, naming the path"
     else
         fail "md-missing run: $RUN"
     fi
@@ -446,6 +454,67 @@ if echo "$ASSESS" | grep -qF 'Classifier (Alice: broken)' && echo "$ASSESS" | gr
 else
     fail "Check Up assessment (login $LOGIN_CODE) does not name the invalid definition: $ASSESS"
 fi
+
+# ---- 6b. An external MCP server's tools work as source and fetch. ----
+# Their results are marked as untrusted content for the model; the
+# classifier reads the JSON inside the mark. The tools appear once ClawEh
+# has connected to the stub's MCP server.
+EXT='{"id":"ext","enabled":true,"dry_run":true,"trigger":{"every_seconds":2},"source":{"tool":"mcp_mail_list","items":"items","id":"id"},"fetch":{"tool":"mcp_mail_read","args":{"id":"{{item.id}}"},"fields":{"subject":"subject","body":"body"}},"classify":'"$CLASSIFY"',"report":{"summary":"never"}}'
+ext_valid() { mcp classifier_validate "{\"definition\":$EXT}" | grep -qF "The definition is valid."; }
+if wait_for 30 ext_valid; then
+    OUT="$(mcp classifier_create "{\"definition\":$EXT}")"
+    if echo "$OUT" | grep -qF "Classifier ext created."; then pass "an MCP server's tool is accepted as the source"; else fail "classifier_create (ext): $OUT"; fi
+else
+    fail "an MCP source did not validate within 30s: $(mcp classifier_validate "{\"definition\":$EXT}")"
+fi
+ext_decided() { [ "$(sql "SELECT item_id, category FROM dry_run WHERE classifier='ext'")" = "x1|invoice" ]; }
+if wait_for 30 ext_decided; then
+    pass "an item listed and read through MCP tools was classified from its fetched fields"
+else
+    fail "ext decision: $(sql "SELECT item_id, category FROM dry_run WHERE classifier='ext'"); activity: $(sql "SELECT outcome, error FROM activity WHERE classifier='ext'")"
+fi
+
+# ---- 6c. classifier_test gives the source's own error. ----
+printf '{"items":[%s]}\n' "$(item a inbox)" >"$WS/files/gone-index.json"
+GONE="{\"id\":\"gone\",\"enabled\":false,\"trigger\":{\"every_seconds\":60},\"source\":${SOURCE/index.json/gone-index.json},\"classify\":$CLASSIFY}"
+OUT="$(mcp classifier_create "{\"definition\":$GONE}")"
+if ! echo "$OUT" | grep -qF "Classifier gone created."; then fail "classifier_create (gone): $OUT"; fi
+rm -f "$WS/files/gone-index.json"
+OUT="$(mcp classifier_test '{"id":"gone"}')"
+if echo "$OUT" | grep -qF "source shell_exec failed:" && echo "$OUT" | grep -qF "files/gone-index.json: No such file or directory" &&
+    ! echo "$OUT" | grep -qF "internal error"; then
+    pass "classifier_test on a failing source gives the tool's own error"
+else
+    fail "classifier_test (gone): $OUT"
+fi
+
+# ---- 6d. stop_after_failures items failing in a row fail the run. ----
+# Its one item's fetch fails every time: the run is a failed run quoting the
+# last item's error, logged at warn, written as run_failed and reported.
+printf '{"items":[%s]}\n' "$(item z missing)" >"$WS/files/fail-index.json"
+FAILDEF="{\"id\":\"fetchfail\",\"enabled\":true,\"trigger\":{\"every_seconds\":2},\"source\":${SOURCE/index.json/fail-index.json},\"fetch\":$FETCH,\"classify\":$CLASSIFY,\"limits\":{\"stop_after_failures\":1}}"
+OUT="$(mcp classifier_create "{\"definition\":$FAILDEF}")"
+if ! echo "$OUT" | grep -qF "Classifier fetchfail created."; then fail "classifier_create (fetchfail): $OUT"; fi
+fetchfail_row() { [ "$(sql "SELECT COUNT(*) FROM activity WHERE classifier='fetchfail' AND outcome='run_failed' AND instr(error, 'stopped after 1 consecutive failures; the last: fetch shell_exec failed:') = 1")" = 1 ]; }
+if wait_for 30 fetchfail_row; then
+    pass "a run stopped by stop_after_failures is a run_failed row quoting the last item's error"
+else
+    fail "fetchfail activity: $(sql "SELECT outcome, error FROM activity WHERE classifier='fetchfail'" | tr '\n' ' ')"
+fi
+fetchfail_reported() { grep -q 'classifier=fetchfail agent=alice: run failure reported to the agent' "$CLAW_LOG"; }
+if wait_for 15 fetchfail_reported && grep -q 'WRN classifier=fetchfail agent=alice: run error:' "$CLAW_LOG"; then
+    pass "the failed run is logged at warn and reported to Alice"
+else
+    fail "fetchfail not logged at warn or not reported: $(grep 'classifier=fetchfail' "$CLAW_LOG" | tail -n 3)"
+fi
+fetchfail_notice() { grep -rqF "[System: classifier] Classifier fetchfail: the run failed: stopped after 1 consecutive failures; the last: fetch shell_exec failed:" "$WS/sessions"; }
+if wait_for 15 fetchfail_notice && grep -rqF "This looks like a problem with shell_exec itself (credentials or an outage); check it before changing the classifier." "$WS/sessions"; then
+    pass "Alice's notice quotes the item's error and points at the tool"
+else
+    fail "the fetchfail notice is not in Alice's conversation"
+fi
+OUT="$(mcp classifier_update '{"id":"fetchfail","changes":{"enabled":false}}')"
+if ! echo "$OUT" | grep -qF "Classifier fetchfail updated."; then fail "classifier_update (disable fetchfail): $OUT"; fi
 
 # ---- 7. What the classifier store created has the agents area's modes. ----
 check_mode() { # check_mode <path> <mode>
