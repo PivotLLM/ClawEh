@@ -47,7 +47,7 @@ Each classifier is one file, `classifiers/<id>.json` in the agent's workspace, b
 
 You can edit a definition file by hand. ClawEh reads it again when it changes and checks it the same way. A file that fails the checks is not run, is logged once, is reported to the agent like a [failed run](#failed-runs), and is marked on Check Up; it is never deleted.
 
-When `classifiers/state.db` can't be opened, none of the agent's classifiers runs. ClawEh logs an error, raises an [alert](../admin/alerts.md), tells the agent (once a day while it lasts) and marks it on Check Up.
+When `classifiers/state.db` can't be opened, none of the agent's classifiers runs. ClawEh logs an error, raises an [alert](../admin/alerts.md), tells the agent and your chat ("Classifiers can't run: their state could not be opened."), once a day while it lasts (a restart can repeat it once), and marks it on Check Up, with the error the service last met.
 
 ## The definition
 
@@ -168,14 +168,14 @@ A placeholder must be the whole value: `"{{item.id}}"`, never `"id={{item.id}}"`
 
 ### Failed runs
 
-A run fails when it can't start or can't go on: its Markdown files are missing, unreadable or too long, the source tool fails, a tool it names is no longer the agent's, the agent has no usable classifier model, or `stop_after_failures` items failed in a row (the error quotes the last one). The items wait for the next run. A definition file that is no longer valid is reported the same way ("Classifier inbox is not run: ...").
+A run fails when it can't start or can't go on: its Markdown files are missing, unreadable or too long, the source tool fails, a tool it names is no longer the agent's, the agent has no usable classifier model, or `stop_after_failures` items failed in a row (the error names the cause they share; the last item's error is kept in the activity log). The items wait for the next run. A definition file that is no longer valid is reported the same way ("Classifier inbox is not run (...)"), once per broken version of the file, even across restarts.
 
 Every failed run is written to the [activity log](#activity-log) and logged as a warning. Errors are cleaned of anything that looks like an API key or password first. Error notices:
 
-- Your chat gets one line, unless `report.summary` is `never`: "Alice: Classifier inbox: the run failed: classify.instructions_dir files/classifiers/inbox/rules can't be read: it does not exist."
-- The agent gets the same text in its conversation, and advice that fits the cause: fix the definition and check it with `classifier_test`; check the tool or model itself (credentials or an outage) before changing the classifier; tell you when a tool it names is gone, or when only you can fix it (the Task models page, the classifier's state). Its answer goes to its default chat (when it has none, the answer stays in the conversation).
+- Your chat gets one line, unless `report.summary` is `never`: "Alice: Classifier inbox: the run failed (source mail_list: the tool failed)." The tool's own message is not in it; the agent and the activity log have it.
+- The agent gets the same sentence in its conversation, then what the tool, provider or item said, marked as external data so the agent does not take it as instructions, and advice that fits the cause: fix the definition and check it with `classifier_test`; check the tool or model itself (credentials or an outage) before changing the classifier; tell you when a tool it names is gone, or when only you can fix it (the Task models page, the classifier's state). Its answer goes to its default chat (when it has none, the answer stays in the conversation).
 - The first and second failed runs in a row are reported. The second adds, in your chat, "Further errors won't be reported for 24 hours." and tells the agent how to report them again (`classifier_update` with `{"report": {"errors": true}}`). Later failures are only logged until those 24 hours are over; the next failure after that is reported again.
-- Any change the agent makes to the classifier with `classifier_update` reports errors again at once. A run that succeeds starts the count again; it does not end the 24 hours. The count and the 24 hours survive a restart.
+- Any change the agent makes to the classifier with `classifier_update` reports errors again at once. A run that succeeds starts the count again; it does not end the 24 hours. A run that was stopped (you turned the classifier off, ClawEh stopped) changes nothing. The count and the 24 hours survive a restart.
 - With `report.errors` set to `false`, failed runs are only logged.
 - Failed items (a fetch, the model or an action failing on one item) are not failed runs: they are in the usual summary, until `stop_after_failures` of them in a row fail the run.
 - A model in cooldown is not a failure to fix: the run stops, its items wait, and only the usual summary is posted.

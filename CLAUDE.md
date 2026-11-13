@@ -466,36 +466,49 @@ production instance directly; test against a dev instance.
   `ToolRegistry.ExecuteUnattended` (session-scoped tools refused, grants
   re-read every call; a missing/refused tool is `classifier.ToolUnavailable`
   (`ErrToolUnavailable`), any other failure carries the reason only, the
-  classifier names the tool with its role (`toolError`: "source mail_list
-  failed: ...", "action for category urgent: tool ... is not available");
+  classifier names the tool with its role (`toolError`: "source mail_list:
+  the tool failed", "action for category urgent: tool ... is not
+  available"; the host strips the registry's `tool "x" ...` prefix);
   an `untrusted.Wrap` result is returned through `untrusted.Unwrap`, so MCP
   and web tools work as source/fetch), errors redacted by `Host.Redact`
-  (`ClassifierHost.Redact` = `redactSecrets`, wired in the gateway) before
-  they are stored, logged, notified or returned, a CLI model through `ProviderDispatcher.GetIsolated` in
+  (`ClassifierHost.Redact` = `redactSecrets`, wired in the gateway; item ids
+  never) before they are stored, logged, notified or returned. **Untrusted
+  text rule:** every failure is a `cause` (`classifier/cause.go`) with a
+  `summary` in ClawEh's words and a `detail` (a tool's or provider's
+  message, a result excerpt); notices and chat lines use the summary only,
+  the detail reaches the agent only through `Host.WrapUntrusted`
+  (`untrusted.Wrap`, wired in the gateway), and the tool results that hold
+  item data (activity, status, list, test, rerun, a source refusal's detail)
+  are wrapped whole. A CLI model runs through `ProviderDispatcher.GetIsolated` in
   a per-call empty folder `internal/temp/classifier-<id>-*` (no bypass flags),
   cooldowns honoured, the summary posted directly to the owner's default chat
   (`CronTarget`, no model turn; `report.summary` `on_problems`/`always`/
   `never`), audit kinds `classifier_write` and `classification`. A run in
   `RunError` (not a model cooldown, which writes nothing and changes no
-  count; `stop_after_failures` reached is `RunError` quoting the last item's
-  error; a cancelled context, i.e. shutdown, is `RunStopped` "the service
-  stopped" and an item it interrupted is not stored or counted) is a failed
-  run (`trackFailure`, logged at warn), and a definition file that turns
-  invalid is reported once per change through the same path
-  (`reportInvalid`, "Classifier X is not run: ..."): an activity row with outcome
+  count; `stop_after_failures` reached is `RunError` "stopped after N
+  consecutive item failure(s): <summary of the cause most of the streak
+  shares, ties by roleRank>", the last item's full error in the row's
+  `detail`; a cancelled context, i.e. shutdown, is `RunStopped` "the service
+  stopped", even after a streak, and an item it interrupted is not stored or
+  counted; a test/rerun cut short is `ErrInterrupted`) is a failed run
+  (`trackFailure`, logged at warn), and a definition file that turns
+  invalid is reported through the same path once per content
+  (`reportInvalid`, sha256 in state.db `invalid_reports`, dropped when the
+  file is valid again; "Classifier X is not run (...)"): an activity row with outcome
   `run_failed`, NULL `item_id`, its error, `count` and `last_at`
   (`addRunFailure` folds the same error into the open row,
-  `run_failures.open_row`, until a run that does not fail, other activity, a
-  different error or dry-run flag; retention by `COALESCE(last_at, at)`;
+  `run_failures.open_row`, while only failed items follow it, until a run
+  that succeeds, other activity, a different error or dry-run flag; a
+  stopped run changes nothing; retention by `COALESCE(last_at, at)`;
   `migrateActivity` rebuilds an older table), and error notices per
   classifier from `run_failures` (`failures`, `muted_until`): the first
   failure notifies, the second notifies with the mute text and sets
   `muted_until` = now + `ErrorMute` (24h, a constant), later ones are silent
   until a failure finds the mute expired (no timer), which starts a new
-  cycle. A run that does not fail resets `failures` (not the mute); a
+  cycle. A run that succeeds resets `failures` (not the mute); a
   successful `Create`/`Update` resets both (`clearFailures`);
   `report.errors` false (`*bool`, default true) never notifies. A notice is
-  the summary "Classifier <id>: the run failed: <error>." (on_problems and
+  the summary "Classifier <id>: the run failed (<cause summary>)." (on_problems and
   always; never posts nothing) plus, on the second, "Further errors won't be
   reported for 24 hours.", and, in every summary mode,
   `Notifier.RunFailed`, a `system` inbound message (sender `classifier`,
@@ -505,12 +518,16 @@ production instance directly; test against a dev instance.
   classifier_test shows the result.", tool/model error "This looks like a
   problem with <tool> itself ...", missing tool, `ErrNoModel` "Only the
   operator can fix this on the Task models page; tell the user.", state,
-  invalid file) and, on the second, the mute
-  sentence with the exact `classifier_update` call. A state.db that cannot
-  be opened (`ErrStateUnavailable`) is logged at error and, per classifier
-  once per `ErrorMute` (in memory, `stateMuted`), raises
-  `Notifier.StateFailed` (alert `classifier-state:<agent>`) and the notice;
-  Check Up marks it (`classifier.CheckState`). Activity rows also carry
+  invalid file), on the second the mute
+  sentence with the exact `classifier_update` call, then the detail wrapped.
+  A state.db that cannot be opened (`ErrStateUnavailable`): per folder (one
+  agent) once per `ErrorMute` — kept in memory (`stateMuted`), so a restart
+  can repeat it once — an ERROR line (debug otherwise),
+  `Notifier.StateFailed` (alert `classifier-state:<agent>`), one notice and
+  one chat line naming no classifier; Check Up marks it
+  (`classifier.CheckState`: the file, or with none whether the folder can
+  take it; else `classifier.LastStateError`, what the service last met,
+  kept per folder until it opens). Activity rows also carry
   `replies` (both model replies of an unclassified item), `missing_fields`,
   `shortened_fields`, `action_args` of a failed action, and a failed
   fetch's list-entry fields; a fetch where no field resolved fails the item.

@@ -279,19 +279,27 @@
   shows `errors_reported`, `failed_runs` and `errors_muted_until`; Check Up's
   Classifiers table has an **Error notices** column (on, off, or muted until
   a time). A model in cooldown is not a failed run.
-- **A classifier's failure notice says what to do about its cause.** After
-  the error, the agent is told to fix the definition, to check the tool or
-  model itself (credentials or an outage) before changing the classifier,
-  that a tool it names is no longer available (naming its role: source,
-  fetch, or the action for a category), or, for no usable model or state
-  that can't be opened, that only the operator can fix it and to tell the
-  user. Errors name the tool once ("source mail_list failed: ...") and no
-  longer repeat the classifier's name.
+- **A classifier's failure notice says what to do about its cause, in
+  ClawEh's own words.** The chat line is one sentence naming the cause
+  ("Classifier inbox: the run failed (source mail_list: the tool
+  failed)."). The agent gets the same sentence and advice that fits the
+  cause: fix the definition, check the tool or model itself (credentials or
+  an outage) before changing the classifier, a tool it names is no longer
+  available (naming its role: source, fetch, or the action for a category),
+  or only the operator can fix it (no usable model, state that can't be
+  opened) and to tell the user. What the tool, provider or item said
+  follows marked as external data, never as part of the notice; the same
+  marking covers what `classifier_activity`, `classifier_status`,
+  `classifier_list`, `classifier_test` and `classifier_rerun` return.
+  Errors name the tool once and no longer repeat the classifier's name.
 - **A classifier run stopped by `stop_after_failures` is a failed run.** It
-  quotes the last item's error ("stopped after 5 consecutive failures; the
-  last: ...") and is logged, recorded as `run_failed` and reported like any
-  failed run, so an item failure that never goes away reaches the agent.
-  Failed runs are logged as warnings.
+  names the cause the failed items share ("stopped after 5 consecutive item
+  failures: fetch mail_read: the tool failed"), so repeated runs fold into
+  one `run_failed` entry; the last item's error is the entry's `detail`. It
+  is logged and reported like any failed run, so an item failure that never
+  goes away reaches the agent. Failed runs are logged as warnings. A run
+  that was stopped (by you or by a shutdown) no longer resets the count of
+  failed runs.
 - **A classifier's activity shows what went wrong with an item.** An
   `unclassified` item keeps the model's two replies (`replies`); entries
   name fetch fields not found (`missing_fields`) or cut to
@@ -301,12 +309,14 @@
   of whose fetch fields resolved now fails instead of being classified
   blind.
 - **A hand-edited classifier definition that is no longer valid is
-  reported to its agent** ("Classifier inbox is not run: ...") once per
-  change, counted and muted like a failed run.
-- **A classifier whose `state.db` can't be opened is reported.** It is
-  logged as an error, raises the new alert "Classifier state unavailable",
-  tells the agent and its chat (once a day while it lasts), and is marked
-  on Check Up.
+  reported to its agent** ("Classifier inbox is not run (...)") once per
+  broken version of the file, also across restarts, counted and muted like
+  a failed run.
+- **A classifier whose `state.db` can't be opened is reported.** Once a day
+  per agent while it lasts, it is logged as an error, raises the new alert
+  "Classifier state unavailable" and tells the agent and its chat; Check Up
+  marks it, also when the folder can't take a new one or when only the
+  running service met the error.
 - **The voice alerts are now Normal priority, like every other alert.**
   "Voice message not transcribed" and "Speech backend not usable" (when no
   speech model was usable) were sent as Urgent.
@@ -628,7 +638,8 @@
   by it was reported to the agent as a failure ("the classifier's state
   could not be read", "context canceled"), and an item it interrupted was
   recorded as failed; neither is recorded or reported now, and the item is
-  taken again at the next start.
+  taken again at the next start. A `classifier_rerun` cut short says so
+  instead of returning an empty decision.
 
 - **`classifier_test` and `classifier_rerun` show why the source failed.**
   They answered "The operation failed because of an internal error." when
