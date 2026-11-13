@@ -464,13 +464,25 @@ production instance directly; test against a dev instance.
   `agent.ClassifierHost` (`agent/classifier_host.go`): every source, fetch and
   action tool runs through the owner's own registry with
   `ToolRegistry.ExecuteUnattended` (session-scoped tools refused, grants
-  re-read every call), a CLI model through `ProviderDispatcher.GetIsolated` in
+  re-read every call; a missing/refused tool is `classifier.ToolUnavailable`
+  (`ErrToolUnavailable`), any other failure carries the reason only, the
+  classifier names the tool with its role (`toolError`: "source mail_list
+  failed: ...", "action for category urgent: tool ... is not available");
+  an `untrusted.Wrap` result is returned through `untrusted.Unwrap`, so MCP
+  and web tools work as source/fetch), errors redacted by `Host.Redact`
+  (`ClassifierHost.Redact` = `redactSecrets`, wired in the gateway) before
+  they are stored, logged, notified or returned, a CLI model through `ProviderDispatcher.GetIsolated` in
   a per-call empty folder `internal/temp/classifier-<id>-*` (no bypass flags),
   cooldowns honoured, the summary posted directly to the owner's default chat
   (`CronTarget`, no model turn; `report.summary` `on_problems`/`always`/
   `never`), audit kinds `classifier_write` and `classification`. A run in
   `RunError` (not a model cooldown, which writes nothing and changes no
-  count) is a failed run (`trackFailure`): an activity row with outcome
+  count; `stop_after_failures` reached is `RunError` quoting the last item's
+  error; a cancelled context, i.e. shutdown, is `RunStopped` "the service
+  stopped" and an item it interrupted is not stored or counted) is a failed
+  run (`trackFailure`, logged at warn), and a definition file that turns
+  invalid is reported once per change through the same path
+  (`reportInvalid`, "Classifier X is not run: ..."): an activity row with outcome
   `run_failed`, NULL `item_id`, its error, `count` and `last_at`
   (`addRunFailure` folds the same error into the open row,
   `run_failures.open_row`, until a run that does not fail, other activity, a
@@ -488,9 +500,22 @@ production instance directly; test against a dev instance.
   reported for 24 hours.", and, in every summary mode,
   `Notifier.RunFailed`, a `system` inbound message (sender `classifier`,
   `Internal`, the owner's main session, `MetaOriginChannel`/`ChatID` its
-  default chat, else the ask channel) with the same text, "Check and fix
-  ...; classifier_test shows the result." and, on the second, the mute
-  sentence with the exact `classifier_update` call. `classifier_activity`
+  default chat, else the ask channel) with the same text, advice by cause
+  (`classifier/cause.go` `advice`: definition "Check and fix ...;
+  classifier_test shows the result.", tool/model error "This looks like a
+  problem with <tool> itself ...", missing tool, `ErrNoModel` "Only the
+  operator can fix this on the Task models page; tell the user.", state,
+  invalid file) and, on the second, the mute
+  sentence with the exact `classifier_update` call. A state.db that cannot
+  be opened (`ErrStateUnavailable`) is logged at error and, per classifier
+  once per `ErrorMute` (in memory, `stateMuted`), raises
+  `Notifier.StateFailed` (alert `classifier-state:<agent>`) and the notice;
+  Check Up marks it (`classifier.CheckState`). Activity rows also carry
+  `replies` (both model replies of an unclassified item), `missing_fields`,
+  `shortened_fields`, `action_args` of a failed action, and a failed
+  fetch's list-entry fields; a fetch where no field resolved fails the item.
+  `classifier_test`/`rerun` pass a failing source through as a refusal
+  (`sourceRefusal`). `classifier_activity`
   takes `outcome` (`ActivityOutcomes`, others refused) and searches the
   error; `Status` has `errors_reported`, `failed_runs`,
   `errors_muted_until`; Check Up's Classifiers table an "Error notices"
@@ -515,7 +540,7 @@ production instance directly; test against a dev instance.
   refused as source, fetch or action; per-definition defaults parallel 1,
   stop_after_failures 5, items_per_run = `max_items_per_run`, `fetch.max_chars`
   = `max_item_chars`, `activity_hours` 72. Hand edits are re-read on mtime/size
-  change and validated the same way; an invalid file is logged once, never run
+  change and validated the same way; an invalid file is logged and reported to its agent once per change, never run
   or deleted. Install-wide `classifiers` (`config.ClassifiersConfig`,
   `config/classifiers.go`: `processed_days` 30, `limits.max_rules` 100,
   `max_prompt_chars` 20000, `max_item_chars` 50000, `max_items_per_run` 500,

@@ -96,6 +96,7 @@ See [Channels](../channels/index.md#when-a-message-cannot-be-delivered) for whic
 | Fusion token store unavailable | The Google/Microsoft token database could not be opened; [Fusion](../mcpfusion.md#tokens) tools are off. |
 | Maestro tools disabled | An agent's [Maestro](../maestro.md) folder could not be prepared. |
 | Forum `<id>` run `<n>` of `<agent>` stopped | A [forum](../forums/running.md#restarts) run stopped on an error it cannot recover from by itself. |
+| Classifier state unavailable | An agent's `classifiers/state.db` could not be opened, so none of its [classifiers](../agents/classifiers.md#where-they-live) runs. |
 
 ### ClawEh itself
 

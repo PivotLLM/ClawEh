@@ -32,7 +32,7 @@
   editing a file and the change applies on the next run. `instructions` may
   be empty when either is set. The text counts toward
   `classifiers.limits.max_prompt_chars`; a missing or unreadable file, or
-  text over the limit, ends the run in error naming the classifier and the
+  text over the limit, ends the run in error naming the
   path, with nothing classified. `classifier_test` now also returns the
   system prompt (`system_prompt`) with the files loaded.
 - **`file_glob` finds files by name pattern.** A new file tool: `pattern`
@@ -279,6 +279,34 @@
   shows `errors_reported`, `failed_runs` and `errors_muted_until`; Check Up's
   Classifiers table has an **Error notices** column (on, off, or muted until
   a time). A model in cooldown is not a failed run.
+- **A classifier's failure notice says what to do about its cause.** After
+  the error, the agent is told to fix the definition, to check the tool or
+  model itself (credentials or an outage) before changing the classifier,
+  that a tool it names is no longer available (naming its role: source,
+  fetch, or the action for a category), or, for no usable model or state
+  that can't be opened, that only the operator can fix it and to tell the
+  user. Errors name the tool once ("source mail_list failed: ...") and no
+  longer repeat the classifier's name.
+- **A classifier run stopped by `stop_after_failures` is a failed run.** It
+  quotes the last item's error ("stopped after 5 consecutive failures; the
+  last: ...") and is logged, recorded as `run_failed` and reported like any
+  failed run, so an item failure that never goes away reaches the agent.
+  Failed runs are logged as warnings.
+- **A classifier's activity shows what went wrong with an item.** An
+  `unclassified` item keeps the model's two replies (`replies`); entries
+  name fetch fields not found (`missing_fields`) or cut to
+  `fetch.max_chars` (`shortened_fields`); a failed action keeps the
+  arguments it was called with (`action_args`); a failed fetch keeps the
+  listed item's own fields. `classifier_test` shows the same. An item none
+  of whose fetch fields resolved now fails instead of being classified
+  blind.
+- **A hand-edited classifier definition that is no longer valid is
+  reported to its agent** ("Classifier inbox is not run: ...") once per
+  change, counted and muted like a failed run.
+- **A classifier whose `state.db` can't be opened is reported.** It is
+  logged as an error, raises the new alert "Classifier state unavailable",
+  tells the agent and its chat (once a day while it lasts), and is marked
+  on Check Up.
 - **The voice alerts are now Normal priority, like every other alert.**
   "Voice message not transcribed" and "Speech backend not usable" (when no
   speech model was usable) were sent as Urgent.
@@ -596,6 +624,27 @@
 - **A classifier run cut short by a shutdown says so.** Its last run was
   sometimes recorded as "the classifier was stopped", as if the classifier
   had been changed or deleted; it is now always "the service stopped".
+  A shutdown is never a failed run: a source call or state read cancelled
+  by it was reported to the agent as a failure ("the classifier's state
+  could not be read", "context canceled"), and an item it interrupted was
+  recorded as failed; neither is recorded or reported now, and the item is
+  taken again at the next start.
+
+- **`classifier_test` and `classifier_rerun` show why the source failed.**
+  They answered "The operation failed because of an internal error." when
+  the source tool failed or did not return a list; they now give the
+  reason, as a failure notice does.
+
+- **Tools of external MCP servers and the web tools work as a classifier's
+  source and fetch.** Their results are marked as external content for the
+  model, so they never parsed as JSON and every run failed with "did not
+  return JSON". The classifier now reads the content inside the mark. That
+  error, when a tool really returns something else, now gives the parse
+  error and the first 200 characters of what came back.
+
+- **Classifier errors no longer carry secrets.** An API key or credential
+  in a model's or tool's error text is redacted before the error is stored,
+  logged, sent in a notice or returned by a classifier tool.
 
 - **A link out of the workspace is refused in plain words.** Reading,
   listing, searching or globbing through a link in an agent's workspace that
