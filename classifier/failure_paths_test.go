@@ -299,15 +299,22 @@ func TestShutdownIsNotAFailure(t *testing.T) {
 		def := definition()
 		def["limits"] = map[string]any{"parallel": 2, "stop_after_failures": 1}
 		e.create(def)
+		// m1's audit row is written after handleItem's interruption check,
+		// so once it is recorded m1 counts as a failure whatever the
+		// context does next; m2 (in flight, parallel 2) waits for it and
+		// then stops the service.
+		m1Failed := make(chan struct{})
+		e.svc.host.Auditor = auditFunc(func(ev AuditEvent) {
+			if ev.ItemID == "m1" && ev.Outcome == OutcomeFailed {
+				close(m1Failed)
+			}
+		})
 		ctx, cancel := context.WithCancel(context.Background())
 		e.tools.set("mail_read", func(args map[string]any) (string, error) {
 			if args["id"] == "m1" {
 				return "", errors.New("403 Forbidden")
 			}
-			for e.log.warnings("item=m1 failed") == 0 {
-				time.Sleep(time.Millisecond)
-			}
-			time.Sleep(50 * time.Millisecond) // m1 is counted
+			<-m1Failed
 			cancel()
 			return "", context.Canceled
 		})
@@ -606,6 +613,11 @@ func TestCheckStateFolderWritable(t *testing.T) {
 		t.Errorf("CheckState with a read-only folder = %v", err)
 	}
 }
+
+// auditFunc is an Auditor calling f for each event.
+type auditFunc func(AuditEvent)
+
+func (f auditFunc) Record(ev AuditEvent) { f(ev) }
 
 // restoreMode makes dir writable again, so the test's folder can be removed.
 func restoreMode(t *testing.T, dir string) {
