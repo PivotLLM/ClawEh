@@ -7,6 +7,8 @@ package classifier
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
@@ -233,6 +235,7 @@ func (s *Service) scanBase(ctx context.Context, base string, scopes []Scope, see
 				s.prune(ctx, st, fi.def, false)
 			}
 		}
+		s.validAgain(ctx, scope, fi.def.ID)
 	}
 }
 
@@ -250,11 +253,34 @@ func (s *Service) reportInvalid(ctx context.Context, scope Scope, path string, f
 		}
 		return
 	}
+	// The same broken content is reported once, whatever restarts or
+	// re-reads follow; the record is dropped once the file is valid.
+	sum := sha256.Sum256(fi.raw)
+	fresh, err := st.markInvalidReported(context.WithoutCancel(ctx), NormalizeID(def.ID), hex.EncodeToString(sum[:]))
+	if err != nil {
+		s.host.Logger.Errorf("classifier=%s agent=%s: store invalid report: %v", def.ID, scope.AgentID, err)
+	}
+	if !fresh && err == nil {
+		return
+	}
+	text := s.host.redact(lowerFirst(fi.invalid))
 	rec := RunRecord{
-		Status: RunError, Error: s.host.redact(lowerFirst(fi.invalid)), DryRun: def.DryRun,
-		cause: cause{kind: causeInvalidFile},
+		Status: RunError, Error: text, DryRun: def.DryRun,
+		cause: cause{kind: causeInvalidFile, summary: text},
 	}
 	s.afterRun(ctx, scope, def, st, rec, false)
+}
+
+// validAgain forgets that a definition file was reported as not valid, now
+// that it is valid (reportInvalid).
+func (s *Service) validAgain(ctx context.Context, scope Scope, id string) {
+	st, err := s.state(ctx, scope.BaseDirectory)
+	if err != nil {
+		return // reported by the run
+	}
+	if err := st.clearInvalidReported(context.WithoutCancel(ctx), NormalizeID(id)); err != nil {
+		s.host.Logger.Errorf("classifier=%s agent=%s: clear invalid report: %v", id, scope.AgentID, err)
+	}
 }
 
 // lenientDefinition is what can be read of a definition file that is not

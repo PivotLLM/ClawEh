@@ -296,7 +296,7 @@ func TestRunMarkdownProblems(t *testing.T) {
 				t.Errorf("Inspect = %+v, %v", sums, err)
 			}
 			// The summary names the classifier once, before the error.
-			want := "Classifier inbox-priority: the run failed: " + tc.want
+			want := "Classifier inbox-priority: the run failed (" + tc.want
 			if texts := e.notifier.all(); len(texts) != 1 || !strings.HasPrefix(texts[0], want) {
 				t.Errorf("summaries = %q, want one starting %q", texts, want)
 			}

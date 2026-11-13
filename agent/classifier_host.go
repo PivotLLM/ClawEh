@@ -219,10 +219,15 @@ func (h *ClassifierHost) Call(ctx context.Context, agentID, tool string, args ma
 	case errors.Is(err, tools.ErrToolSessionScoped):
 		return "", classifier.ToolUnavailable(fmt.Sprintf("tool %s works only in a conversation and cannot be used by a classifier", tool))
 	case err != nil:
-		// ExecuteUnattended names the tool; the classifier names it with
-		// its role, so only the tool's message is kept.
-		if msg, ok := strings.CutPrefix(err.Error(), fmt.Sprintf("tool %q failed: ", tool)); ok {
-			return "", errors.New(msg)
+		// ExecuteUnattended names the tool ("tool "x" failed: <message>",
+		// "tool "x" returned no result"); the classifier names it with its
+		// role, so only the rest is kept.
+		msg := err.Error()
+		if rest, ok := strings.CutPrefix(msg, fmt.Sprintf("tool %q failed: ", tool)); ok {
+			return "", errors.New(rest)
+		}
+		if rest, ok := strings.CutPrefix(msg, fmt.Sprintf("tool %q ", tool)); ok {
+			return "", errors.New(rest)
 		}
 		return "", err
 	}

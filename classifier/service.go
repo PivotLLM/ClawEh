@@ -118,10 +118,51 @@ func (s *Service) state(ctx context.Context, base string) (*stateDB, error) {
 	dir, file := s.host.modes(base)
 	st, err := openState(ctx, base, dir, file)
 	if err != nil {
+		if ctx.Err() == nil {
+			recordStateProblem(base, err, s.host.clock().Now())
+		}
 		return nil, fmt.Errorf("%w: %w", ErrStateUnavailable, err)
 	}
 	s.states[base] = st
+	delete(s.stateMuted, base) // a streak of state failures ends
+	recordStateProblem(base, nil, time.Time{})
 	return st, nil
+}
+
+// stateProblems is, by classifiers folder, the last error opening its
+// state.db that a service of this process met, until it opens. Check Up
+// reads it (LastStateError), since a failure it cannot reproduce from the
+// files alone (a migration, a lock) must still show.
+var stateProblems = struct {
+	sync.Mutex
+	m map[string]StateProblem
+}{m: map[string]StateProblem{}}
+
+// StateProblem is the last error opening a folder's state.db and when it
+// happened.
+type StateProblem struct {
+	Error string
+	At    time.Time
+}
+
+// recordStateProblem keeps err as base's state problem; nil clears it.
+func recordStateProblem(base string, err error, at time.Time) {
+	stateProblems.Lock()
+	defer stateProblems.Unlock()
+	if err == nil {
+		delete(stateProblems.m, filepath.Clean(base))
+		return
+	}
+	stateProblems.m[filepath.Clean(base)] = StateProblem{Error: err.Error(), At: at.UTC()}
+}
+
+// LastStateError is the last error this process met opening base's
+// state.db, while it has not opened since; ok is false when there is none.
+func LastStateError(base string) (p StateProblem, ok bool) {
+	stateProblems.Lock()
+	defer stateProblems.Unlock()
+	p, ok = stateProblems.m[filepath.Clean(base)]
+	return p, ok
 }
 
 // lockFor returns the run lock of a classifier.
@@ -295,10 +336,20 @@ func (s *Service) check(ctx context.Context, scope Scope, def *Definition, live 
 
 // sourceRefusal is a tool's refusal of a source that failed (its tool's
 // error, a result that is not JSON or holds no list), with the real reason
-// so the agent can act on it.
+// so the agent can act on it: ClawEh's summary, then what the tool said
+// inside Host.WrapUntrusted.
 func (s *Service) sourceRefusal(err error) error {
-	return &ValidationError{Issues: []string{withPeriod(s.host.redact(err.Error()))}}
+	c := s.redactCause(causeOf(err))
+	ve := &ValidationError{Issues: []string{withPeriod(c.summary)}}
+	if c.detail != "" {
+		ve.Issues = append(ve.Issues, s.host.wrapUntrusted(c.detail))
+	}
+	return ve
 }
+
+// ErrInterrupted: a test or rerun was cut short (its call or the service
+// stopped) before the item was handled.
+var ErrInterrupted = errors.New("the classifier stopped before the item was handled")
 
 // withPeriod is text ending with a period.
 func withPeriod(text string) string {
@@ -600,9 +651,15 @@ func (s *Service) Test(ctx context.Context, scope Scope, id, itemID string) (Tes
 	}
 	item, err := s.pickItem(ctx, scope, def, itemID)
 	if err != nil {
+		if ctx.Err() != nil {
+			return TestResult{}, ErrInterrupted
+		}
 		return TestResult{}, err
 	}
 	d := s.handleItem(ctx, scope, def, in, nil, item, nil, modeTest)
+	if d.Outcome == OutcomeFailed && ctx.Err() != nil {
+		return TestResult{}, ErrInterrupted
+	}
 	system := d.system
 	if system == "" { // no model call: the fetch failed
 		system, _ = buildPrompt(def, in, itemData{}, "", newDelimiter())
@@ -627,7 +684,7 @@ func (s *Service) Rerun(ctx context.Context, scope Scope, id, itemID string) (De
 	select {
 	case lock <- struct{}{}:
 	case <-ctx.Done():
-		return Decision{}, ctx.Err()
+		return Decision{}, ErrInterrupted
 	}
 	defer func() { <-lock }()
 	in, err := s.loadInstructions(scope, def)
@@ -640,9 +697,16 @@ func (s *Service) Rerun(ctx context.Context, scope Scope, id, itemID string) (De
 	}
 	item, err := s.pickItem(ctx, scope, def, itemID)
 	if err != nil {
+		if ctx.Err() != nil {
+			return Decision{}, ErrInterrupted
+		}
 		return Decision{}, err
 	}
-	return s.handleItem(ctx, scope, def, in, st, item, nil, modeRerun).Decision, nil
+	d := s.handleItem(ctx, scope, def, in, st, item, nil, modeRerun)
+	if d.interrupted {
+		return Decision{}, ErrInterrupted // nothing was recorded
+	}
+	return d.Decision, nil
 }
 
 // Inspect lists the classifiers in base for the configuration report,
@@ -678,15 +742,16 @@ func Inspect(ctx context.Context, base string, c Ceilings) ([]Summary, error) {
 }
 
 // CheckState reports, for the configuration report, whether base's
-// state.db can be opened as a run opens it: nil when it does not exist yet
-// (the first run creates it), else an error when it is not a regular file,
-// cannot be opened for writing, or cannot be read.
+// state.db can be opened as a run opens it: when it does not exist yet, the
+// first run creates it, so the folder (or the nearest one that exists) must
+// be writable; when it exists, it must be a regular file that can be opened
+// for writing and read.
 func CheckState(ctx context.Context, base string) error {
 	path := filepath.Join(base, classifierfs.StateFile)
 	info, err := os.Stat(path)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
-		return nil
+		return checkCreatable(base)
 	case err != nil:
 		return err
 	case !info.Mode().IsRegular():
@@ -706,6 +771,36 @@ func CheckState(ctx context.Context, base string) error {
 	defer closeQuietly(db)
 	var n int
 	return db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master`).Scan(&n)
+}
+
+// checkCreatable reports whether state.db can be created in base: a file
+// is created and removed in base, or in the nearest folder above it that
+// exists when base does not (the run creates the folders).
+func checkCreatable(base string) error {
+	dir := filepath.Clean(base)
+	for {
+		info, err := os.Stat(dir)
+		if err == nil {
+			if !info.IsDir() {
+				return fmt.Errorf("%s is not a folder", dir)
+			}
+			break
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return err
+		}
+		dir = parent
+	}
+	f, err := os.CreateTemp(dir, classifierfs.TempPrefix+"check-*")
+	if err != nil {
+		return fmt.Errorf("%s cannot be created: %w", filepath.Join(base, classifierfs.StateFile), err)
+	}
+	name := f.Name()
+	return errors.Join(f.Close(), os.Remove(name))
 }
 
 // lastRun reads a classifier's last run; a read failure is logged and

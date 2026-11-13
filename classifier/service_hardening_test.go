@@ -351,7 +351,7 @@ func TestToolRefusals(t *testing.T) {
 		t.Errorf("test on an empty source = %q", res.ForLLM)
 	}
 	// Status of all, through the tool, is a list.
-	if res := call(t, defs, "status", map[string]any{}); res.IsError || !strings.HasPrefix(strings.TrimSpace(res.ForLLM), "[") {
+	if res := call(t, defs, "status", map[string]any{}); res.IsError || !strings.HasPrefix(strings.TrimSpace(res.ForLLM), "<<untrusted>>[") {
 		t.Errorf("status of all = %q", res.ForLLM)
 	}
 

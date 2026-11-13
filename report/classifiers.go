@@ -84,9 +84,9 @@ func classifiersTable(ctx context.Context, cfg *config.Config, a *config.AgentCo
 	if len(sums) == 0 && !a.ClassifiersEnabled() {
 		return t, false
 	}
-	if stateErr := classifier.CheckState(ctx, dir); stateErr != nil {
+	if problem := classifierStateProblem(ctx, dir); problem != "" {
 		t.Highlight = append(t.Highlight, len(t.Rows))
-		t.Rows = append(t.Rows, row(classifierfs.StateFile, "not run", "", "", "", "", "Cannot be opened: "+stateErr.Error(), ""))
+		t.Rows = append(t.Rows, row(classifierfs.StateFile, "not run", "", "", "", "", "Cannot be opened: "+problem, ""))
 	}
 	if len(sums) == 0 && len(t.Rows) == 0 {
 		t.Rows = append(t.Rows, row(none, "", "", "", "", "", "", ""))
@@ -130,6 +130,20 @@ func classifiersTable(ctx context.Context, cfg *config.Config, a *config.AgentCo
 		t.Rows = append(t.Rows, row(s.ID, enabled, yesNo(s.DryRun), model, last, counts, lastErr, errorNotices(s)))
 	}
 	return t, true
+}
+
+// classifierStateProblem is why the classifiers folder dir's state.db
+// cannot be opened, "" when it can: what a static check finds
+// (classifier.CheckState), else the error the running service last met
+// opening it (classifier.LastStateError), with its time.
+func classifierStateProblem(ctx context.Context, dir string) string {
+	if err := classifier.CheckState(ctx, dir); err != nil {
+		return err.Error()
+	}
+	if p, ok := classifier.LastStateError(dir); ok {
+		return p.Error + " (at " + p.At.Format(timeFormat) + ")"
+	}
+	return ""
 }
 
 // errorNotices is the "Error notices" value of a classifier: "" for an
@@ -179,8 +193,8 @@ func classifierAssessment(ctx context.Context, cfg *config.Config) []assessRow {
 			rows = append(rows, assessRow{true, "Classifier model (" + name + ")", model + " is not in Classification."})
 		}
 		dir := classifiersDir(cfg, a)
-		if err := classifier.CheckState(ctx, dir); err != nil {
-			rows = append(rows, assessRow{true, "Classifier state (" + name + ")", "Cannot be opened, so no classifier of this agent runs: " + err.Error()})
+		if problem := classifierStateProblem(ctx, dir); problem != "" {
+			rows = append(rows, assessRow{true, "Classifier state (" + name + ")", "Cannot be opened, so no classifier of this agent runs: " + problem})
 		}
 		sums, err := classifier.Inspect(ctx, dir, classifierCeilings(cfg))
 		if err != nil {

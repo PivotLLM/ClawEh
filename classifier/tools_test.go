@@ -145,7 +145,7 @@ func TestTools(t *testing.T) {
 		!strings.Contains(res.ForLLM, "## This install's limits") || !strings.Contains(res.ForLLM, "- `max_rules`: 100") || !strings.Contains(res.ForLLM, "- `min_every_seconds`: 15") {
 		t.Errorf("readme = %s", res.ForLLM)
 	}
-	if res := call(t, defs, "list", map[string]any{}); res.IsError || strings.TrimSpace(res.ForLLM) != "[]" {
+	if res := call(t, defs, "list", map[string]any{}); res.IsError || res.ForLLM != fakeWrap("[]") {
 		t.Errorf("empty list = %s", res.ForLLM)
 	}
 	var def map[string]any
@@ -185,7 +185,7 @@ func TestTools(t *testing.T) {
 	if res := call(t, defs, "status", map[string]any{"id": "inbox-priority"}); res.IsError || !strings.Contains(res.ForLLM, `"counts"`) {
 		t.Errorf("status = %s", res.ForLLM)
 	}
-	if res := call(t, defs, "activity", map[string]any{"id": "inbox-priority", "limit": 5.0}); res.IsError || strings.TrimSpace(res.ForLLM) != "[]" {
+	if res := call(t, defs, "activity", map[string]any{"id": "inbox-priority", "limit": 5.0}); res.IsError || res.ForLLM != fakeWrap("[]") {
 		t.Errorf("activity = %s", res.ForLLM)
 	}
 	if res := call(t, defs, "activity", map[string]any{"id": "inbox-priority", "limit": -1.0}); !res.IsError {

@@ -11,6 +11,7 @@ import (
 	"github.com/PivotLLM/ClawEh/classifier"
 	"github.com/PivotLLM/ClawEh/logger"
 	toolsclassifier "github.com/PivotLLM/ClawEh/tools/classifier"
+	"github.com/PivotLLM/ClawEh/tools/untrusted"
 )
 
 // classifierCloseTimeout bounds how long shutdown waits for the classifier
@@ -25,16 +26,17 @@ const classifierCloseTimeout = 10 * time.Second
 // whenever the service needs them.
 func newClassifierService(host *agent.ClassifierHost) *classifier.Service {
 	svc := classifier.New(classifier.Host{
-		Tools:        host,
-		Model:        host,
-		Instructions: host,
-		Notifier:     host,
-		Auditor:      host,
-		Logger:       logger.NewLogger("classifier"),
-		Modes:        host.Modes,
-		Ceilings:     host.Ceilings,
-		Scopes:       host.Scopes,
-		Redact:       host.Redact,
+		Tools:         host,
+		Model:         host,
+		Instructions:  host,
+		Notifier:      host,
+		Auditor:       host,
+		Logger:        logger.NewLogger("classifier"),
+		Modes:         host.Modes,
+		Ceilings:      host.Ceilings,
+		Scopes:        host.Scopes,
+		Redact:        host.Redact,
+		WrapUntrusted: untrusted.Wrap,
 	})
 	toolsclassifier.SetService(svc)
 	return svc

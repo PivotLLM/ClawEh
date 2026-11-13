@@ -452,7 +452,7 @@ func TestRunStopsAfterFailures(t *testing.T) {
 	e.create(def)
 	e.tools.set("mail_move", func(map[string]any) (string, error) { return "", errBoom })
 	rec := e.run("inbox-priority")
-	if rec.Status != RunError || rec.Failed != 2 || e.model.count() != 2 || rec.Error != "stopped after 2 consecutive failures; the last: action mail_move failed: boom" {
+	if rec.Status != RunError || rec.Failed != 2 || e.model.count() != 2 || rec.Error != "stopped after 2 consecutive item failures: action mail_move: the tool failed" {
 		t.Fatalf("run = %+v, model calls %d", rec, e.model.count())
 	}
 	// A success in between resets the count.

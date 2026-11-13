@@ -242,6 +242,10 @@ func (l *testLogger) warnings(sub string) int {
 	return n
 }
 
+// fakeWrap is the tests' Host.WrapUntrusted: the text between visible
+// markers.
+func fakeWrap(s string) string { return "<<untrusted>>" + s + "<</untrusted>>" }
+
 // env is a service over fakes with one scope, alice's.
 type env struct {
 	t        *testing.T
@@ -303,6 +307,8 @@ func newEnv(t *testing.T) *env {
 		Modes:    func(string) (os.FileMode, os.FileMode) { return 0o750, 0o640 },
 		Ceilings: func() Ceilings { e.mu.Lock(); defer e.mu.Unlock(); return e.ceilings },
 		Scopes:   func() []Scope { e.mu.Lock(); defer e.mu.Unlock(); return append([]Scope(nil), e.scopes...) },
+		// Visible, so tests see what is marked as untrusted.
+		WrapUntrusted: fakeWrap,
 	})
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

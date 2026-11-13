@@ -173,6 +173,8 @@ func (t *toolSuite) fail(scope Scope, id string, err error) (*toolspec.Result, e
 	case errors.Is(err, ErrStateUnavailable):
 		t.svc.host.Logger.Errorf("classifier tool (agent %s, classifier %s): %v", scope.AgentID, id, err)
 		return errResult("The classifier's state could not be opened. Only the operator can fix this; tell the user."), nil
+	case errors.Is(err, ErrInterrupted):
+		return errResult("The classifier stopped before the item was handled; nothing was recorded. Try again."), nil
 	case errors.Is(err, ErrClosed):
 		return errResult("Classifiers are stopping because the service is shutting down; try again later."), nil
 	}
@@ -186,6 +188,18 @@ func jsonResult(v any) (*toolspec.Result, error) {
 		return nil, err
 	}
 	return &toolspec.Result{ForLLM: string(data)}, nil
+}
+
+// untrustedResult is jsonResult for a result that holds what items, tools
+// or the model gave (fields, replies, reasons, errors): the whole JSON is
+// marked as data (Host.WrapUntrusted), so none of it reads as instructions.
+func (t *toolSuite) untrustedResult(v any) (*toolspec.Result, error) {
+	res, err := jsonResult(v)
+	if err != nil {
+		return nil, err
+	}
+	res.ForLLM = t.svc.host.wrapUntrusted(res.ForLLM)
+	return res, nil
 }
 
 func stringArg(call *toolspec.ToolCall, name string, required bool) (string, error) {
@@ -243,7 +257,7 @@ func (t *toolSuite) list(call *toolspec.ToolCall) (*toolspec.Result, error) {
 	if err != nil {
 		return t.fail(scope, "", err)
 	}
-	return jsonResult(sums)
+	return t.untrustedResult(sums)
 }
 
 // withID runs op for a tool that names a classifier by its id argument.
@@ -346,9 +360,9 @@ func (t *toolSuite) status(call *toolspec.ToolCall) (*toolspec.Result, error) {
 		return t.fail(scope, id, err)
 	}
 	if id != "" && len(statuses) == 1 {
-		return jsonResult(statuses[0])
+		return t.untrustedResult(statuses[0])
 	}
-	return jsonResult(statuses)
+	return t.untrustedResult(statuses)
 }
 
 func (t *toolSuite) test(call *toolspec.ToolCall) (*toolspec.Result, error) {
@@ -361,7 +375,7 @@ func (t *toolSuite) test(call *toolspec.ToolCall) (*toolspec.Result, error) {
 		if err != nil {
 			return nil, err
 		}
-		return jsonResult(d)
+		return t.untrustedResult(d)
 	})
 }
 
@@ -375,7 +389,7 @@ func (t *toolSuite) rerun(call *toolspec.ToolCall) (*toolspec.Result, error) {
 		if err != nil {
 			return nil, err
 		}
-		return jsonResult(d)
+		return t.untrustedResult(d)
 	})
 }
 
@@ -399,6 +413,6 @@ func (t *toolSuite) activity(call *toolspec.ToolCall) (*toolspec.Result, error) 
 		if err != nil {
 			return nil, err
 		}
-		return jsonResult(entries)
+		return t.untrustedResult(entries)
 	})
 }

@@ -44,6 +44,7 @@ func newHostService(t *testing.T, host *ClassifierHost) *classifier.Service {
 	svc := classifier.New(classifier.Host{
 		Tools: host, Model: host, Logger: logger.NewLogger("classifier"),
 		Modes: host.Modes, Ceilings: host.Ceilings, Scopes: host.Scopes, Redact: host.Redact,
+		WrapUntrusted: untrusted.Wrap,
 	})
 	t.Cleanup(func() {
 		if err := svc.Close(context.Background()); err != nil {
@@ -130,9 +131,10 @@ func TestClassifierHost_ErrorsNameToolOnceAndAreRedacted(t *testing.T) {
 	}
 	registerOn(t, al, "alice", &classifierTool{name: "inbox_list", out: "401 Unauthorized: api_key=" + key, isError: true})
 	_, err = svc.Test(context.Background(), scope, "inbox", "")
-	if err == nil || strings.Contains(err.Error(), key) || !strings.HasPrefix(err.Error(), "source inbox_list failed: 401 Unauthorized: api_key=") ||
-		strings.Count(err.Error(), "inbox_list") != 1 {
-		t.Errorf("Test = %v, want the tool named once and the key redacted", err)
+	if err == nil || strings.Contains(err.Error(), key) ||
+		!strings.HasPrefix(err.Error(), "source inbox_list: the tool failed.\n"+untrusted.Preamble) ||
+		!strings.Contains(err.Error(), "401 Unauthorized: api_key=") || strings.Count(err.Error(), "inbox_list") != 1 {
+		t.Errorf("Test = %v, want the tool named once, its message marked untrusted and the key redacted", err)
 	}
 	if got := host.Redact("bad key " + key); strings.Contains(got, key) {
 		t.Errorf("Redact = %q", got)

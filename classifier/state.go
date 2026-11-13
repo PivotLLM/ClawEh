@@ -84,6 +84,10 @@ type ActivityEntry struct {
 	Fields map[string]string `json:"fields,omitempty"`
 	Count  int               `json:"count,omitempty"`
 	LastAt time.Time         `json:"last_at,omitzero"`
+	// Detail is, on a run_failed row of a run stopped by
+	// stop_after_failures, the full error of the latest such run's last
+	// item (its error is the stable cause).
+	Detail string `json:"detail,omitempty"`
 }
 
 // RunRecord is a classifier's last run.
@@ -102,6 +106,9 @@ type RunRecord struct {
 	// cause is what a failed run is down to (not stored): the advice of
 	// the agent's notice.
 	cause cause
+	// lastItemError is the full error of the last item of a run stopped by
+	// stop_after_failures: the run_failed row's detail, not its fold key.
+	lastItemError string
 }
 
 // Run statuses.
@@ -149,6 +156,7 @@ CREATE TABLE IF NOT EXISTS runs (
   listed INTEGER, new_items INTEGER, classified INTEGER, acted INTEGER, unclassified INTEGER, failed INTEGER, dry_run INTEGER);
 CREATE TABLE IF NOT EXISTS run_failures (
   classifier TEXT PRIMARY KEY, failures INTEGER NOT NULL DEFAULT 0, muted_until INTEGER, open_row INTEGER);
+CREATE TABLE IF NOT EXISTS invalid_reports (classifier TEXT PRIMARY KEY, hash TEXT NOT NULL);
 `
 
 // activityTable creates the activity table. A run_failed row has no item_id
@@ -159,11 +167,11 @@ const activityTable = `CREATE TABLE IF NOT EXISTS activity (
   fields TEXT NOT NULL,
   category TEXT, reason TEXT, model TEXT, action TEXT, outcome TEXT NOT NULL, error TEXT,
   dry_run INTEGER NOT NULL, rerun INTEGER NOT NULL, action_args TEXT, count INTEGER, last_at INTEGER,
-  replies TEXT, missing_fields TEXT, shortened_fields TEXT)`
+  replies TEXT, missing_fields TEXT, shortened_fields TEXT, detail TEXT)`
 
-// activityLists are the activity columns holding a JSON list of strings,
-// added to a state.db written before they existed.
-var activityLists = []string{"replies", "missing_fields", "shortened_fields"}
+// addedActivityColumns are the activity columns added after the table
+// first shipped, added to a state.db written before they existed.
+var addedActivityColumns = []string{"action_args", "replies", "missing_fields", "shortened_fields", "detail"}
 
 // stateDB is one folder's state.db.
 type stateDB struct {
@@ -208,7 +216,7 @@ func openState(ctx context.Context, base string, dirMode, fileMode os.FileMode) 
 	if _, err := db.ExecContext(ctx, stateSchema); err != nil {
 		return nil, errors.Join(fmt.Errorf("schema %s: %w", path, err), db.Close())
 	}
-	for _, column := range append([]string{"action_args"}, activityLists...) {
+	for _, column := range addedActivityColumns {
 		if err := addColumn(ctx, db, "activity", column); err != nil {
 			return nil, errors.Join(fmt.Errorf("schema %s: %w", path, err), db.Close())
 		}
@@ -492,8 +500,8 @@ func (s *stateDB) activity(ctx context.Context, cls string, q ActivityQuery) (_ 
 	offset := max(q.Offset, 0)
 	query := `SELECT at, COALESCE(item_id,''), fields, COALESCE(category,''), COALESCE(reason,''), COALESCE(model,''),
   COALESCE(action,''), COALESCE(action_args,''), outcome, COALESCE(error,''), dry_run, rerun,
-  COALESCE(count,0), last_at, COALESCE(replies,''), COALESCE(missing_fields,''), COALESCE(shortened_fields,'')
-  FROM activity WHERE classifier = ?`
+  COALESCE(count,0), last_at, COALESCE(replies,''), COALESCE(missing_fields,''), COALESCE(shortened_fields,''),
+  COALESCE(detail,'') FROM activity WHERE classifier = ?`
 	args := []any{cls}
 	if q.Outcome != "" {
 		query += ` AND outcome = ?`
@@ -525,7 +533,7 @@ func (s *stateDB) activity(ctx context.Context, cls string, q ActivityQuery) (_ 
 		var fields, replies, missing, shortened string
 		if err := rows.Scan(&at, &e.ItemID, &fields, &e.Category, &e.Reason, &e.Model, &e.Action,
 			&e.ActionArgs, &e.Outcome, &e.Error, &e.DryRun, &e.Rerun, &e.Count, &lastAt,
-			&replies, &missing, &shortened); err != nil {
+			&replies, &missing, &shortened, &e.Detail); err != nil {
 			return nil, err
 		}
 		e.At, e.LastAt = time.UnixMilli(at).UTC(), fromMS(lastAt)
@@ -565,7 +573,7 @@ func (s *stateDB) prune(ctx context.Context, cls string, processedBefore, activi
 
 // forget removes every row of cls.
 func (s *stateDB) forget(ctx context.Context, cls string) error {
-	for _, table := range []string{"processed", "dry_run", "activity", "runs", "run_failures"} {
+	for _, table := range []string{"processed", "dry_run", "activity", "runs", "run_failures", "invalid_reports"} {
 		if _, err := s.db.ExecContext(ctx, `DELETE FROM `+table+` WHERE classifier = ?`, cls); err != nil { // #nosec G202 -- a fixed table name
 			return err
 		}
@@ -587,12 +595,14 @@ ON CONFLICT (classifier) DO UPDATE SET started_at = excluded.started_at, ended_a
 	return err
 }
 
-// addRunFailure records a run of cls that failed with errText at now. When
-// the newest activity row of cls is its open run_failed row (no run that
-// did not fail and no item handled since) with the same error and dry-run
-// flag, that row's count and last_at are bumped; otherwise a new row is
-// written and becomes the open one.
-func (s *stateDB) addRunFailure(ctx context.Context, cls, errText string, dryRun bool, now time.Time) (err error) {
+// addRunFailure records a run of cls that failed with errText at now, and
+// its detail (the last item's full error of a run stopped by
+// stop_after_failures, "" otherwise). When cls has an open run_failed row
+// (no run that succeeded since) with the same error and dry-run flag, and
+// no activity after it but failed items, that row's count, last_at and
+// detail are updated; otherwise a new row is written and becomes the open
+// one.
+func (s *stateDB) addRunFailure(ctx context.Context, cls, errText, detail string, dryRun bool, now time.Time) (err error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -610,23 +620,28 @@ func (s *stateDB) addRunFailure(ctx context.Context, cls, errText string, dryRun
 	if open.Valid {
 		var prevErr string
 		var prevDry bool
+		// Failed items after the open row (a run stopped by
+		// stop_after_failures writes them) do not end it; anything else
+		// does.
 		err = tx.QueryRowContext(ctx, `SELECT COALESCE(error,''), dry_run FROM activity
-WHERE id = ? AND outcome = ? AND id = (SELECT MAX(id) FROM activity WHERE classifier = ?)`,
-			open.Int64, OutcomeRunFailed, cls).Scan(&prevErr, &prevDry)
+WHERE id = ? AND outcome = ? AND NOT EXISTS
+  (SELECT 1 FROM activity WHERE classifier = ? AND id > ? AND outcome <> ?)`,
+			open.Int64, OutcomeRunFailed, cls, open.Int64, OutcomeFailed).Scan(&prevErr, &prevDry)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 		case err != nil:
 			return err
 		case prevErr == errText && prevDry == dryRun:
-			if _, err = tx.ExecContext(ctx, `UPDATE activity SET count = count + 1, last_at = ? WHERE id = ?`, ms(now), open.Int64); err != nil {
+			if _, err = tx.ExecContext(ctx, `UPDATE activity SET count = count + 1, last_at = ?, detail = ? WHERE id = ?`,
+				ms(now), nullable(detail), open.Int64); err != nil {
 				return err
 			}
 			return tx.Commit()
 		}
 	}
 	res, err := tx.ExecContext(ctx, `
-INSERT INTO activity (classifier, at, item_id, fields, outcome, error, dry_run, rerun, count, last_at)
-VALUES (?, ?, NULL, '{}', ?, ?, ?, 0, 1, ?)`, cls, ms(now), OutcomeRunFailed, nullable(errText), dryRun, ms(now))
+INSERT INTO activity (classifier, at, item_id, fields, outcome, error, dry_run, rerun, count, last_at, detail)
+VALUES (?, ?, NULL, '{}', ?, ?, ?, 0, 1, ?, ?)`, cls, ms(now), OutcomeRunFailed, nullable(errText), dryRun, ms(now), nullable(detail))
 	if err != nil {
 		return err
 	}
@@ -678,6 +693,26 @@ ON CONFLICT (classifier) DO UPDATE SET failures = excluded.failures, muted_until
 // run_failed row.
 func (s *stateDB) runSucceeded(ctx context.Context, cls string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE run_failures SET failures = 0, open_row = NULL WHERE classifier = ?`, cls)
+	return err
+}
+
+// markInvalidReported records that cls's definition file with content hash
+// was reported as not valid; it returns false when that content was
+// reported already (a restart, or the same edit read again).
+func (s *stateDB) markInvalidReported(ctx context.Context, cls, hash string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `INSERT INTO invalid_reports (classifier, hash) VALUES (?, ?)
+ON CONFLICT (classifier) DO UPDATE SET hash = excluded.hash WHERE invalid_reports.hash <> excluded.hash`, cls, hash)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// clearInvalidReported forgets that cls's definition file was reported as
+// not valid: it is valid again, so the same broken content reports anew.
+func (s *stateDB) clearInvalidReported(ctx context.Context, cls string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM invalid_reports WHERE classifier = ?`, cls)
 	return err
 }
 

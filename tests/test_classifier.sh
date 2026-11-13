@@ -35,10 +35,10 @@
 #     reported by the Check Up assessment API;
 #   - tools of an external MCP server (the stub's /mcp), whose results are
 #     marked untrusted for the model, work as source and fetch;
-#   - classifier_test on a source that fails gives the tool's own error;
+#   - classifier_test on a source that fails gives the tool's own error, marked untrusted;
 #   - a run stopped by stop_after_failures is a failed run: a run_failed row
-#     quoting the last item's error, logged at warn, and a notice to Alice
-#     whose advice points at the tool;
+#     naming the cause (the last item's error as its detail), logged at warn,
+#     and a notice to Alice whose advice points at the tool, the error marked untrusted;
 #   - the classifier folder, the definition files and state.db have exactly
 #     the agents area's modes.
 #
@@ -372,7 +372,7 @@ if [ "$(sql "SELECT COUNT(*) FROM dry_run WHERE classifier='md-missing'")" = 0 ]
 # miss_failed_runs: the count of the one run_failed row.
 miss_failed_runs() { sql "SELECT count FROM activity WHERE classifier='md-missing' AND outcome='run_failed'"; }
 miss_runs_at_least() { [ "$(miss_failed_runs)" -ge "$1" ] 2>/dev/null; }
-MISS_SUMMARY="Alice: Classifier md-missing (dry run): the run failed: classify.instructions_dir files/classifiers/none can't be read: it does not exist."
+MISS_SUMMARY="Alice: Classifier md-missing (dry run): the run failed (classify.instructions_dir files/classifiers/none can't be read: it does not exist)."
 MISS_MUTED="$MISS_SUMMARY Further errors won't be reported for 24 hours."
 miss_summaries() { grep 'telegram: chat=4242 ' "$STUB_LOG" | grep -cF "Classifier md-missing" || true; }
 miss_notices() { grep -c 'classifier=md-missing agent=alice: run failure reported to the agent' "$CLAW_LOG" || true; }
@@ -406,7 +406,7 @@ if echo "$OUT" | grep -qF '"errors_reported": true' && echo "$OUT" | grep -qF '"
 else
     fail "classifier_status (md-missing): $OUT"
 fi
-notice_in_session() { grep -rqF "[System: classifier] Classifier md-missing (dry run): the run failed:" "$WS/sessions"; }
+notice_in_session() { grep -rqF "[System: classifier] Classifier md-missing (dry run): the run failed (classify.instructions_dir" "$WS/sessions"; }
 muted_in_session() { grep -rqF "Further errors from this classifier won't be reported for 24 hours. To report them again now, call classifier_update with" "$WS/sessions"; }
 if wait_for 15 notice_in_session && wait_for 15 muted_in_session; then
     pass "Alice's conversation received both notices, the second saying how to report errors again"
@@ -481,7 +481,7 @@ OUT="$(mcp classifier_create "{\"definition\":$GONE}")"
 if ! echo "$OUT" | grep -qF "Classifier gone created."; then fail "classifier_create (gone): $OUT"; fi
 rm -f "$WS/files/gone-index.json"
 OUT="$(mcp classifier_test '{"id":"gone"}')"
-if echo "$OUT" | grep -qF "source shell_exec failed:" && echo "$OUT" | grep -qF "files/gone-index.json: No such file or directory" &&
+if echo "$OUT" | grep -qF "source shell_exec: the tool failed." && echo "$OUT" | grep -qF "UNTRUSTED_CONTENT" && echo "$OUT" | grep -qF "files/gone-index.json: No such file or directory" &&
     ! echo "$OUT" | grep -qF "internal error"; then
     pass "classifier_test on a failing source gives the tool's own error"
 else
@@ -495,9 +495,9 @@ printf '{"items":[%s]}\n' "$(item z missing)" >"$WS/files/fail-index.json"
 FAILDEF="{\"id\":\"fetchfail\",\"enabled\":true,\"trigger\":{\"every_seconds\":2},\"source\":${SOURCE/index.json/fail-index.json},\"fetch\":$FETCH,\"classify\":$CLASSIFY,\"limits\":{\"stop_after_failures\":1}}"
 OUT="$(mcp classifier_create "{\"definition\":$FAILDEF}")"
 if ! echo "$OUT" | grep -qF "Classifier fetchfail created."; then fail "classifier_create (fetchfail): $OUT"; fi
-fetchfail_row() { [ "$(sql "SELECT COUNT(*) FROM activity WHERE classifier='fetchfail' AND outcome='run_failed' AND instr(error, 'stopped after 1 consecutive failures; the last: fetch shell_exec failed:') = 1")" = 1 ]; }
+fetchfail_row() { [ "$(sql "SELECT COUNT(*) FROM activity WHERE classifier='fetchfail' AND outcome='run_failed' AND error = 'stopped after 1 consecutive item failure: fetch shell_exec: the tool failed' AND instr(detail, 'No such file or directory') > 0")" = 1 ]; }
 if wait_for 30 fetchfail_row; then
-    pass "a run stopped by stop_after_failures is a run_failed row quoting the last item's error"
+    pass "a run stopped by stop_after_failures is a run_failed row naming the cause, with the last item's error as detail"
 else
     fail "fetchfail activity: $(sql "SELECT outcome, error FROM activity WHERE classifier='fetchfail'" | tr '\n' ' ')"
 fi
@@ -507,9 +507,10 @@ if wait_for 15 fetchfail_reported && grep -q 'WRN classifier=fetchfail agent=ali
 else
     fail "fetchfail not logged at warn or not reported: $(grep 'classifier=fetchfail' "$CLAW_LOG" | tail -n 3)"
 fi
-fetchfail_notice() { grep -rqF "[System: classifier] Classifier fetchfail: the run failed: stopped after 1 consecutive failures; the last: fetch shell_exec failed:" "$WS/sessions"; }
-if wait_for 15 fetchfail_notice && grep -rqF "This looks like a problem with shell_exec itself (credentials or an outage); check it before changing the classifier." "$WS/sessions"; then
-    pass "Alice's notice quotes the item's error and points at the tool"
+fetchfail_notice() { grep -rqF "[System: classifier] Classifier fetchfail: the run failed (stopped after 1 consecutive item failure: fetch shell_exec: the tool failed)." "$WS/sessions"; }
+if wait_for 15 fetchfail_notice && grep -rqF "This looks like a problem with shell_exec itself (credentials or an outage); check it before changing the classifier." "$WS/sessions" &&
+    grep -rqF "UNTRUSTED_CONTENT" "$WS/sessions"; then
+    pass "Alice's notice names the cause in ClawEh's words, points at the tool, and marks the item's error as untrusted"
 else
     fail "the fetchfail notice is not in Alice's conversation"
 fi

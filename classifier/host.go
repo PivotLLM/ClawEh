@@ -199,6 +199,13 @@ type Host struct {
 	// before it is stored, logged, sent in a notice or returned by a tool.
 	// nil: texts are kept as they are.
 	Redact func(string) string
+	// WrapUntrusted marks text that came from a tool, a provider or an item
+	// as data, not instructions, before it reaches the agent: the detail of
+	// a failure notice and the results of the tools that show item data
+	// (classifier_activity, classifier_status, classifier_list,
+	// classifier_test, classifier_rerun) and a source's error in a refusal.
+	// ClawEh's is untrusted.Wrap. nil: the text is passed as it is (tests).
+	WrapUntrusted func(string) string
 }
 
 func (h *Host) clock() Clock {
@@ -233,6 +240,13 @@ func (h *Host) redact(s string) string {
 		return s
 	}
 	return h.Redact(s)
+}
+
+func (h *Host) wrapUntrusted(s string) string {
+	if h.WrapUntrusted == nil {
+		return s
+	}
+	return h.WrapUntrusted(s)
 }
 
 func (h *Host) audit(ev AuditEvent) {

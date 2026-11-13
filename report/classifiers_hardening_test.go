@@ -161,6 +161,34 @@ func TestCollectAgents_ClassifierStateUnavailable(t *testing.T) {
 	if r[0] != actionMark || !strings.HasPrefix(r[2], "Cannot be opened, so no classifier of this agent runs: ") {
 		t.Errorf("assessment row = %v", r)
 	}
+
+	// What the running service met still shows when the files no longer
+	// show it, until the service opens the state.
+	dir := classifiersDir(cfg, bob)
+	svc := classifier.New(classifier.Host{Tools: reportTools{}, Model: reportModel{}, Logger: quietLogger{}})
+	t.Cleanup(func() {
+		if err := svc.Close(context.Background()); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
+	scope := classifier.Scope{AgentID: "bob", BaseDirectory: dir}
+	if _, err := svc.Status(scope, "inbox"); err == nil {
+		t.Fatal("Status with state.db a folder succeeded")
+	}
+	if err := os.Remove(filepath.Join(dir, classifierfs.StateFile)); err != nil {
+		t.Fatal(err)
+	}
+	tb = findTable(t, agentSub(t, collectAgents(t.Context(), cfg, env), "bob"), "Classifiers")
+	if tb.Rows[0][0] != classifierfs.StateFile || !strings.Contains(tb.Rows[0][6], "(at ") {
+		t.Errorf("rows = %v, want the service's last state error", tb.Rows)
+	}
+	if _, err := svc.Status(scope, "inbox"); err != nil {
+		t.Fatalf("Status after the fix: %v", err)
+	}
+	tb = findTable(t, agentSub(t, collectAgents(t.Context(), cfg, env), "bob"), "Classifiers")
+	if tb.Rows[0][0] == classifierfs.StateFile {
+		t.Errorf("rows = %v, want no state row once it opened", tb.Rows)
+	}
 }
 
 // The switch reads on, off, or on but ignored for an agent that represents a

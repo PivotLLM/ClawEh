@@ -64,10 +64,12 @@ func (e *env) runFailures() []ActivityEntry {
 }
 
 const (
-	wantFailureSummary = "Classifier inbox-priority: the run failed: source mail_list failed: the mailbox is unreachable."
-	wantFailureNotice  = wantFailureSummary + " This looks like a problem with mail_list itself (credentials or an outage); check it before changing the classifier."
-	wantMuteNotice     = wantFailureNotice + " Further errors from this classifier won't be reported for 24 hours. " +
-		`To report them again now, call classifier_update with {"report": {"errors": true}}.`
+	wantFailureSummary = "Classifier inbox-priority: the run failed (source mail_list: the tool failed)."
+	wantFailureAdvice  = wantFailureSummary + " This looks like a problem with mail_list itself (credentials or an outage); check it before changing the classifier."
+	wantFailureDetail  = "\n<<untrusted>>the mailbox is unreachable<</untrusted>>"
+	wantFailureNotice  = wantFailureAdvice + wantFailureDetail
+	wantMuteNotice     = wantFailureAdvice + " Further errors from this classifier won't be reported for 24 hours. " +
+		`To report them again now, call classifier_update with {"report": {"errors": true}}.` + wantFailureDetail
 	wantMuteSummary = wantFailureSummary + " Further errors won't be reported for 24 hours."
 )
 
@@ -194,40 +196,48 @@ func TestRunFailureCountResetBySuccess(t *testing.T) {
 	}
 }
 
-// A run stopped by stop_after_failures is a failed run: it quotes the last
-// item's error, is a run_failed row, counts toward the notices and their
-// mute like any failed run, and its notice's advice fits that error (here
-// a tool's). A persistent item failure so reaches the agent.
+// A run stopped by stop_after_failures is a failed run: its error names the
+// cause the items share (stable, so runs fold), the last item's error is
+// the row's detail and, marked untrusted, ends the agent's notice; it
+// counts toward the notices and their mute like any failed run, and its
+// advice fits the cause (here a tool's). A persistent item failure so
+// reaches the agent.
 func TestRunStoppedByFailuresIsAFailedRun(t *testing.T) {
 	e := newEnv(t)
 	def := definition()
 	def["limits"] = map[string]any{"stop_after_failures": 2}
 	e.create(def)
 	e.tools.set("mail_read", func(map[string]any) (string, error) { return "", errors.New("403 Forbidden") })
-	const wantErr = "stopped after 2 consecutive failures; the last: fetch mail_read failed: 403 Forbidden"
-	const wantSummary = "Classifier inbox-priority: the run failed: " + wantErr + "."
-	const wantNotice = wantSummary + " This looks like a problem with mail_read itself (credentials or an outage); check it before changing the classifier."
+	const wantErr = "stopped after 2 consecutive item failures: fetch mail_read: the tool failed"
+	const wantSummary = "Classifier inbox-priority: the run failed (" + wantErr + ")."
+	const wantAdvice = wantSummary + " This looks like a problem with mail_read itself (credentials or an outage); check it before changing the classifier."
+	const wantDetail = "\n<<untrusted>>fetch mail_read: the tool failed: 403 Forbidden<</untrusted>>"
 	rec := e.run("inbox-priority")
 	if rec.Status != RunError || rec.Error != wantErr || rec.Failed != 2 {
 		t.Fatalf("run = %+v, want a failed run with %q", rec, wantErr)
 	}
-	e.expectNotices("first", []string{wantNotice}, []string{wantSummary})
-	if rows := e.runFailures(); len(rows) != 1 || rows[0].Error != wantErr || rows[0].Count != 1 {
+	e.expectNotices("first", []string{wantAdvice + wantDetail}, []string{wantSummary})
+	if rows := e.runFailures(); len(rows) != 1 || rows[0].Error != wantErr || rows[0].Count != 1 ||
+		rows[0].Detail != "fetch mail_read: the tool failed: 403 Forbidden" {
 		t.Errorf("run_failed rows = %+v", rows)
 	}
 	if e.log.warnings("run error: 3 listed, 3 new, 0 classified, 0 acted, 0 unclassified, 2 failed ("+wantErr+")") != 1 {
 		t.Errorf("warnings = %q, want the failed run logged at warn", e.log.warns)
 	}
 	e.runFailed()
-	e.expectNotices("second", []string{wantNotice, wantNotice + " " + muteNotice}, []string{wantSummary, wantSummary + " " + muteSummary})
+	e.expectNotices("second", []string{wantAdvice + wantDetail, wantAdvice + " " + muteNotice + wantDetail},
+		[]string{wantSummary, wantSummary + " " + muteSummary})
 	if st := e.status(); st.FailedRuns != 2 || st.ErrorsMutedUntil.IsZero() {
 		t.Errorf("status = failed_runs %d, muted until %v; want 2 and muted", st.FailedRuns, st.ErrorsMutedUntil)
 	}
+	if rows := e.runFailures(); len(rows) != 1 || rows[0].Count != 2 {
+		t.Errorf("run_failed rows after the second run = %+v, want one folded row", rows)
+	}
 }
 
-// A run stopped because the classifier was stopped is not a failure: it
-// resets the count.
-func TestRunFailureCountResetByStoppedRun(t *testing.T) {
+// A run stopped because the classifier was stopped is neither a failure
+// nor a success: it leaves the count as it was.
+func TestRunFailureCountKeptByStoppedRun(t *testing.T) {
 	e := newEnv(t)
 	e.create(definition())
 	e.failingSource("the mailbox is unreachable")
@@ -238,8 +248,8 @@ func TestRunFailureCountResetByStoppedRun(t *testing.T) {
 	if rec := e.svc.runClassifier(context.Background(), e.scope, e.def(), stop); rec.Status != RunStopped {
 		t.Fatalf("run = %+v, want stopped", rec)
 	}
-	if st := e.status(); st.FailedRuns != 0 {
-		t.Errorf("failed_runs after a stopped run = %d", st.FailedRuns)
+	if st := e.status(); st.FailedRuns != 1 {
+		t.Errorf("failed_runs after a stopped run = %d, want 1", st.FailedRuns)
 	}
 }
 
@@ -353,7 +363,7 @@ func TestRunFailureRows(t *testing.T) {
 	last := e.clock.Now()
 	rows := e.runFailures()
 	if len(rows) != 1 || rows[0].ItemID != "" || rows[0].Count != 2 || !rows[0].At.Equal(first) || !rows[0].LastAt.Equal(last) ||
-		rows[0].Error != "source mail_list failed: the mailbox is unreachable" || rows[0].DryRun || len(rows[0].Fields) != 0 {
+		rows[0].Error != "source mail_list: the tool failed: the mailbox is unreachable" || rows[0].DryRun || len(rows[0].Fields) != 0 {
 		t.Fatalf("rows = %+v", rows)
 	}
 
@@ -362,7 +372,7 @@ func TestRunFailureRows(t *testing.T) {
 	e.runFailed() // a different error
 	e.failingSource("the mailbox is unreachable")
 	e.runFailed() // back to the first error: a new row too
-	if rows = e.runFailures(); len(rows) != 3 || rows[0].Count != 1 || rows[1].Error != "source mail_list failed: the mailbox is gone" {
+	if rows = e.runFailures(); len(rows) != 3 || rows[0].Count != 1 || rows[1].Error != "source mail_list: the tool failed: the mailbox is gone" {
 		t.Fatalf("rows after a change = %+v", rows)
 	}
 
@@ -476,7 +486,7 @@ func TestRunFailureNoticeGoesToCloneSource(t *testing.T) {
 func TestFailureTextDryRun(t *testing.T) {
 	def := &Definition{ID: "inbox"}
 	got := failureText(def, RunRecord{DryRun: true, Error: "classify.instructions_dir files/rules can't be read: it does not exist"})
-	want := "Classifier inbox (dry run): the run failed: classify.instructions_dir files/rules can't be read: it does not exist."
+	want := "Classifier inbox (dry run): the run failed (classify.instructions_dir files/rules can't be read: it does not exist)."
 	if got != want {
 		t.Errorf("failureText = %q, want %q", got, want)
 	}
@@ -522,10 +532,10 @@ func TestOpenStateMigratesRunFailures(t *testing.T) {
 	}
 	t.Cleanup(func() { closeOrFail(t, st) })
 	now := time.UnixMilli(5).UTC()
-	if err = st.addRunFailure(ctx, "c", "boom", false, now); err != nil {
+	if err = st.addRunFailure(ctx, "c", "boom", "", false, now); err != nil {
 		t.Fatal(err)
 	}
-	if err = st.addRunFailure(ctx, "c", "boom", false, now.Add(time.Second)); err != nil {
+	if err = st.addRunFailure(ctx, "c", "boom", "", false, now.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	got, err := st.activity(ctx, "c", ActivityQuery{})

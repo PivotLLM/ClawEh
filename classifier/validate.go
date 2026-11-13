@@ -328,7 +328,7 @@ func listItems(ctx context.Context, def *Definition, agentID string, tools ToolR
 	}
 	decoded, err := decodeJSON(result)
 	if err != nil {
-		return nil, errors.New(notJSON(roleSource, def.Source.Tool, err, result))
+		return nil, &notJSONError{role: roleSource, tool: def.Source.Tool, parseErr: err, result: result}
 	}
 	list, ok := dotpath.Get(decoded, def.Source.Items).([]any)
 	if !ok {

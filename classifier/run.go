@@ -107,14 +107,19 @@ func (s *Service) decide(ctx context.Context, scope Scope, def *Definition, in i
 
 // noFetchFields is the failure of a fetch result in which no fetch field
 // resolved, naming the missing fields (and, when the result is not JSON,
-// the parse error and what came back).
+// the parse error and what came back, as the detail).
 func noFetchFields(tool string, data itemData, result string) error {
-	missing := strings.Join(data.missing, ", ")
+	e := &noFieldsError{tool: tool, missing: data.missing}
 	if data.notJSON != nil {
-		return fmt.Errorf("%s %s did not return JSON (%w), so no fetch field resolved (missing: %s); it returned %s",
-			roleFetch, tool, data.notJSON, missing, excerpt(result))
+		e.notJSON = &notJSONError{role: roleFetch, tool: tool, parseErr: data.notJSON, result: result}
 	}
-	return fmt.Errorf("%s %s: no fetch field resolved (missing: %s)", roleFetch, tool, missing)
+	return e
+}
+
+// redactCause is c with its texts redacted (Host.Redact).
+func (s *Service) redactCause(c cause) cause {
+	c.summary, c.detail = s.host.redact(c.summary), s.host.redact(c.detail)
+	return c
 }
 
 func (d decision) failed(err error) decision {
@@ -160,7 +165,7 @@ func (s *Service) act(ctx context.Context, scope Scope, def *Definition, item li
 			d.ActionArgs = text
 		}
 		*d = d.failed(&toolError{role: roleAction, category: d.Category, tool: action.Tool, err: err})
-		d.Error = s.host.redact(d.Error)
+		d.Error, d.cause = s.host.redact(d.Error), s.redactCause(d.cause)
 		return
 	}
 	d.Outcome = OutcomeActed
@@ -219,7 +224,7 @@ func (s *Service) handleItem(ctx context.Context, scope Scope, def *Definition, 
 	ctx = withClassifier(ctx, NormalizeID(def.ID))
 	dry := mode == modeDry || (mode == modeRerun && def.DryRun)
 	d := s.decide(ctx, scope, def, in, item, reuse)
-	d.Error = s.host.redact(d.Error)
+	d.Error, d.cause = s.host.redact(d.Error), s.redactCause(d.cause)
 	if d.Outcome == OutcomeFailed && ctx.Err() != nil && mode != modeTest {
 		d.interrupted = true // the service stopped: the next run takes the item again
 		return d
@@ -324,7 +329,6 @@ func (s *Service) runClassifier(ctx context.Context, scope Scope, def *Definitio
 	case err != nil:
 		return s.stateFailed(ctx, scope, def, rec, err)
 	}
-	s.stateOpened(entryKey(scope.BaseDirectory, def.ID))
 
 	// cooling: the run ended because the model is in cooldown, which ends
 	// by itself; it is not a failure to report to the agent.
@@ -350,7 +354,7 @@ func (s *Service) runClassifier(ctx context.Context, scope Scope, def *Definitio
 			rec.Status, rec.Error = RunStopped, stoppedByService
 			return finish()
 		}
-		rec.Status, rec.Error, rec.cause = RunError, s.host.redact(text), c
+		rec.Status, rec.Error, rec.cause = RunError, s.host.redact(text), s.redactCause(c)
 		return finish()
 	}
 	fail := func(err error) RunRecord { return failWith(err.Error(), causeOf(err)) }
@@ -402,8 +406,9 @@ func (s *Service) runClassifier(ctx context.Context, scope Scope, def *Definitio
 		consecutive int
 		fatal       error
 		stoppedBy   string
-		failedOut   bool  // stopped by stop_after_failures: a failed run
-		lastCause   cause // of the last failure in a row
+		failedOut   bool    // stopped by stop_after_failures: a failed run
+		lastCause   cause   // the run's cause when failedOut
+		streak      []cause // the causes of the failures in a row
 	)
 	slots := make(chan struct{}, def.parallel())
 	stopping := func() bool {
@@ -453,37 +458,44 @@ func (s *Service) runClassifier(ctx context.Context, scope Scope, def *Definitio
 			case OutcomeFailed:
 				rec.Failed++
 				consecutive++
+				streak = append(streak, d.cause)
 			case OutcomeUnclassified:
 				rec.Unclassified++
-				consecutive = 0
+				consecutive, streak = 0, nil
 			default:
 				rec.Classified++
 				if d.Outcome == OutcomeActed {
 					rec.Acted++
 				}
-				consecutive = 0
+				consecutive, streak = 0, nil
 			}
 			if d.fatal != nil && fatal == nil {
 				fatal = d.fatal
 			}
 			if consecutive >= limit && stoppedBy == "" {
-				// The last item's error is quoted, so a failure that every
-				// item meets reaches the agent as the run's.
-				stoppedBy = fmt.Sprintf("stopped after %d consecutive failures; the last: %s", consecutive, d.Error)
-				failedOut, lastCause = true, d.cause
+				// The run's error names the cause the streak's failures
+				// share most (not any item's text), so the same failure
+				// reads the same every run and folds; the last item's full
+				// error is the detail.
+				lastCause = commonCause(streak)
+				stoppedBy = "stopped after " + failurePlural(consecutive) + ": " + lastCause.summary
+				lastCause.summary, lastCause.detail = stoppedBy, d.Error
+				failedOut = true
 			}
 		}(item)
 	}
 	wg.Wait()
-	if fatal == nil && stoppedBy == "" && ctx.Err() != nil {
-		stoppedBy = stoppedByService // an item in flight was interrupted
+	if fatal == nil && (stoppedBy == "" || failedOut) && ctx.Err() != nil {
+		// An item in flight was interrupted: the service stopped, which is
+		// not a failure even when items had failed in a row.
+		stoppedBy, failedOut = stoppedByService, false
 	}
 	switch {
 	case fatal != nil:
-		rec.Status, rec.Error, rec.cause = RunError, s.host.redact(fatal.Error()), causeOf(fatal)
+		rec.Status, rec.Error, rec.cause = RunError, s.host.redact(fatal.Error()), s.redactCause(causeOf(fatal))
 		_, cooling = errors.AsType[*CooldownError](fatal)
 	case failedOut:
-		rec.Status, rec.Error, rec.cause = RunError, stoppedBy, lastCause
+		rec.Status, rec.Error, rec.cause, rec.lastItemError = RunError, stoppedBy, lastCause, lastCause.detail
 	case stoppedBy != "":
 		rec.Status, rec.Error = RunStopped, stoppedBy
 	}
@@ -503,49 +515,60 @@ func (s *Service) afterRun(ctx context.Context, scope Scope, def *Definition, st
 	}
 }
 
-// stateFailed ends a run whose folder's state.db cannot be opened: it is
-// logged at error and, on the first failure of a classifier since its state
-// last opened and again once ErrorMute has passed, raises the operator
-// alert and reports the run as failed to the agent and its chat (the count
-// and mute of error notices live in that state.db, so they are kept in
-// memory here). report.errors false reports nothing to the agent.
+// The agent's notice and the chat line of a state.db that cannot be
+// opened: one per agent (its classifiers folder), naming no classifier.
+const (
+	stateNoticeText  = "Your classifiers can't run: their state could not be opened. Only the operator can fix this; tell the user."
+	stateSummaryText = "Classifiers can't run: their state could not be opened."
+)
+
+// stateFailed ends a run whose folder's state.db cannot be opened. Per
+// folder (so per agent), the first failure since it last opened and again
+// once ErrorMute has passed is logged at error, raises the operator alert
+// and is reported once to the agent and its chat (report.errors of the
+// classifier that met it decides); the failures between are logged at
+// debug. The mute is kept in memory, since the count of error notices
+// lives in that state.db: a restart can report it once more.
 func (s *Service) stateFailed(ctx context.Context, scope Scope, def *Definition, rec RunRecord, err error) RunRecord {
-	s.host.Logger.Errorf("classifier=%s agent=%s: open state: %v", def.ID, scope.AgentID, err)
 	now := s.host.clock().Now().UTC()
 	rec.Status, rec.Error, rec.EndedAt = RunError, ErrStateUnavailable.Error(), now
-	rec.cause = cause{kind: causeOperator}
-	if !s.stateNotice(entryKey(scope.BaseDirectory, def.ID), now) {
+	rec.cause = cause{kind: causeOperator, summary: rec.Error}
+	if !s.stateNotice(scope.BaseDirectory, now) {
+		s.host.Logger.Debugf("classifier=%s agent=%s: open state: %v", def.ID, scope.AgentID, err)
 		return rec
 	}
-	if s.host.Notifier != nil {
-		s.host.Notifier.StateFailed(withClassifier(ctx, NormalizeID(def.ID)), scope.AgentID,
-			filepath.Join(scope.BaseDirectory, classifierfs.StateFile), err)
+	s.host.Logger.Errorf("classifier=%s agent=%s: open state: %v", def.ID, scope.AgentID, err)
+	if s.host.Notifier == nil {
+		return rec
 	}
-	if def.reportErrors() {
-		s.summarise(ctx, scope, def, rec, failureFirst)
-		s.reportFailure(ctx, scope, def, rec, failureFirst)
+	nctx := withClassifier(ctx, NormalizeID(def.ID))
+	s.host.Notifier.StateFailed(nctx, scope.AgentID, filepath.Join(scope.BaseDirectory, classifierfs.StateFile), err)
+	if !def.reportErrors() {
+		return rec
+	}
+	if def.summaryMode() != SummaryNever {
+		if sErr := s.host.Notifier.Summary(nctx, scope.AgentID, stateSummaryText); sErr != nil {
+			s.host.Logger.Warnf("classifier=%s agent=%s: summary not delivered: %v", def.ID, scope.AgentID, sErr)
+		}
+	}
+	if nErr := s.host.Notifier.RunFailed(nctx, scope.AgentID, stateNoticeText); nErr != nil {
+		s.host.Logger.Warnf("classifier=%s agent=%s: failure notice not delivered: %v", def.ID, scope.AgentID, nErr)
 	}
 	return rec
 }
 
-// stateNotice reports whether a classifier whose state cannot be opened is
+// stateNotice reports whether a folder whose state cannot be opened is
 // reported now: the first time since it last opened, then once per
 // ErrorMute.
-func (s *Service) stateNotice(key string, now time.Time) bool {
+func (s *Service) stateNotice(base string, now time.Time) bool {
+	base = filepath.Clean(base)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if until, ok := s.stateMuted[key]; ok && now.Before(until) {
+	if until, ok := s.stateMuted[base]; ok && now.Before(until) {
 		return false
 	}
-	s.stateMuted[key] = now.Add(ErrorMute)
+	s.stateMuted[base] = now.Add(ErrorMute)
 	return true
-}
-
-// stateOpened ends a classifier's streak of state failures.
-func (s *Service) stateOpened(key string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.stateMuted, key)
 }
 
 func errSuffix(e string) string {
@@ -653,8 +676,10 @@ const (
 // second sends one saying that further errors are muted for ErrorMute, and
 // later ones are only logged until the mute has expired when one happens
 // (no timer: muted_until is compared with the failure's time). A run that
-// does not fail resets the count but not the mute; a change of the
-// definition by the agent resets both (Service.Update, Create).
+// succeeds resets the count but not the mute; a change of the definition by
+// the agent resets both (Service.Update, Create). A stopped run (the
+// classifier or the service stopped it) is neither: it changes nothing, so
+// the same failure after it folds into the same row and counts on.
 // report.errors false reports none. The count and the mute are kept in
 // state.db, so a restart keeps them. A run that ended on a model in
 // cooldown changes nothing: the cooldown ends by itself, and the item it
@@ -670,12 +695,16 @@ func (s *Service) trackFailure(ctx context.Context, scope Scope, def *Definition
 			s.host.Logger.Errorf("classifier=%s agent=%s: %s: %v", def.ID, scope.AgentID, what, err)
 		}
 	}
-	if rec.Status != RunError {
+	switch rec.Status {
+	case RunOK:
 		storeErr("store run failures", st.runSucceeded(wctx, cls))
+		return failureNone
+	case RunError:
+	default:
 		return failureNone
 	}
 	now := s.host.clock().Now().UTC()
-	storeErr("store the failed run", st.addRunFailure(wctx, cls, rec.Error, rec.DryRun, now))
+	storeErr("store the failed run", st.addRunFailure(wctx, cls, rec.Error, rec.lastItemError, rec.DryRun, now))
 	f, err := runFailuresFrom(wctx, st.db, cls)
 	storeErr("read run failures", err) // read as none: reported rather than never
 	if !f.mutedUntil.IsZero() && !now.Before(f.mutedUntil) {
@@ -696,7 +725,9 @@ func (s *Service) trackFailure(ctx context.Context, scope Scope, def *Definition
 // reportFailure delivers the notice of a failed run to the owning agent,
 // whatever report.summary says, so it can fix the classifier; the second
 // one in a row also says that further errors are muted and how to report
-// them again.
+// them again. The notice's sentences are ClawEh's own (failureText, the
+// advice, the mute); what a tool, a provider or an item said (the cause's
+// detail) follows only inside Host.WrapUntrusted, as data.
 func (s *Service) reportFailure(ctx context.Context, scope Scope, def *Definition, rec RunRecord, failure failureReport) {
 	if s.host.Notifier == nil {
 		return
@@ -704,6 +735,9 @@ func (s *Service) reportFailure(ctx context.Context, scope Scope, def *Definitio
 	text := failureText(def, rec) + " " + advice(rec.cause)
 	if failure == failureSecond {
 		text += " " + muteNotice
+	}
+	if rec.cause.detail != "" {
+		text += "\n" + s.host.wrapUntrusted(rec.cause.detail)
 	}
 	if err := s.host.Notifier.RunFailed(withClassifier(ctx, NormalizeID(def.ID)), scope.AgentID, text); err != nil {
 		s.host.Logger.Warnf("classifier=%s agent=%s: failure notice not delivered: %v", def.ID, scope.AgentID, err)
@@ -767,10 +801,12 @@ func summaryText(def *Definition, rec RunRecord) string {
 	return b.String()
 }
 
-// failureText is the one-sentence report of a failed run, naming the
-// classifier and the error: "Classifier inbox: the run failed: <error>.",
-// or for a definition file that is not valid "Classifier inbox is not run:
-// <why>."
+// failureText is the one-sentence report of a failed run in ClawEh's own
+// words, naming the classifier and the cause's summary: "Classifier inbox:
+// the run failed (source mail_list: the tool failed).", or for a definition
+// file that is not valid "Classifier inbox is not run (<why>)." It never
+// holds what a tool, a provider or an item said: it is the person's chat
+// line and the start of the agent's notice.
 func failureText(def *Definition, rec RunRecord) string {
 	var b strings.Builder
 	b.WriteString("Classifier " + def.ID)
@@ -778,14 +814,16 @@ func failureText(def *Definition, rec RunRecord) string {
 		b.WriteString(" (dry run)")
 	}
 	if rec.cause.kind == causeInvalidFile {
-		b.WriteString(" is not run: ")
+		b.WriteString(" is not run (")
 	} else {
-		b.WriteString(": the run failed: ")
+		b.WriteString(": the run failed (")
 	}
-	msg := strings.Join(strings.Fields(rec.Error), " ") // a validation error has one issue per line
+	msg := rec.cause.summary
+	if msg == "" {
+		msg = rec.Error
+	}
+	msg = strings.TrimSuffix(strings.Join(strings.Fields(msg), " "), ".") // a validation error has one issue per line
 	b.WriteString(msg)
-	if !strings.HasSuffix(msg, ".") {
-		b.WriteString(".")
-	}
+	b.WriteString(").")
 	return b.String()
 }

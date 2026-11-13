@@ -18,6 +18,7 @@ import (
 	"github.com/PivotLLM/ClawEh/providers"
 	"github.com/PivotLLM/ClawEh/tools"
 	toolsclassifier "github.com/PivotLLM/ClawEh/tools/classifier"
+	"github.com/PivotLLM/ClawEh/tools/untrusted"
 )
 
 // listTool is a source tool that lists no items.
@@ -121,7 +122,8 @@ func TestNewClassifierService(t *testing.T) {
 	}
 
 	// A tool's error is redacted with the host's redaction before it is
-	// shown (here a live validation's refusal).
+	// shown (here a live validation's refusal), and marked as untrusted
+	// content after ClawEh's own sentence.
 	const key = "sk-live-0123456789abcdefghij"
 	alice.Tools.Register(secretTool{msg: "401 Unauthorized: api_key " + key})
 	secret, err := json.Marshal(map[string]any{
@@ -133,8 +135,10 @@ func TestNewClassifierService(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = svc.Validate(context.Background(), scope, secret, true)
-	if err == nil || strings.Contains(err.Error(), key) || !strings.Contains(err.Error(), "source probe_secret failed: 401 Unauthorized") {
-		t.Errorf("Validate with a failing source = %v, want the error with the key redacted", err)
+	if err == nil || strings.Contains(err.Error(), key) ||
+		!strings.HasPrefix(err.Error(), "source probe_secret: the tool failed.\n"+untrusted.Preamble) ||
+		!strings.Contains(err.Error(), "401 Unauthorized") {
+		t.Errorf("Validate with a failing source = %v, want ClawEh's sentence, then the redacted error marked untrusted", err)
 	}
 }
 
