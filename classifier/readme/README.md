@@ -30,7 +30,8 @@ for you; a definition does not name one.
    user: what went where, and anything that looks wrong.
 4. **Adjust.** Turn the user's corrections into rules: edit or add a rule
    file with your file tools (see "Rules in Markdown"), and check a specific
-   item with `classifier_test` before relying on the change.
+   item with `classifier_test` before relying on the change. "Which rule
+   decided" below shows where to look.
 5. **Go live only when the user agrees.** Set `"dry_run": false`. Every item
    still in the source is then classified again with the current rules and
    acted on, so say so before switching.
@@ -126,8 +127,9 @@ a rule by editing a file with your file tools, not the definition.
 - Files load in alphabetical order of their names. To control the order,
   you can start names with zero-padded numbers such as `00-`, `01-`, …
   `33-`.
-- The model gets, in order: `instructions`, the file, the folder's files,
-  the numbered `rules`, then the categories.
+- The model gets, in order: `instructions` (under `## instructions`), the
+  file and the folder's files (each under `## <file name>`), the numbered
+  `rules`, then the categories.
 - Both paths are relative to your workspace and must be inside `files/`;
   they are read with your own file permission, so you need
   `file_read_lines` or `file_read_bytes`. The files are read on every run, so an edit applies on the next run.
@@ -161,6 +163,34 @@ Email from example.com is from a client: urgent.
 ```markdown
 Email from news.example.org is a newsletter: low, unless it mentions an invoice.
 ```
+
+## Which rule decided
+
+The model names the rules that decided each item. Labels: `instructions`
+(inline), the file name of `instructions_file` and of each folder file
+(`050-domain-example.md`), and `rule N` for the numbered `rules`. Each
+decision stores `rules` (the labels cited, or `["none"]`) and
+`unknown_rules` (labels that matched no rule). You may cite a file without
+`.md`, and a numbered rule as `rule 3`, `rule #3`, `#3` or `3`, in any case.
+
+A citation shows where to look; it is the model's own account, not proof.
+
+- `classifier_activity` with `"rule": "050-domain-example.md"` lists what
+  that rule decided; `"rule": "none"` lists items no rule decided.
+- `classifier_status` gives `rule_usage` over `activity_hours`: decisions
+  per rule (`cited`), rules no decision cited (`never_cited`, maybe dead),
+  decisions citing `none` (many of them: write a rule), `unknown`, and
+  cited files since removed (`no_longer_present`).
+- Before editing a rule because of an item, confirm the rule decided it:
+  `classifier_test` with `exclude_rules` classifies the item with all rules
+  and again without those, and `changed` says whether the category
+  changed. It costs two model calls and stores nothing.
+
+Example: the user says message m1 should not be urgent. `classifier_activity`
+shows m1 cited `050-domain-example.md`; `classifier_test` with
+`{"id": "inbox-priority", "item_id": "m1", "exclude_rules":
+["050-domain-example.md"]}` returns `"changed": true`, so that file is the
+one to edit.
 
 ## Paths
 
@@ -256,7 +286,9 @@ resolves to nothing fails that item; nothing empty is passed to a tool.
 - `classifier_list`, `classifier_get`, `classifier_status`.
 - `classifier_test`: classify one item (or the first listed) without acting
   or storing anything; it shows the system prompt the model got.
+  `exclude_rules` also classifies it without those rules (two model calls).
 - `classifier_rerun`: classify one item again and run its action.
 - `classifier_activity`: the activity log, newest first, with `limit`,
-  `offset`, `search` (also matches the error) and `outcome` (`acted`,
-  `recorded`, `unclassified`, `failed` or `run_failed`).
+  `offset`, `search` (also matches the error), `outcome` (`acted`,
+  `recorded`, `unclassified`, `failed` or `run_failed`) and `rule` (a
+  rule's label, or `none`).

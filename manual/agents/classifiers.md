@@ -118,7 +118,7 @@ A classifier can keep its guidance and rules in Markdown files in the agent's `f
 
 | Key | What it is |
 |---|---|
-| `classify.instructions_file` | One `.md` file with the overall guidance, such as `files/classifiers/inbox-priority/guide.md`. |
+| `classify.instructions_file` | One `.md` file with the overall guidance, such as `files/classifiers/inbox-priority/guide.md`. It is added under a `## <file name>` heading. |
 | `classify.instructions_dir` | A folder, such as `files/classifiers/inbox-priority/rules`. Every `.md` file directly in it is added under a `## <file name>` heading. Sub-folders, names starting with `.` and anything that is not a regular file are skipped. |
 
 Recommended layout, one short file per rule (for example one per sender domain):
@@ -132,13 +132,22 @@ files/classifiers/inbox-priority/
 ```
 
 - Folder files load in alphabetical order of their names. To control the order, you can start names with zero-padded numbers such as `00-`, `01-`, … `33-`.
-- The model gets, in order: `instructions`, the file, the folder's files, the numbered `rules`, then the categories.
+- The model gets, in order: `instructions` (under `## instructions`), the file, the folder's files, the numbered `rules`, then the categories.
 - Both paths are relative to the workspace and must be inside `files/`; an absolute path or one leading out with `..` is refused when the definition is saved. The files are read with the agent's own file permission: the agent needs `file_read_lines` or `file_read_bytes`, and a link leading out of `files/` is refused.
 - The files are read on every run, so an edit applies on the next run. Items already handled are not reprocessed.
 - Each file may have up to 256 KiB and the folder's files 1 MiB together; the text, with `instructions` and `rules`, counts toward `max_prompt_chars`.
 - A save accepts files that do not exist yet, but refuses ones that exist and cannot be read or are over `max_prompt_chars`.
 - When a file or folder is missing or cannot be read, or the text is over `max_prompt_chars`, the run classifies nothing and ends in error, naming the path: in `classifier_status`, on the Check Up **Classifiers** table and, as `report.summary` says, in the summary.
 - `classifier_test` shows the system prompt with the files loaded.
+
+### Which rule decided
+
+The model names the rules that decided each item, so the agent can see where to tune. Each source of rules has a label: `instructions` for the inline instructions, the file name of the instructions file and of each folder file (such as `050-domain-example.md`), and `rule N` for the numbered `rules`. The model answers with the category, a short reason and a line such as `Rules: 050-domain-example.md, rule 2`, or `Rules: none` when no rule applied. The reason and the Rules line are optional: an answer without them, or with a Rules line that cannot be read, is still classified.
+
+- A cited label is matched to the rules sent with that item, in any case; a file name may be given without `.md`, and a numbered rule as `rule 3`, `rule #3`, `#3` or `3`. The activity log keeps the known labels (`rules`, or `["none"]`) and counts the others (`unknown_rules`).
+- The citation is the model's own account, not proof. To confirm that a rule decided an item, the agent calls `classifier_test` with `exclude_rules`: it classifies the item twice, with all rules and without the ones named, and says whether the category changed (`changed`). That costs two model calls and stores nothing.
+- `classifier_activity` with `rule` lists the items that cited a rule; `rule: "none"` lists those that cited none.
+- `classifier_status` shows `rule_usage` over `activity_hours`: how many decisions cited each current rule, the rules never cited, how many cited none or an unknown label, and cited labels whose file is gone (`no_longer_present`). Rules never cited may be dead; many decisions citing none may need a new rule.
 
 ### Paths and placeholders
 
@@ -188,7 +197,7 @@ With `dry_run` on, the classifier decides but runs no action; the log shows the 
 
 ### Activity log
 
-Every item handled (live or dry run) is logged with the fields sent to the model (each cut to 500 characters), the category, the reason, the action and its outcome (`acted`, `recorded`, `unclassified` or `failed`). An entry also shows what went wrong: the model's two answers of an `unclassified` item (`replies`), fetch fields not found (`missing_fields`) or cut to `fetch.max_chars` (`shortened_fields`), the arguments of an action that failed (`action_args`), and, when the fetch failed, the listed item's own fields. Every failed run is logged too, as `run_failed` with its error and no item; the same error in a row is one entry with `count`, the first time (`at`) and the latest (`last_at`). Entries are kept `activity_hours` (a `run_failed` entry from its latest time) and marked when they come from a dry run. Ask the agent ("what did the inbox classifier do with mail from bob@example.com?", "why did the inbox classifier fail?"); it reads the log with `classifier_activity`, which can filter by `outcome` and search the text, errors included. Nothing is sent to the agent unless you ask.
+Every item handled (live or dry run) is logged with the fields sent to the model (each cut to 500 characters), the category, the reason, the rules the model cited, the action and its outcome (`acted`, `recorded`, `unclassified` or `failed`). An entry also shows what went wrong: the model's two answers of an `unclassified` item (`replies`), fetch fields not found (`missing_fields`) or cut to `fetch.max_chars` (`shortened_fields`), the arguments of an action that failed (`action_args`), and, when the fetch failed, the listed item's own fields. Every failed run is logged too, as `run_failed` with its error and no item; the same error in a row is one entry with `count`, the first time (`at`) and the latest (`last_at`). Entries are kept `activity_hours` (a `run_failed` entry from its latest time) and marked when they come from a dry run. Ask the agent ("what did the inbox classifier do with mail from bob@example.com?", "why did the inbox classifier fail?"); it reads the log with `classifier_activity`, which can filter by `outcome` or by cited `rule` and search the text, errors included. Nothing is sent to the agent unless you ask.
 
 ## Tools
 
@@ -198,10 +207,10 @@ Every item handled (live or dry run) is logged with the fields sent to the model
 | `classifier_list`, `classifier_get` | The agent's classifiers; one definition. |
 | `classifier_create`, `classifier_update`, `classifier_delete` | Save, change (a JSON merge patch) or remove a classifier. A save checks the definition and calls the source tool once. |
 | `classifier_validate` | The same checks, without saving. |
-| `classifier_status` | Last run, counts, recent decisions, the last error and whether error notices are on, off or muted. |
-| `classifier_test` | Classifies one item without acting or storing anything, and shows the system prompt the model got. |
+| `classifier_status` | Last run, counts, recent decisions, the last error, whether error notices are on, off or muted, and how often each rule was cited (`rule_usage`). |
+| `classifier_test` | Classifies one item without acting or storing anything, and shows the system prompt the model got. With `exclude_rules`, also classifies it without those rules and says whether the category changed. |
 | `classifier_rerun` | Classifies one item again and runs its action. |
-| `classifier_activity` | The activity log, newest first, with `limit`, `offset`, `search` and `outcome`. |
+| `classifier_activity` | The activity log, newest first, with `limit`, `offset`, `search`, `outcome` and `rule`. |
 
 ## Limits
 

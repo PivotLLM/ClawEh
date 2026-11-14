@@ -35,6 +35,17 @@
   text over the limit, ends the run in error naming the
   path, with nothing classified. `classifier_test` now also returns the
   system prompt (`system_prompt`) with the files loaded.
+- **A classifier's model names the rules that decided each item.** Every
+  source of rules is labelled in the prompt (`instructions`, the
+  instructions file and each rules-folder file by name, inline rules as
+  `rule N`), and the model is asked for a `Rules:` line after its reason;
+  answers without one are still accepted. The activity log keeps the
+  labels it cited (`rules`, or `none`) and counts unknown ones
+  (`unknown_rules`). `classifier_activity` takes `rule` to list what one
+  rule decided; `classifier_status` shows `rule_usage` (decisions per
+  rule, rules never cited, decisions citing none); `classifier_test` takes
+  `exclude_rules` to classify an item again without those rules and say
+  whether the category changed (two model calls).
 - **`file_glob` finds files by name pattern.** A new file tool: `pattern`
   (`*` within one folder, `**` across folders, `?`, `{a,b}`) and an optional
   `path`, the folder to search under (relative to the workspace or

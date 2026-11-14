@@ -547,8 +547,24 @@ production instance directly; test against a dev instance.
   `agent/classifier_instructions.go`: only for an agent with
   `file_read_lines`/`file_read_bytes`, `files.Reader` Resolve/Allowed/Open
   plus `os.SameFile`, link target inside `<ws>/files`, 256 KiB per file and
-  1 MiB per folder); prompt order inline, file, `## <name>` per folder file,
-  numbered rules, categories. A missing/unreadable file or a prompt over
+  1 MiB per folder); prompt order `## instructions` (inline), `## <file
+  name>` for the file and per folder file, numbered rules, categories.
+  **Rule citations** (`classifier/rules.go`, `citations.go`): every source
+  has a label (`promptSections`: `instructions`, the file's name, or its
+  cleaned path when a folder file has that name, each folder file's name,
+  `rule N`); `replyContract` asks for line 2 a reason, line 3
+  `Rules: <labels>` or `Rules: none`, both optional: `parseCitation` reads a
+  Rules line in place 2 or 3 only, a malformed one is ignored, never a
+  retry. `resolveLabel`: exact, any case, file name without `.md`, `rule
+  N`/`rule #N`/`#N`/`N` (a file name wins). Activity columns `rules`
+  (JSON list, `["none"]`) and `unknown_rules` (INTEGER, `addColumn` takes a
+  type); a reused first answer has no citation. `ActivityQuery.Rule`
+  (`json_each`; resolved against current labels plus those in the log,
+  unknown refused), `Status.RuleUsage` over `activity_hours` (current
+  labels only; gone ones in `no_longer_present`; nil when the Markdown
+  cannot be read), `TestExcluding` (`classifier_test` `exclude_rules`:
+  `instructions.exclude` drops sections, rules keep their numbers; one
+  fetch, two model calls, `changed` nil unless both answered). A missing/unreadable file or a prompt over
   `max_prompt_chars` ends the run in `RunError` before the source is called;
   create/update/validate check only what exists (`checkInstructions`);
   `Test` returns `TestResult` with `system_prompt`. Decisions: interval trigger
