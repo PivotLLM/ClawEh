@@ -118,8 +118,8 @@ A classifier can keep its guidance and rules in Markdown files in the agent's `f
 
 | Key | What it is |
 |---|---|
-| `classify.instructions_file` | One `.md` file with the overall guidance, such as `files/classifiers/inbox-priority/guide.md`. It is added under a `## <file name>` heading. |
-| `classify.instructions_dir` | A folder, such as `files/classifiers/inbox-priority/rules`. Every `.md` file directly in it is added under a `## <file name>` heading. Sub-folders, names starting with `.` and anything that is not a regular file are skipped. |
+| `classify.instructions_file` | One `.md` file with the overall guidance, such as `files/classifiers/inbox-priority/guide.md`. It is added as its own section. |
+| `classify.instructions_dir` | A folder, such as `files/classifiers/inbox-priority/rules`. Every `.md` file directly in it is added as its own section. Sub-folders, names starting with `.` and anything that is not a regular file are skipped. |
 
 Recommended layout, one short file per rule (for example one per sender domain):
 
@@ -132,7 +132,7 @@ files/classifiers/inbox-priority/
 ```
 
 - Folder files load in alphabetical order of their names. To control the order, you can start names with zero-padded numbers such as `00-`, `01-`, … `33-`.
-- The model gets, in order: `instructions` (under `## instructions`), the file, the folder's files, the numbered `rules`, then the categories.
+- The model gets, in order: `instructions`, the file, the folder's files, each starting with a line `=== Rules from <label> ===`, then the numbered `rules` and the categories. Headings inside the files are kept as text.
 - Both paths are relative to the workspace and must be inside `files/`; an absolute path or one leading out with `..` is refused when the definition is saved. The files are read with the agent's own file permission: the agent needs `file_read_lines` or `file_read_bytes`, and a link leading out of `files/` is refused.
 - The files are read on every run, so an edit applies on the next run. Items already handled are not reprocessed.
 - Each file may have up to 256 KiB and the folder's files 1 MiB together; the text, with `instructions` and `rules`, counts toward `max_prompt_chars`.
@@ -142,12 +142,12 @@ files/classifiers/inbox-priority/
 
 ### Which rule decided
 
-The model names the rules that decided each item, so the agent can see where to tune. Each source of rules has a label: `instructions` for the inline instructions, the file name of the instructions file and of each folder file (such as `050-domain-example.md`), and `rule N` for the numbered `rules`. The model answers with the category, a short reason and a line such as `Rules: 050-domain-example.md, rule 2`, or `Rules: none` when no rule applied. The reason and the Rules line are optional: an answer without them, or with a Rules line that cannot be read, is still classified.
+The model names the rules that decided each item, so the agent can see where to tune. Each source of rules has a label, shown on the `=== Rules from <label> ===` line its section starts with (headings inside the files are not labels): `instructions` for the inline instructions, the workspace path of the instructions file (such as `files/classifiers/inbox-priority/guide.md`), the file name of each folder file (such as `050-domain-example.md`), and `rule N` for the numbered `rules`. The model answers with the category, a short reason and a line such as `Rules: 050-domain-example.md, rule 2`, or `Rules: none` when no rule applied. The reason and the Rules line are optional: an answer without them, or with a Rules line that cannot be read, is still classified.
 
-- A cited label is matched to the rules sent with that item, in any case; a file name may be given without `.md`, and a numbered rule as `rule 3`, `rule #3`, `#3` or `3`. The activity log keeps the known labels (`rules`, or `["none"]`) and counts the others (`unknown_rules`).
+- A cited label is matched to the rules sent with that item. It may also be written in any case, without `.md`, the instructions file by its bare name, and a numbered rule as `rule #3`, `#3` or `3`, but such a form counts only when it fits exactly one label. `none` always means no rule; a folder file `none.md` is cited only as `none.md`. The activity log keeps the known labels (`rules`, or `["none"]`) and counts the others (`unknown_rules`).
 - The citation is the model's own account, not proof. To confirm that a rule decided an item, the agent calls `classifier_test` with `exclude_rules`: it classifies the item twice, with all rules and without the ones named, and says whether the category changed (`changed`). That costs two model calls and stores nothing.
 - `classifier_activity` with `rule` lists the items that cited a rule; `rule: "none"` lists those that cited none.
-- `classifier_status` shows `rule_usage` over `activity_hours`: how many decisions cited each current rule, the rules never cited, how many cited none or an unknown label, and cited labels whose file is gone (`no_longer_present`). Rules never cited may be dead; many decisions citing none may need a new rule.
+- `classifier_status` shows `rule_usage` over `activity_hours`, counting each item once by its latest answer (a rerun, a replay after a failed action or a live run after a dry run replaces the earlier one): the items given a category (`decisions`), how many cited each current rule, the rules never cited, how many cited none or an unknown label, and cited labels whose file is gone (`no_longer_present`). Rules never cited may be dead; many items citing none may need a new rule.
 
 ### Paths and placeholders
 

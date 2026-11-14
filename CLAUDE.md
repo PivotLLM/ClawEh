@@ -547,22 +547,25 @@ production instance directly; test against a dev instance.
   `agent/classifier_instructions.go`: only for an agent with
   `file_read_lines`/`file_read_bytes`, `files.Reader` Resolve/Allowed/Open
   plus `os.SameFile`, link target inside `<ws>/files`, 256 KiB per file and
-  1 MiB per folder); prompt order `## instructions` (inline), `## <file
-  name>` for the file and per folder file, numbered rules, categories.
+  1 MiB per folder); prompt order inline, file, folder files (each section
+  starts with `=== Rules from <label> ===`, `sectionMarker`; the files' own
+  headings stay text), numbered rules, categories.
   **Rule citations** (`classifier/rules.go`, `citations.go`): every source
-  has a label (`promptSections`: `instructions`, the file's name, or its
-  cleaned path when a folder file has that name, each folder file's name,
-  `rule N`); `replyContract` asks for line 2 a reason, line 3
-  `Rules: <labels>` or `Rules: none`, both optional: `parseCitation` reads a
-  Rules line in place 2 or 3 only, a malformed one is ignored, never a
-  retry. `resolveLabel`: exact, any case, file name without `.md`, `rule
-  N`/`rule #N`/`#N`/`N` (a file name wins). Activity columns `rules`
+  has a label (`promptSections`: `instructions`, the instructions file's
+  cleaned workspace path, each folder file's name, `rule N`);
+  `replyContract` asks for line 2 a reason, line 3 `Rules: <labels>` or
+  `Rules: none`, both optional: `parseCitation` reads a `Rules:` line
+  (plural only; `Rule:` is a reason) in place 2 or 3 only, a malformed one
+  is ignored, never a retry. `resolveLabel`: the exact label wins; loose
+  forms (any case, without `.md`, the instructions file's bare name, `rule
+  #N`/`rules N`/`#N`/`N`) count only when they fit exactly one label;
+  bare `none` is never a label. Activity and processed columns `rules`
   (JSON list, `["none"]`) and `unknown_rules` (INTEGER, `addColumn` takes a
-  type); a reused first answer has no citation. `ActivityQuery.Rule`
-  (`json_each`; resolved against current labels plus those in the log,
-  unknown refused), `Status.RuleUsage` over `activity_hours` (current
-  labels only; gone ones in `no_longer_present`; nil when the Markdown
-  cannot be read), `TestExcluding` (`classifier_test` `exclude_rules`:
+  type); a reused answer reuses its stored citation. `ActivityQuery.Rule`
+  (`json_each`; resolved against current labels plus every label the log
+  cites, unknown refused), `Status.RuleUsage` over `activity_hours` (each
+  item once, by its latest categorised row; current labels only; gone ones
+  in `no_longer_present`; nil when the Markdown cannot be read), `TestExcluding` (`classifier_test` `exclude_rules`:
   `instructions.exclude` drops sections, rules keep their numbers; one
   fetch, two model calls, `changed` nil unless both answered). A missing/unreadable file or a prompt over
   `max_prompt_chars` ends the run in `RunError` before the source is called;

@@ -53,28 +53,21 @@ func TestPromptLabelsAllKinds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"instructions", "guide.md", "050-domain-example.md", "060-news.md", "rule 1", "rule 2"}
+	want := []string{"instructions", "files/classifiers/inbox/guide.md", "050-domain-example.md", "060-news.md", "rule 1", "rule 2"}
 	if got := promptLabels(def, in); !slices.Equal(got, want) {
 		t.Errorf("labels = %v, want %v", got, want)
 	}
 	system, _ := buildPrompt(def, in, itemData{}, "", "T0K")
-	wantPrefix := "## instructions\n\nDecide how important this email is to the user.\n\n" +
-		"## guide.md\n\nGUIDE text.\n\n" +
-		"## 050-domain-example.md\n\nDOMAIN rule.\n\n" +
-		"## 060-news.md\n\nNEWS rule.\n\n" +
+	wantPrefix := "=== Rules from instructions ===\n\nDecide how important this email is to the user.\n\n" +
+		"=== Rules from files/classifiers/inbox/guide.md ===\n\nGUIDE text.\n\n" +
+		"=== Rules from 050-domain-example.md ===\n\nDOMAIN rule.\n\n" +
+		"=== Rules from 060-news.md ===\n\nNEWS rule.\n\n" +
 		"Rules:\n1. Email from bob@example.com is urgent.\n2. Newsletters are low.\n\nCategories:\n"
 	if !strings.HasPrefix(system, wantPrefix) {
 		t.Errorf("system prompt:\n%s\nwant it to start with:\n%s", system, wantPrefix)
 	}
 	if !strings.Contains(system, replyContract) || !strings.Contains(replyContract, `"Rules: none"`) {
 		t.Errorf("the contract does not ask for the Rules line:\n%s", system)
-	}
-
-	// The instructions file is labelled by its path when a folder file has
-	// its name.
-	in.dir = append(in.dir, NamedText{Name: "GUIDE.md", Text: "x"})
-	if got := promptLabels(def, in); !slices.Contains(got, "files/classifiers/inbox/guide.md") || !slices.Contains(got, "GUIDE.md") {
-		t.Errorf("labels with a name clash = %v", got)
 	}
 }
 
@@ -94,10 +87,10 @@ func TestPromptExclusion(t *testing.T) {
 			t.Errorf("excluded text %q is in the prompt:\n%s", gone, system)
 		}
 	}
-	if !strings.Contains(system, "Rules:\n2. Newsletters are low.\n") || !strings.Contains(system, "## 060-news.md") {
+	if !strings.Contains(system, "Rules:\n2. Newsletters are low.\n") || !strings.Contains(system, "=== Rules from 060-news.md ===") {
 		t.Errorf("the rest is not as defined:\n%s", system)
 	}
-	if got := promptLabels(def, in); !slices.Equal(got, []string{"guide.md", "060-news.md", "rule 2"}) {
+	if got := promptLabels(def, in); !slices.Equal(got, []string{"files/classifiers/inbox/guide.md", "060-news.md", "rule 2"}) {
 		t.Errorf("labels = %v", got)
 	}
 }
@@ -107,7 +100,7 @@ func TestPromptExclusion(t *testing.T) {
 // unreadable.
 func TestParseReplyWithRules(t *testing.T) {
 	def := decodeMap(t, definition())
-	labels := []string{"instructions", "guide.md", "050-domain-example.md", "rule 1", "rule 2"}
+	labels := []string{"instructions", "files/x/guide.md", "050-domain-example.md", "rule 1", "rule 2"}
 	for _, tc := range []struct {
 		reply, category, reason string
 		rules                   []string
@@ -123,7 +116,7 @@ func TestParseReplyWithRules(t *testing.T) {
 		{"low\nnot from a client\nRULES: None.", "low", "not from a client", []string{RulesNone}, 0},
 		{"urgent\nx\n**Rules:** `050-domain-example`, \"rule #2\", [rule 1].", "urgent", "x", []string{"050-domain-example.md", "rule 2", "rule 1"}, 0},
 		{"urgent\nx\nRules: [2, 1, rule 2, #1]", "urgent", "x", []string{"rule 2", "rule 1"}, 0},
-		{"urgent\nx\nRule: GUIDE.MD; instructions", "urgent", "x", []string{"guide.md", "instructions"}, 0},
+		{"urgent\nx\nRules: GUIDE.MD; instructions", "urgent", "x", []string{"files/x/guide.md", "instructions"}, 0},
 		{"urgent\nx\nRules: rule 9, nope.md, rule 1", "urgent", "x", []string{"rule 1"}, 2},
 		{"urgent\nx\nRules: nope", "urgent", "x", nil, 1},
 		{"urgent\nx\nRules: none, rule 1", "urgent", "x", []string{"rule 1"}, 0},
@@ -149,8 +142,8 @@ func TestParseReplyWithRules(t *testing.T) {
 }
 
 // The accepted ways of naming a label: exact, any case, a file name
-// without .md, and an inline rule by number; a file name wins over a
-// number.
+// without .md, and an inline rule by number; a loose form naming two
+// labels names none (rules_review_test.go has more).
 func TestResolveLabel(t *testing.T) {
 	labels := []string{"instructions", "050-domain-example.md", "3.md", "A.md", "a.md", "rule 2", "rule 3"}
 	for token, want := range map[string]string{
@@ -165,17 +158,15 @@ func TestResolveLabel(t *testing.T) {
 		"#2":                    "rule 2",
 		"2":                     "rule 2",
 		"02":                    "rule 2",
-		"3":                     "3.md",
 		"rule 3":                "rule 3",
 		"a.md":                  "a.md",
 		"A.md":                  "A.md",
-		"a":                     "A.md",
 	} {
 		if got, ok := resolveLabel(labels, token); !ok || got != want {
 			t.Errorf("resolveLabel(%q) = %q, %v; want %q", token, got, ok, want)
 		}
 	}
-	for _, token := range []string{"", "rule 1", "1", "none", "domain-example", "rule", "#", "99999999999999999999"} {
+	for _, token := range []string{"", "rule 1", "1", "3", "a", "none", "domain-example", "rule", "#", "99999999999999999999"} {
 		if got, ok := resolveLabel(labels, token); ok {
 			t.Errorf("resolveLabel(%q) = %q, want no match", token, got)
 		}
@@ -362,7 +353,7 @@ func TestStatusRuleUsage(t *testing.T) {
 	want := RuleUsage{
 		Hours: 72, Decisions: 3,
 		Cited:           map[string]int{"050-domain-example.md": 1, "rule 1": 1},
-		NeverCited:      []string{"instructions", "guide.md", "060-news.md", "rule 2"},
+		NeverCited:      []string{"instructions", "files/classifiers/inbox/guide.md", "060-news.md", "rule 2"},
 		None:            1,
 		Unknown:         1,
 		NoLongerPresent: map[string]int{"070-old.md": 1},

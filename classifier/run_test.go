@@ -174,7 +174,7 @@ func TestRunActsOnPendingClassification(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.setClassified(context.Background(), "inbox-priority", "m2", "urgent", "earlier", "cheap", testStart); err != nil {
+	if err := st.setClassified(context.Background(), "inbox-priority", "m2", Decision{Category: "urgent", Reason: "earlier", Model: "cheap"}, testStart); err != nil {
 		t.Fatal(err)
 	}
 	e.run("inbox-priority")

@@ -340,7 +340,7 @@ else
     fail "md decision for f: $(sql "SELECT category FROM dry_run WHERE classifier='md'"), want newsletter"
 fi
 OUT="$(mcp classifier_test '{"id":"md","item_id":"f"}')"
-if echo "$OUT" | grep -qF '## 00-zebra.md' && echo "$OUT" | grep -qF 'Sort the document by its rules.' && echo "$OUT" | grep -qF '## 10-panda.md' && ! echo "$OUT" | grep -qF 'hidden'; then
+if echo "$OUT" | grep -qF '=== Rules from 00-zebra.md ===' && echo "$OUT" | grep -qF 'Sort the document by its rules.' && echo "$OUT" | grep -qF '=== Rules from 10-panda.md ===' && ! echo "$OUT" | grep -qF 'hidden'; then
     pass "classifier_test shows the system prompt with the Markdown loaded"
 else
     fail "classifier_test (md): $OUT"

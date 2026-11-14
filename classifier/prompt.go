@@ -20,8 +20,8 @@ import (
 // Rules line, and ignores a Rules line it cannot read.
 const replyContract = "Reply with exactly one category name on the first line. On the second line, give a brief reason. " +
 	"On the third line, write \"Rules:\" followed by the labels of only the rules that decided this item, comma-separated, " +
-	"or \"Rules: none\" if no rule applied. A rule's label is the heading of its section (the text after ##), " +
-	"or \"rule N\" for numbered rule N. Nothing else."
+	"or \"Rules: none\" if no rule applied. A rule's label is the <label> of the \"=== Rules from <label> ===\" line its section starts with, " +
+	"or \"rule N\" for numbered rule N; headings inside the text are not labels. Nothing else."
 
 // dataNotice says the item is data, not instructions (design 5.1e). %s is
 // the request's delimiter.
@@ -42,9 +42,10 @@ func newDelimiter() string {
 }
 
 // buildPrompt is one request about an item (design 5.1a): the system prompt
-// holds the instructions, each under a "## <label>" heading (inline as
-// "## instructions", then the instructions file and each file of the
-// instructions folder under its name, in load order; promptSections), the
+// holds the instructions, each section starting with its marker line
+// "=== Rules from <label> ===" (sectionMarker: inline as "instructions",
+// then the instructions file by its path and each file of the
+// instructions folder by its name, in load order; promptSections), the
 // rules numbered in order, the categories with their descriptions, the
 // output contract and how the item is delimited; the user message holds
 // the item's fields between lines carrying delim (a fresh random token,
@@ -59,7 +60,7 @@ func buildPrompt(def *Definition, in instructions, data itemData, badReply, deli
 			rules = append(rules, strconv.Itoa(sec.rule)+". "+sec.text+"\n")
 			continue
 		}
-		parts = append(parts, strings.TrimSpace("## "+sec.label+"\n\n"+sec.text))
+		parts = append(parts, strings.TrimSpace(sectionMarker(sec.label)+"\n\n"+sec.text))
 	}
 	s.WriteString(strings.Join(parts, "\n\n"))
 	s.WriteString("\n")

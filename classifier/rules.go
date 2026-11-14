@@ -17,16 +17,22 @@ import (
 // the model cites on its reply's Rules line, so the agent can see which of
 // its rules drove each decision.
 //
-// Labels:
+// Labels, each shown in the prompt only on the section's marker line
+// "=== Rules from <label> ===" (sectionMarker), never as a Markdown heading,
+// so a file's own headings are text, not labels:
 //   - classify.instructions: "instructions";
-//   - classify.instructions_file: its file name (its workspace path when a
-//     file of instructions_dir has the same name);
+//   - classify.instructions_file: its cleaned workspace path, such as
+//     "files/classifiers/inbox/guide.md";
 //   - each file of classify.instructions_dir: its file name;
-//   - classify.rules: "rule N", N its number (1 for the first).
+//   - classify.rules: "rule N", N its number (1 for the first), in the
+//     numbered list.
 //
-// A cited label is matched case-insensitively. Also accepted: a file name
-// without ".md", and for an inline rule "rule #N", "#N" or "N". A file name
-// matches before a rule number (a file named 3.md is "3").
+// Matching a cited label (resolveLabel): the exact label wins. Otherwise
+// these loose forms count only when they name exactly one label (several:
+// unknown): the label in any case; a file label without ".md"; the
+// instructions file's bare name, with or without ".md"; an inline rule as
+// "rule #N", "rules N", "#N" or "N". Bare "none" always means no rule, so a
+// folder file none.md is cited only as "none.md".
 
 // Rule label constants.
 const (
@@ -36,6 +42,10 @@ const (
 	// labelInstructions labels classify.instructions.
 	labelInstructions = "instructions"
 )
+
+// sectionMarker is the line that starts a section of the prompt and shows
+// its label.
+func sectionMarker(label string) string { return "=== Rules from " + label + " ===" }
 
 // ruleLabel is the label of inline rule n (1-based).
 func ruleLabel(n int) string { return "rule " + strconv.Itoa(n) }
@@ -64,7 +74,7 @@ func promptSections(def *Definition, in instructions) []section {
 		add(section{label: labelInstructions, text: t})
 	}
 	if t := strings.TrimSpace(in.file); t != "" {
-		add(section{label: fileLabel(def.Classify.InstructionsFile, in.dir), text: t})
+		add(section{label: path.Clean(def.Classify.InstructionsFile), text: t})
 	}
 	for _, f := range in.dir {
 		add(section{label: f.Name, text: strings.TrimSpace(f.Text)})
@@ -73,18 +83,6 @@ func promptSections(def *Definition, in instructions) []section {
 		add(section{label: ruleLabel(i + 1), text: strings.TrimSpace(r), rule: i + 1})
 	}
 	return out
-}
-
-// fileLabel is the instructions file's label: its name, or its cleaned
-// path when a folder file has the same name (in any case).
-func fileLabel(file string, dir []NamedText) string {
-	name := path.Base(path.Clean(file))
-	for _, f := range dir {
-		if strings.EqualFold(f.Name, name) {
-			return path.Clean(file)
-		}
-	}
-	return name
 }
 
 // promptLabels are the labels of the sections a request with def and in
@@ -102,11 +100,11 @@ func promptLabels(def *Definition, in instructions) []string {
 var ruleNumber = regexp.MustCompile(`(?i)^(?:rules?\s*)?#?\s*(\d+)$`)
 
 // resolveLabel returns the label of labels that token names (see the
-// accepted forms above), in this order: the exact label, the label in any
-// case, a file name without ".md", then an inline rule's number.
+// accepted forms above): the exact label, else the one label a loose form
+// names; none when several do, and never for bare "none".
 func resolveLabel(labels []string, token string) (string, bool) {
 	token = strings.Join(strings.Fields(token), " ")
-	if token == "" {
+	if token == "" || strings.EqualFold(token, RulesNone) {
 		return "", false
 	}
 	for _, l := range labels {
@@ -114,27 +112,41 @@ func resolveLabel(labels []string, token string) (string, bool) {
 			return l, true
 		}
 	}
-	for _, l := range labels {
-		if strings.EqualFold(l, token) {
-			return l, true
-		}
-	}
-	for _, l := range labels {
-		if isMarkdownName(l) && strings.EqualFold(l[:len(l)-len(".md")], token) {
-			return l, true
-		}
-	}
+	rule := ""
 	if m := ruleNumber.FindStringSubmatch(token); m != nil {
 		if n, err := strconv.Atoi(m[1]); err == nil {
-			want := ruleLabel(n)
-			for _, l := range labels {
-				if l == want {
-					return l, true
-				}
-			}
+			rule = ruleLabel(n)
 		}
 	}
-	return "", false
+	var found []string
+	for _, l := range labels {
+		if l == rule || slices.ContainsFunc(looseForms(l), func(f string) bool { return strings.EqualFold(f, token) }) {
+			found = append(found, l)
+		}
+	}
+	if len(found) != 1 {
+		return "", false
+	}
+	return found[0], true
+}
+
+// looseForms are the forms a label may also be cited by, in any case: the
+// label, without ".md", and for a path (the instructions file) its bare
+// name with and without ".md".
+func looseForms(label string) []string {
+	forms := []string{label}
+	names := []string{label}
+	if strings.Contains(label, "/") {
+		base := path.Base(label)
+		forms = append(forms, base)
+		names = append(names, base)
+	}
+	for _, n := range names {
+		if isMarkdownName(n) {
+			forms = append(forms, n[:len(n)-len(".md")])
+		}
+	}
+	return forms
 }
 
 // citation is a reply's Rules line: absent (given false), "none", or the
@@ -154,19 +166,14 @@ func citationTrim(s string) string {
 
 // rulesLineBody returns the text after "Rules:" when line is a Rules line:
 // it starts, after any quotes, emphasis, brackets or a list dash, with
-// "rules" or "rule" in any case, then a colon.
+// "rules" in any case, then a colon. "Rule:" starts a reason, not a
+// citation.
 func rulesLineBody(line string) (string, bool) {
 	s := strings.TrimLeft(line, " \t\"'`*[(<-")
-	var rest string
-	switch {
-	case hasPrefixFold(s, "rules"):
-		rest = s[len("rules"):]
-	case hasPrefixFold(s, "rule"):
-		rest = s[len("rule"):]
-	default:
+	if !hasPrefixFold(s, "rules") {
 		return "", false
 	}
-	rest = strings.TrimLeft(rest, " \t*`\"'")
+	rest := strings.TrimLeft(s[len("rules"):], " \t*`\"'")
 	body, ok := strings.CutPrefix(rest, ":")
 	return body, ok
 }

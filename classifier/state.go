@@ -156,7 +156,7 @@ CREATE TABLE IF NOT EXISTS processed (
   status TEXT NOT NULL,
   category TEXT, reason TEXT, model TEXT,
   classified_at INTEGER, acted_at INTEGER, attempts INTEGER NOT NULL DEFAULT 0,
-  error TEXT, updated_at INTEGER NOT NULL, last_seen INTEGER NOT NULL,
+  error TEXT, updated_at INTEGER NOT NULL, last_seen INTEGER NOT NULL, rules TEXT, unknown_rules INTEGER,
   PRIMARY KEY (classifier, item_id));
 CREATE TABLE IF NOT EXISTS dry_run (
   classifier TEXT NOT NULL, item_id TEXT NOT NULL, category TEXT, reason TEXT, model TEXT,
@@ -195,6 +195,11 @@ var addedActivityColumns = []struct{ name, typ string }{
 	{"rules", "TEXT"},
 	{"unknown_rules", "INTEGER"},
 }
+
+// addedProcessedColumns are the processed columns added after the table
+// first shipped: the citation of the stored answer (rules as a JSON list),
+// reused with it.
+var addedProcessedColumns = []struct{ name, typ string }{{"rules", "TEXT"}, {"unknown_rules", "INTEGER"}}
 
 // stateDB is one folder's state.db.
 type stateDB struct {
@@ -241,6 +246,11 @@ func openState(ctx context.Context, base string, dirMode, fileMode os.FileMode) 
 	}
 	for _, column := range addedActivityColumns {
 		if err := addColumn(ctx, db, "activity", column.name, column.typ); err != nil {
+			return nil, errors.Join(fmt.Errorf("schema %s: %w", path, err), db.Close())
+		}
+	}
+	for _, column := range addedProcessedColumns {
+		if err := addColumn(ctx, db, "processed", column.name, column.typ); err != nil {
 			return nil, errors.Join(fmt.Errorf("schema %s: %w", path, err), db.Close())
 		}
 	}
@@ -324,12 +334,17 @@ type processedRow struct {
 	reason   string
 	model    string
 	attempts int
+	// rules and unknownRules are the citation of the answer
+	// (Decision.Rules, UnknownRules), reused with it.
+	rules        []string
+	unknownRules int
 }
 
 // processed returns every processed row of classifier cls by item id.
 func (s *stateDB) processed(ctx context.Context, cls string) (_ map[string]processedRow, err error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT item_id, status, COALESCE(category,''), COALESCE(reason,''), COALESCE(model,''), attempts FROM processed WHERE classifier = ?`, cls)
+		`SELECT item_id, status, COALESCE(category,''), COALESCE(reason,''), COALESCE(model,''), attempts,
+  COALESCE(rules,''), COALESCE(unknown_rules,0) FROM processed WHERE classifier = ?`, cls)
 	if err != nil {
 		return nil, err
 	}
@@ -338,23 +353,27 @@ func (s *stateDB) processed(ctx context.Context, cls string) (_ map[string]proce
 	for rows.Next() {
 		var id string
 		var r processedRow
-		if err := rows.Scan(&id, &r.status, &r.category, &r.reason, &r.model, &r.attempts); err != nil {
+		var rules string
+		if err := rows.Scan(&id, &r.status, &r.category, &r.reason, &r.model, &r.attempts, &rules, &r.unknownRules); err != nil {
 			return nil, err
 		}
+		r.rules = fromJSONList(rules)
 		out[id] = r
 	}
 	return out, rows.Err()
 }
 
-// setClassified records the model's answer for an item (its action pending).
-func (s *stateDB) setClassified(ctx context.Context, cls, item, category, reason, model string, now time.Time) error {
+// setClassified records the model's answer for an item (its action
+// pending): the decision's category, reason, model and cited rules.
+func (s *stateDB) setClassified(ctx context.Context, cls, item string, d Decision, now time.Time) error {
 	_, err := s.db.ExecContext(ctx, `
-INSERT INTO processed (classifier, item_id, status, category, reason, model, classified_at, acted_at, attempts, error, updated_at, last_seen)
-VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 0, NULL, ?, ?)
+INSERT INTO processed (classifier, item_id, status, category, reason, model, classified_at, acted_at, attempts, error, updated_at, last_seen,
+  rules, unknown_rules)
+VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 0, NULL, ?, ?, ?, ?)
 ON CONFLICT (classifier, item_id) DO UPDATE SET status = excluded.status, category = excluded.category,
   reason = excluded.reason, model = excluded.model, classified_at = excluded.classified_at,
-  acted_at = NULL, error = NULL, updated_at = excluded.updated_at`,
-		cls, item, StatusClassified, category, reason, model, ms(now), ms(now), ms(now))
+  acted_at = NULL, error = NULL, updated_at = excluded.updated_at, rules = excluded.rules, unknown_rules = excluded.unknown_rules`,
+		cls, item, StatusClassified, d.Category, d.Reason, d.Model, ms(now), ms(now), ms(now), jsonList(d.Rules), nullableInt(d.UnknownRules))
 	return err
 }
 
@@ -583,32 +602,50 @@ func (s *stateDB) activity(ctx context.Context, cls string, q ActivityQuery) (_ 
 	return out, rows.Err()
 }
 
-// citedRow is the citation of one item row in the activity log; decided
-// when the item was given a category.
+// citedRow is the citation of an item's latest categorised activity row.
 type citedRow struct {
 	rules   []string
 	unknown int
-	decided bool
 }
 
-// citations returns the citations of cls's item decisions logged at or
-// after since (a zero time: all), oldest first.
-func (s *stateDB) citations(ctx context.Context, cls string, since time.Time) (_ []citedRow, err error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT COALESCE(rules,''), COALESCE(unknown_rules,0), category IS NOT NULL FROM activity
-WHERE classifier = ? AND outcome <> ? AND at >= ? ORDER BY at, id`, cls, OutcomeRunFailed, ms(since))
+// citations returns, per item of cls given a category at or after since
+// (a zero time: all), the citation of its latest such row in the activity
+// log (live or dry run, a rerun or a reused answer included), by item id.
+func (s *stateDB) citations(ctx context.Context, cls string, since time.Time) (_ map[string]citedRow, err error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT item_id, COALESCE(rules,''), COALESCE(unknown_rules,0) FROM activity
+WHERE classifier = ? AND item_id IS NOT NULL AND category IS NOT NULL AND at >= ? ORDER BY at, id`, cls, ms(since))
 	if err != nil {
 		return nil, err
 	}
 	defer func() { err = errors.Join(err, rows.Close()) }()
-	var out []citedRow
+	out := map[string]citedRow{}
 	for rows.Next() {
 		var r citedRow
-		var rules string
-		if err := rows.Scan(&rules, &r.unknown, &r.decided); err != nil {
+		var id, rules string
+		if err := rows.Scan(&id, &rules, &r.unknown); err != nil {
 			return nil, err
 		}
 		r.rules = fromJSONList(rules)
-		out = append(out, r)
+		out[id] = r // a later row replaces an earlier one
+	}
+	return out, rows.Err()
+}
+
+// citedLabels returns every label cls's activity log cites, sorted.
+func (s *stateDB) citedLabels(ctx context.Context, cls string) (_ []string, err error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT json_each.value FROM activity, json_each(activity.rules)
+WHERE activity.classifier = ? ORDER BY 1`, cls)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { err = errors.Join(err, rows.Close()) }()
+	var out []string
+	for rows.Next() {
+		var l string
+		if err := rows.Scan(&l); err != nil {
+			return nil, err
+		}
+		out = append(out, l)
 	}
 	return out, rows.Err()
 }

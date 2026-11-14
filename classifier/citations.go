@@ -14,12 +14,15 @@ import (
 )
 
 // RuleUsage is how often each rule was cited over a classifier's activity
-// window (activity_hours): Decisions are the items given a category in it;
-// Cited counts, per label of the rules loaded now, the decisions that cited
-// it; NeverCited are the labels loaded now that none cited; None counts
-// the decisions that cited no rule, Unknown those that cited a label
-// matching no rule of their request; NoLongerPresent counts the cited
-// labels that are not among the rules now (a file removed or renamed).
+// window (activity_hours), counting each item once, by its latest answer
+// (a rerun, a reused answer or a live run after a dry run replaces the
+// earlier one): Decisions are the items given a category in the window;
+// Cited counts, per label of the rules loaded now, the items whose answer
+// cited it; NeverCited are the labels loaded now that no item's answer
+// cited; None counts the items whose answer cited no rule, Unknown those
+// whose answer cited a label matching no rule of its request;
+// NoLongerPresent counts, per cited label not among the rules now (a file
+// removed or renamed), the items whose answer cited it.
 type RuleUsage struct {
 	Hours           int            `json:"hours"`
 	Decisions       int            `json:"decisions"`
@@ -53,10 +56,8 @@ func (s *Service) ruleUsage(ctx context.Context, scope Scope, def *Definition, s
 	}
 	u := &RuleUsage{Hours: hours}
 	cited := map[string]int{}
+	u.Decisions = len(rows)
 	for _, r := range rows {
-		if r.decided {
-			u.Decisions++
-		}
 		if r.unknown > 0 {
 			u.Unknown++
 		}
@@ -98,15 +99,13 @@ func (s *Service) resolveRuleFilter(ctx context.Context, scope Scope, def *Defin
 	if def != nil {
 		labels, _ = s.currentLabels(scope, def)
 	}
-	rows, err := st.citations(ctx, cls, time.Time{})
+	logged, err := st.citedLabels(ctx, cls)
 	if err != nil {
 		return "", err
 	}
-	for _, r := range rows {
-		for _, l := range r.rules {
-			if l != RulesNone && !slices.Contains(labels, l) {
-				labels = append(labels, l)
-			}
+	for _, l := range logged {
+		if l != RulesNone && !slices.Contains(labels, l) {
+			labels = append(labels, l)
 		}
 	}
 	if l, ok := resolveLabel(labels, token); ok {

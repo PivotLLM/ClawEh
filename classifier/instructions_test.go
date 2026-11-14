@@ -189,10 +189,10 @@ func TestBuildPromptMarkdownOrder(t *testing.T) {
 	}
 	def.Classify.InstructionsFile = "files/classifiers/inbox/guide.md"
 	system, _ := buildPrompt(def, in, itemData{}, "", "T0K")
-	want := "## instructions\n\nDecide how important this email is to the user.\n\n" +
-		"## guide.md\n\nGUIDE: decide how important it is.\n\n" +
-		"## 00-bob.md\n\nBOB rule.\n\n" +
-		"## billing.md\n\nBILLING rule.\n\n" +
+	want := "=== Rules from instructions ===\n\nDecide how important this email is to the user.\n\n" +
+		"=== Rules from files/classifiers/inbox/guide.md ===\n\nGUIDE: decide how important it is.\n\n" +
+		"=== Rules from 00-bob.md ===\n\nBOB rule.\n\n" +
+		"=== Rules from billing.md ===\n\nBILLING rule.\n\n" +
 		"Rules:\n1. Email from bob@example.com is from a client and is always urgent.\n\n" +
 		"Categories:\n"
 	if !strings.HasPrefix(system, want) {
@@ -202,7 +202,7 @@ func TestBuildPromptMarkdownOrder(t *testing.T) {
 	// Without inline instructions the Markdown starts the prompt.
 	def.Classify.Instructions = ""
 	system, _ = buildPrompt(def, instructions{dir: in.dir}, itemData{}, "", "T0K")
-	if !strings.HasPrefix(system, "## 00-bob.md\n\nBOB rule.\n\n## billing.md") {
+	if !strings.HasPrefix(system, "=== Rules from 00-bob.md ===\n\nBOB rule.\n\n=== Rules from billing.md ===") {
 		t.Errorf("system prompt without inline instructions:\n%s", system)
 	}
 }
@@ -221,7 +221,7 @@ func TestRunReadsMarkdownEveryRun(t *testing.T) {
 		t.Fatalf("first run = %+v", rec)
 	}
 	sys := e.model.systems[0]
-	if !strings.Contains(sys, "GUIDE v1\n\n## a-example.com.md\n\nEXAMPLE rule\n\n## b-newsletters.md\n\nNEWSLETTER rule\n") {
+	if !strings.Contains(sys, "GUIDE v1\n\n=== Rules from a-example.com.md ===\n\nEXAMPLE rule\n\n=== Rules from b-newsletters.md ===\n\nNEWSLETTER rule\n") {
 		t.Errorf("system prompt:\n%s", sys)
 	}
 
@@ -351,7 +351,7 @@ func TestTestShowsLoadedMarkdown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Category != "urgent" || !strings.Contains(res.SystemPrompt, "GUIDE text\n\n## 00-bob.md\n\nMail from bob@example.com is urgent.") ||
+	if res.Category != "urgent" || !strings.Contains(res.SystemPrompt, "GUIDE text\n\n=== Rules from 00-bob.md ===\n\nMail from bob@example.com is urgent.") ||
 		!strings.Contains(res.SystemPrompt, "Categories:\n- urgent") {
 		t.Errorf("Test = %+v", res)
 	}

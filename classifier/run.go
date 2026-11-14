@@ -77,6 +77,7 @@ func (s *Service) decide(ctx context.Context, scope Scope, def *Definition, in i
 	if reuse != nil && reuse.category != "" {
 		if c, ok := def.categoryNamed(reuse.category); ok {
 			d.Category, d.Reason, d.Model = c.Name, reuse.reason, reuse.model
+			d.Rules, d.UnknownRules = reuse.rules, reuse.unknownRules
 			return d
 		}
 	}
@@ -276,7 +277,7 @@ func (s *Service) handleItem(ctx context.Context, scope Scope, def *Definition, 
 		storeErr(st.setUnclassified(wctx, cls, item.id, d.Model, now))
 	default:
 		if reuse == nil || reuse.category != d.Category || mode == modeRerun {
-			if err := st.setClassified(wctx, cls, item.id, d.Category, d.Reason, d.Model, now); err != nil {
+			if err := st.setClassified(wctx, cls, item.id, d.Decision, now); err != nil {
 				storeErr(err)
 				d = d.failed(errStateWrite)
 				break

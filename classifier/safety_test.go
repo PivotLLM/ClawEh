@@ -81,7 +81,7 @@ func TestSetActedNeedsTheRow(t *testing.T) {
 	if err := st.setActed(context.Background(), "x", "missing", testStart); err == nil {
 		t.Error("setActed without a row succeeded")
 	}
-	if err := st.setClassified(context.Background(), "x", "m1", "urgent", "", "cheap", testStart); err != nil {
+	if err := st.setClassified(context.Background(), "x", "m1", Decision{Category: "urgent", Model: "cheap"}, testStart); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.setActed(context.Background(), "x", "m1", testStart); err != nil {

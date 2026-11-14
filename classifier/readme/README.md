@@ -121,15 +121,16 @@ a rule by editing a file with your file tools, not the definition.
   such as `files/classifiers/<id>/guide.md`.
 - `classify.instructions_dir`: a folder, such as
   `files/classifiers/<id>/rules`. Every `.md` file directly in it is added
-  under a `## <file name>` heading; sub-folders and names starting with `.`
-  are skipped. Use one short file per rule, for example one per sender
+  as its own section; sub-folders and names starting with `.` are
+  skipped. Use one short file per rule, for example one per sender
   domain.
 - Files load in alphabetical order of their names. To control the order,
   you can start names with zero-padded numbers such as `00-`, `01-`, …
   `33-`.
-- The model gets, in order: `instructions` (under `## instructions`), the
-  file and the folder's files (each under `## <file name>`), the numbered
-  `rules`, then the categories.
+- The model gets, in order: `instructions`, the file, the folder's files,
+  each starting with a line `=== Rules from <label> ===` (see "Which rule
+  decided"), then the numbered `rules` and the categories. Headings inside
+  your files are kept as text.
 - Both paths are relative to your workspace and must be inside `files/`;
   they are read with your own file permission, so you need
   `file_read_lines` or `file_read_bytes`. The files are read on every run, so an edit applies on the next run.
@@ -166,21 +167,34 @@ Email from news.example.org is a newsletter: low, unless it mentions an invoice.
 
 ## Which rule decided
 
-The model names the rules that decided each item. Labels: `instructions`
-(inline), the file name of `instructions_file` and of each folder file
-(`050-domain-example.md`), and `rule N` for the numbered `rules`. Each
-decision stores `rules` (the labels cited, or `["none"]`) and
-`unknown_rules` (labels that matched no rule). You may cite a file without
-`.md`, and a numbered rule as `rule 3`, `rule #3`, `#3` or `3`, in any case.
+The model names the rules that decided each item, by label. Each section
+of the prompt starts with `=== Rules from <label> ===`; headings inside your
+files are not labels. Labels:
+
+- `instructions`: the inline `instructions`.
+- The workspace path of `instructions_file`, such as
+  `files/classifiers/inbox-priority/guide.md`.
+- The file name of each folder file, such as `050-domain-example.md`.
+- `rule N`: numbered rule N of `rules`.
+- `none` (`Rules: none`): no rule applied. A folder file `none.md` is
+  cited only as `none.md`.
+
+Each decision stores `rules` (the labels cited, or `["none"]`) and
+`unknown_rules` (cited labels that matched no rule). A label may also be
+written in any case, without `.md`, the instructions file by its bare name,
+and a numbered rule as `rule #3`, `#3` or `3`, but such a form counts only
+when it fits exactly one label; otherwise it is unknown.
 
 A citation shows where to look; it is the model's own account, not proof.
 
 - `classifier_activity` with `"rule": "050-domain-example.md"` lists what
   that rule decided; `"rule": "none"` lists items no rule decided.
-- `classifier_status` gives `rule_usage` over `activity_hours`: decisions
-  per rule (`cited`), rules no decision cited (`never_cited`, maybe dead),
-  decisions citing `none` (many of them: write a rule), `unknown`, and
-  cited files since removed (`no_longer_present`).
+- `classifier_status` gives `rule_usage` over `activity_hours`, counting
+  each item once by its latest answer (a rerun, a replay or a live run
+  after a dry run replaces the earlier one): `decisions` (items given a
+  category), items per rule (`cited`), rules no item cited (`never_cited`,
+  maybe dead), items citing `none` (many of them: write a rule), `unknown`,
+  and cited files since removed (`no_longer_present`).
 - Before editing a rule because of an item, confirm the rule decided it:
   `classifier_test` with `exclude_rules` classifies the item with all rules
   and again without those, and `changed` says whether the category
