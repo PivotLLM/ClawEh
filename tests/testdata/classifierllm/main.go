@@ -14,7 +14,10 @@
 // Before those, a rule in the system prompt decides: a line "When the item
 // says WORD, answer CATEGORY." makes an item holding WORD get CATEGORY (the
 // first such rule that matches), so a test can prove that instructions,
-// such as a classifier's Markdown rule files, reach the model.
+// such as a classifier's Markdown rule files, reach the model. Such a reply
+// cites the rule on a third line, "Rules: <label>", the label being the
+// heading of the section the rule line is in ("## <label>") or "rule N"
+// for an inline rule; the other replies cite nothing.
 //
 // Every request is logged on stdout as one "chat: reply=..." line, so the
 // test can count the model calls. Plain and streaming (SSE) responses are
@@ -110,12 +113,23 @@ type chatRequest struct {
 // ruleLine is a system-prompt rule: the item's word, then the category.
 var ruleLine = regexp.MustCompile(`When the item says ([A-Z]+), answer ([a-z]+)\.`)
 
+// numberedRule is an inline rule line under "Rules:": its number.
+var numberedRule = regexp.MustCompile(`^(\d+)\. `)
+
 // pick is the reply for a request whose system prompt is system and whose
-// user messages hold text.
+// user messages hold text. A rule line that decides cites the label of the
+// section it is in: the "## <label>" heading above it, or "rule N" for
+// numbered rule N.
 func pick(system, text string) string {
-	for _, m := range ruleLine.FindAllStringSubmatch(system, -1) {
-		if strings.Contains(text, m[1]) {
-			return m[2] + "\nA rule says so."
+	label := ""
+	for line := range strings.SplitSeq(system, "\n") {
+		if h, ok := strings.CutPrefix(line, "## "); ok {
+			label = h
+		} else if m := numberedRule.FindStringSubmatch(line); m != nil {
+			label = "rule " + m[1]
+		}
+		if m := ruleLine.FindStringSubmatch(line); m != nil && strings.Contains(text, m[1]) {
+			return m[2] + "\nA rule says so.\nRules: " + label
 		}
 	}
 	switch {

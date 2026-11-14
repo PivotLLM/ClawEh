@@ -31,6 +31,11 @@
 #     herself (a system turn in her conversation), the second saying further
 #     errors are muted for 24 hours, then silent until classifier_update
 #     turns reports back on; and a folder outside files/ is refused;
+#   - the model's citation of the rule file that decided is stored on the
+#     activity row; classifier_activity with rule returns that item (and
+#     refuses an unknown rule), classifier_status shows the cited file and
+#     the one never cited, and classifier_test with exclude_rules naming
+#     the deciding file reports that the category changed;
 #   - a hand-edited invalid definition is never run, is logged, and is
 #     reported by the Check Up assessment API;
 #   - tools of an external MCP server (the stub's /mcp), whose results are
@@ -435,6 +440,51 @@ BADDEF="${MDDEF/\"id\":\"md\"/\"id\":\"md-bad\"}"
 BADDEF="${BADDEF/files\/classifiers\/md\/rules/../memory}"
 OUT="$(mcp classifier_create "{\"definition\":$BADDEF}")"
 if echo "$OUT" | grep -qF 'classify.instructions_dir' && echo "$OUT" | grep -qF 'must be a path inside files/'; then pass "a rules folder outside files/ is refused"; else fail "classifier_create (md-bad): $OUT"; fi
+
+# ---- 5c. The model cites the rule that decided; the agent can trace it. ----
+# The stub cites the heading of the section whose rule line decided.
+CITE="$WS/files/classifiers/cite"
+mkdir -p "$CITE/rules" "$WS/files/cite-inbox"
+printf 'When the item says ZEBRA, answer newsletter.\n' >"$CITE/rules/050-domain-example.md"
+printf 'When the item says PANDA, answer invoice.\n' >"$CITE/rules/060-other.md"
+printf '{"subject":"Stripes","body":"A ZEBRA again."}\n' >"$WS/files/cite-inbox/h.json"
+printf '{"items":[%s]}\n' "$(item h cite-inbox)" >"$WS/files/cite-index.json"
+CITECLASSIFY='{"instructions":"Sort the document.","instructions_dir":"files/classifiers/cite/rules","categories":[{"name":"invoice"},{"name":"newsletter"},{"name":"other"}]}'
+CITEDEF="{\"id\":\"cite\",\"enabled\":true,\"dry_run\":true,\"trigger\":{\"every_seconds\":2},\"source\":${SOURCE/index.json/cite-index.json},\"fetch\":$FETCH,\"classify\":$CITECLASSIFY,\"actions\":$ACTIONS,\"report\":{\"summary\":\"never\"}}"
+OUT="$(mcp classifier_create "{\"definition\":$CITEDEF}")"
+if ! echo "$OUT" | grep -qF "Classifier cite created."; then fail "classifier_create (cite): $OUT"; fi
+cite_decided() { [ "$(sql "SELECT category FROM dry_run WHERE classifier='cite' AND item_id='h'")" = newsletter ]; }
+if wait_for 30 cite_decided; then
+    RULES="$(sql "SELECT rules FROM activity WHERE classifier='cite' AND item_id='h'")"
+    if [ "$RULES" = '["050-domain-example.md"]' ]; then pass "the activity row records the rule file that decided"; else fail "cite rules: $RULES"; fi
+else
+    fail "cite decision for h: $(sql "SELECT category FROM dry_run WHERE classifier='cite'")"
+fi
+OUT="$(mcp classifier_activity '{"id":"cite","rule":"050-domain-example"}')"
+if echo "$OUT" | grep -qF '"item_id": "h"' && echo "$OUT" | grep -qF '"050-domain-example.md"'; then
+    pass "classifier_activity with rule returns the item that rule decided"
+else
+    fail "classifier_activity (rule): $OUT"
+fi
+OUT="$(mcp classifier_activity '{"id":"cite","rule":"060-other.md"}')"
+if ! echo "$OUT" | grep -qF '"item_id"'; then pass "classifier_activity with an uncited rule returns nothing"; else fail "classifier_activity (uncited rule): $OUT"; fi
+OUT="$(mcp classifier_activity '{"id":"cite","rule":"nope"}')"
+if echo "$OUT" | grep -qF "is not one of this classifier's rules"; then pass "classifier_activity refuses an unknown rule"; else fail "classifier_activity (unknown rule): $OUT"; fi
+OUT="$(mcp classifier_status '{"id":"cite"}')"
+USAGE="$(echo "$OUT" | sed -n '/"rule_usage"/,$p')"
+if echo "$USAGE" | grep -qF '"050-domain-example.md": 1' && echo "$USAGE" | grep -qF '"never_cited"' && echo "$USAGE" | grep -qF '"060-other.md"'; then
+    pass "classifier_status shows the cited rule file and the one never cited"
+else
+    fail "classifier_status (rule usage): $OUT"
+fi
+OUT="$(mcp classifier_test '{"id":"cite","item_id":"h","exclude_rules":["050-domain-example.md"]}')"
+if echo "$OUT" | grep -qF '"changed": true' && echo "$OUT" | grep -qF '"without_rules"'; then
+    pass "classifier_test without the deciding rule file changes the category"
+else
+    fail "classifier_test (exclude_rules): $OUT"
+fi
+OUT="$(mcp classifier_update '{"id":"cite","changes":{"enabled":false}}')"
+if ! echo "$OUT" | grep -qF "Classifier cite updated."; then fail "classifier_update (disable cite): $OUT"; fi
 
 # ---- 6. A hand-edited invalid definition is not run and is reported. ----
 printf '{"id":"broken","owner":"alice","enabled":true,"trigger":{"every_seconds":0},"source":%s,"classify":%s}\n' "$SOURCE" "$CLASSIFY" >"$CLS_DIR/broken.json"
