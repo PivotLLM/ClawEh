@@ -53,23 +53,25 @@ func Tools(svc *Service, host ToolHost) []toolspec.ToolDefinition {
 		}},
 		{Name: "delete", Description: "Delete a classifier and its state", Handler: t.delete, Parameters: []toolspec.Parameter{id}},
 		{Name: "validate", Description: "Check a definition without saving it, including your tools and one call of its source tool", Handler: t.validate, Parameters: []toolspec.Parameter{definition}},
-		{Name: "status", Description: "A classifier's last run, counts, recent decisions, last error and whether its error notices are on, off or muted; omit id for all your classifiers", Handler: t.status, Parameters: []toolspec.Parameter{
+		{Name: "status", Description: "A classifier's last run, counts, recent decisions, last error, whether its error notices are on, off or muted, and how often each rule was cited (rule_usage); omit id for all your classifiers", Handler: t.status, Parameters: []toolspec.Parameter{
 			{Name: "id", Type: "string", Description: "Classifier ID; omit for all"},
 		}},
-		{Name: "test", Description: "Classify one item without acting or storing anything: the category, reason, the action that would run and the system prompt with your Markdown instructions loaded", Handler: t.test, Parameters: []toolspec.Parameter{
+		{Name: "test", Description: "Classify one item without acting or storing anything: the category, reason, cited rules, the action that would run and the system prompt with your Markdown instructions loaded. With exclude_rules, the item is classified again without those rules and changed says whether the category changed; that costs two model calls", Handler: t.test, Parameters: []toolspec.Parameter{
 			id,
 			{Name: "item_id", Type: "string", Description: "The item's ID; omit for the first item the source lists"},
+			{Name: "exclude_rules", Type: "array", Items: "string", Description: "Rule labels to leave out of the second classification: a rule file's name, rule N, or instructions"},
 		}},
 		{Name: "rerun", Description: "Classify one item again with the current definition and run its action", Handler: t.rerun, Parameters: []toolspec.Parameter{
 			id,
 			{Name: "item_id", Type: "string", Required: true, Description: "The item's ID"},
 		}},
-		{Name: "activity", Description: "A classifier's activity log, newest first: each item handled with its fields, category, reason and action, and each failed run with its error (the same error in a row is one entry with count, at and last_at)", Handler: t.activity, Parameters: []toolspec.Parameter{
+		{Name: "activity", Description: "A classifier's activity log, newest first: each item handled with its fields, category, reason, cited rules and action, and each failed run with its error (the same error in a row is one entry with count, at and last_at)", Handler: t.activity, Parameters: []toolspec.Parameter{
 			id,
 			{Name: "limit", Type: "integer", Description: fmt.Sprintf("Entries to return; %d when omitted, at most %d", DefaultActivityLimit, MaxActivityLimit)},
 			{Name: "offset", Type: "integer", Description: "Entries to skip"},
 			{Name: "search", Type: "string", Description: "Only entries whose fields, item ID, category, reason, action arguments or error contain this text (case-insensitive)"},
 			{Name: "outcome", Type: "string", Description: "Only entries with this outcome: " + strings.Join(ActivityOutcomes, ", ") + " (run_failed: failed runs)"},
+			{Name: "rule", Type: "string", Description: "Only entries that cited this rule (a rule file's name, rule N, or instructions); none for those that cited no rule"},
 		}},
 	}
 	for i := range defs {
@@ -223,6 +225,27 @@ func stringArg(call *toolspec.ToolCall, name string, required bool) (string, err
 	return s, nil
 }
 
+// stringListArg is an optional list of non-empty strings.
+func stringListArg(call *toolspec.ToolCall, name string) ([]string, error) {
+	v, ok := call.Args[name]
+	if !ok || v == nil {
+		return nil, nil
+	}
+	list, ok := v.([]any)
+	if !ok {
+		return nil, argError(name + " must be a list of strings.")
+	}
+	out := make([]string, 0, len(list))
+	for _, x := range list {
+		s, ok := x.(string)
+		if !ok || strings.TrimSpace(s) == "" {
+			return nil, argError(name + " must be a list of strings.")
+		}
+		out = append(out, strings.TrimSpace(s))
+	}
+	return out, nil
+}
+
 func intArg(call *toolspec.ToolCall, name string) (int, error) {
 	v, ok := call.Args[name]
 	if !ok || v == nil {
@@ -373,7 +396,11 @@ func (t *toolSuite) test(call *toolspec.ToolCall) (*toolspec.Result, error) {
 		if err != nil {
 			return nil, err
 		}
-		d, err := t.svc.Test(call.Ctx, scope, id, itemID)
+		exclude, err := stringListArg(call, "exclude_rules")
+		if err != nil {
+			return nil, err
+		}
+		d, err := t.svc.TestExcluding(call.Ctx, scope, id, itemID, exclude)
 		if err != nil {
 			return nil, err
 		}
@@ -410,6 +437,11 @@ func (t *toolSuite) activity(call *toolspec.ToolCall) (*toolspec.Result, error) 
 		}
 		if q.Outcome, err = stringArg(call, "outcome", false); err != nil {
 			return nil, err
+		}
+		if _, given := call.Args["rule"]; given {
+			if q.Rule, err = stringArg(call, "rule", true); err != nil {
+				return nil, argError("rule must name a rule, or none.")
+			}
 		}
 		entries, err := t.svc.Activity(scope, id, q)
 		if err != nil {

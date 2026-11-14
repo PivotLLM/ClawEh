@@ -187,9 +187,10 @@ func TestBuildPromptMarkdownOrder(t *testing.T) {
 		file: "\nGUIDE: decide how important it is.\n",
 		dir:  []NamedText{{Name: "00-bob.md", Text: "BOB rule."}, {Name: "billing.md", Text: "BILLING rule.\n"}},
 	}
+	def.Classify.InstructionsFile = "files/classifiers/inbox/guide.md"
 	system, _ := buildPrompt(def, in, itemData{}, "", "T0K")
-	want := "Decide how important this email is to the user.\n\n" +
-		"GUIDE: decide how important it is.\n\n" +
+	want := "## instructions\n\nDecide how important this email is to the user.\n\n" +
+		"## guide.md\n\nGUIDE: decide how important it is.\n\n" +
 		"## 00-bob.md\n\nBOB rule.\n\n" +
 		"## billing.md\n\nBILLING rule.\n\n" +
 		"Rules:\n1. Email from bob@example.com is from a client and is always urgent.\n\n" +

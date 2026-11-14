@@ -82,14 +82,17 @@ type Summary struct {
 }
 
 // Status is a classifier's Summary with its processed items by status, its
-// most recent decisions, its last run's error and its failed runs in a row
-// as error notices count them.
+// most recent decisions, its last run's error, its failed runs in a row
+// as error notices count them, and how often each rule was cited.
 type Status struct {
 	Summary
 	Counts     map[string]int `json:"counts"`
 	Recent     []Decision     `json:"recent,omitempty"`
 	LastError  string         `json:"last_error,omitempty"`
 	FailedRuns int            `json:"failed_runs"`
+	// RuleUsage is how often each rule was cited; nil for an invalid file
+	// or Markdown that cannot be read.
+	RuleUsage *RuleUsage `json:"rule_usage,omitempty"`
 }
 
 // recentDecisions is the number of decisions Status returns.
@@ -572,15 +575,22 @@ func (s *Service) Status(scope Scope, id string) ([]Status, error) {
 		for _, e := range recent {
 			status.Recent = append(status.Recent, e.Decision)
 		}
+		if fi, err := s.owned(scope, sum.ID); err == nil && fi.def != nil {
+			if status.RuleUsage, err = s.ruleUsage(ctx, scope, fi.def, st, s.host.clock().Now().UTC()); err != nil {
+				return nil, err
+			}
+		}
 		out = append(out, status)
 	}
 	return out, nil
 }
 
 // Activity reads a classifier's activity log (design 7.2). An Outcome that
-// is not one of ActivityOutcomes is refused.
+// is not one of ActivityOutcomes, or a Rule that names no rule loaded now
+// or cited in the log, is refused.
 func (s *Service) Activity(scope Scope, id string, q ActivityQuery) ([]ActivityEntry, error) {
-	if _, err := s.owned(scope, id); err != nil {
+	fi, err := s.owned(scope, id)
+	if err != nil {
 		return nil, err
 	}
 	if q.Outcome != "" && !slices.Contains(ActivityOutcomes, q.Outcome) {
@@ -590,6 +600,11 @@ func (s *Service) Activity(scope Scope, id string, q ActivityQuery) ([]ActivityE
 	st, err := s.state(ctx, scope.BaseDirectory)
 	if err != nil {
 		return nil, err
+	}
+	if q.Rule != "" {
+		if q.rule, err = s.resolveRuleFilter(ctx, scope, fi.def, st, NormalizeID(id), q.Rule); err != nil {
+			return nil, err
+		}
 	}
 	entries, err := st.activity(ctx, NormalizeID(id), q)
 	if entries == nil && err == nil {
@@ -637,10 +652,15 @@ func (s *Service) pickItem(ctx context.Context, scope Scope, def *Definition, it
 
 // TestResult is classifier_test's answer: the Decision and the system
 // prompt the model was given, with the Markdown instructions loaded, so the
-// agent can check its rules.
+// agent can check its rules. With rules excluded (TestExcluding), also the
+// labels left out, the decision without them and whether its category
+// (or unclassified) changed; Changed is nil when either attempt failed.
 type TestResult struct {
 	Decision
-	SystemPrompt string `json:"system_prompt"`
+	SystemPrompt string    `json:"system_prompt"`
+	ExcludeRules []string  `json:"exclude_rules,omitempty"`
+	WithoutRules *Decision `json:"without_rules,omitempty"`
+	Changed      *bool     `json:"changed,omitempty"`
 }
 
 // instructionsRefusal is a tool's refusal of Markdown instructions that
@@ -653,6 +673,14 @@ func instructionsRefusal(err error) error {
 // current definition: the category and reason, the action that would run
 // and the system prompt, nothing stored and no action run (design 9.1f).
 func (s *Service) Test(ctx context.Context, scope Scope, id, itemID string) (TestResult, error) {
+	return s.TestExcluding(ctx, scope, id, itemID, nil)
+}
+
+// TestExcluding is Test that, when exclude names rules (labels in any
+// accepted form, rules.go), classifies the item a second time with those
+// rules left out of the prompt and reports both decisions. An unknown
+// label is refused before anything is called. Nothing is stored.
+func (s *Service) TestExcluding(ctx context.Context, scope Scope, id, itemID string, exclude []string) (TestResult, error) {
 	def, err := s.validDefinition(scope, id)
 	if err != nil {
 		return TestResult{}, err
@@ -660,6 +688,13 @@ func (s *Service) Test(ctx context.Context, scope Scope, id, itemID string) (Tes
 	in, err := s.loadInstructions(scope, def)
 	if err != nil {
 		return TestResult{}, instructionsRefusal(err)
+	}
+	var without instructions
+	if len(exclude) > 0 {
+		without = in
+		if without.exclude, err = resolveExclusions(def, in, exclude); err != nil {
+			return TestResult{}, err
+		}
 	}
 	item, err := s.pickItem(ctx, scope, def, itemID)
 	if err != nil {
@@ -676,7 +711,43 @@ func (s *Service) Test(ctx context.Context, scope Scope, id, itemID string) (Tes
 	if system == "" { // no model call: the fetch failed
 		system, _ = buildPrompt(def, in, itemData{}, "", newDelimiter())
 	}
-	return TestResult{Decision: d.Decision, SystemPrompt: system}, nil
+	res := TestResult{Decision: d.Decision, SystemPrompt: system}
+	if without.exclude == nil || !answered(d) {
+		return res, nil // nothing excluded, or no answer to compare with
+	}
+	for l := range without.exclude {
+		res.ExcludeRules = append(res.ExcludeRules, l)
+	}
+	slices.Sort(res.ExcludeRules)
+	d2 := s.testAgain(ctx, scope, def, without, item, d)
+	if d2.Outcome == OutcomeFailed && ctx.Err() != nil {
+		return TestResult{}, ErrInterrupted
+	}
+	res.WithoutRules = &d2.Decision
+	if answered(d2) {
+		changed := d.Category != d2.Category
+		res.Changed = &changed
+	}
+	return res, nil
+}
+
+// answered reports whether the model answered about the decision's item:
+// a category, or unclassified.
+func answered(d decision) bool { return d.Category != "" || d.Outcome == OutcomeUnclassified }
+
+// testAgain classifies the item of a test decision (first) again with in,
+// reusing the fetched data, as classifier_test would show it.
+func (s *Service) testAgain(ctx context.Context, scope Scope, def *Definition, in instructions, item listedItem, first decision) decision {
+	d := decision{data: first.data}
+	d.ItemID, d.MissingFields, d.ShortenedFields = first.ItemID, first.MissingFields, first.ShortenedFields
+	d = s.classify(withClassifier(ctx, NormalizeID(def.ID)), scope, def, in, d)
+	d.Error, d.cause = s.host.redact(d.Error), s.redactCause(d.cause)
+	d.At = s.host.clock().Now().UTC()
+	if d.Category != "" {
+		d.Outcome = OutcomeRecorded
+		previewAction(def, item, &d)
+	}
+	return d
 }
 
 // Rerun classifies one item again with the current definition, replaces

@@ -59,10 +59,13 @@ func checkInstructionsPaths(c Classify) []string {
 }
 
 // instructions is the Markdown a classifier read for one run (or one test):
-// the file's content and the folder's files in load order.
+// the file's content and the folder's files in load order. exclude holds
+// the labels (promptSections) a classifier_test with exclude_rules leaves
+// out of the prompt.
 type instructions struct {
-	file string
-	dir  []NamedText
+	file    string
+	dir     []NamedText
+	exclude map[string]bool
 }
 
 // instructionsOrder sorts a folder's files alphabetically by name, ignoring

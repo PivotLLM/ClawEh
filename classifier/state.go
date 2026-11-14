@@ -63,6 +63,12 @@ type Decision struct {
 	// Replies are the model's replies to an item left unclassified, the
 	// first and the retry's, each cut to ActivityValueMax characters.
 	Replies []string `json:"replies,omitempty"`
+	// Rules are the labels of the rules the model cited for its answer
+	// (rules.go), known labels only, in its order; [RulesNone] when it said
+	// no rule applied; nil when it cited nothing readable. UnknownRules
+	// counts the cited labels that matched no rule loaded for the request.
+	Rules        []string `json:"rules,omitempty"`
+	UnknownRules int      `json:"unknown_rules,omitempty"`
 	// MissingFields are the fetch fields whose path resolved to nothing in
 	// the fetch result; ShortenedFields are the fields cut to fit the
 	// item's budget (fetch.max_chars).
@@ -128,6 +134,12 @@ type ActivityQuery struct {
 	Offset  int
 	Search  string
 	Outcome string
+	// Rule, when set, keeps only the entries that cite it: a rule's label
+	// in any accepted form (rules.go), or RulesNone for those that cited
+	// no rule. Activity refuses a label it cannot match.
+	Rule string
+	// rule is Rule resolved to the label stored in the log.
+	rule string
 	// itemsOnly leaves out run_failed rows (Status's recent decisions).
 	itemsOnly bool
 }
@@ -161,17 +173,28 @@ CREATE TABLE IF NOT EXISTS invalid_reports (classifier TEXT PRIMARY KEY, hash TE
 
 // activityTable creates the activity table. A run_failed row has no item_id
 // (NULL) and has count and last_at. replies, missing_fields and
-// shortened_fields are JSON lists of strings, NULL when empty.
+// shortened_fields are JSON lists of strings, NULL when empty; so is rules,
+// the cited labels (Decision.Rules), with unknown_rules their count of
+// unknown labels (NULL when none).
 const activityTable = `CREATE TABLE IF NOT EXISTS activity (
   id INTEGER PRIMARY KEY, classifier TEXT NOT NULL, at INTEGER NOT NULL, item_id TEXT,
   fields TEXT NOT NULL,
   category TEXT, reason TEXT, model TEXT, action TEXT, outcome TEXT NOT NULL, error TEXT,
   dry_run INTEGER NOT NULL, rerun INTEGER NOT NULL, action_args TEXT, count INTEGER, last_at INTEGER,
-  replies TEXT, missing_fields TEXT, shortened_fields TEXT, detail TEXT)`
+  replies TEXT, missing_fields TEXT, shortened_fields TEXT, detail TEXT, rules TEXT, unknown_rules INTEGER)`
 
 // addedActivityColumns are the activity columns added after the table
-// first shipped, added to a state.db written before they existed.
-var addedActivityColumns = []string{"action_args", "replies", "missing_fields", "shortened_fields", "detail"}
+// first shipped, with their types, added to a state.db written before they
+// existed.
+var addedActivityColumns = []struct{ name, typ string }{
+	{"action_args", "TEXT"},
+	{"replies", "TEXT"},
+	{"missing_fields", "TEXT"},
+	{"shortened_fields", "TEXT"},
+	{"detail", "TEXT"},
+	{"rules", "TEXT"},
+	{"unknown_rules", "INTEGER"},
+}
 
 // stateDB is one folder's state.db.
 type stateDB struct {
@@ -217,7 +240,7 @@ func openState(ctx context.Context, base string, dirMode, fileMode os.FileMode) 
 		return nil, errors.Join(fmt.Errorf("schema %s: %w", path, err), db.Close())
 	}
 	for _, column := range addedActivityColumns {
-		if err := addColumn(ctx, db, "activity", column); err != nil {
+		if err := addColumn(ctx, db, "activity", column.name, column.typ); err != nil {
 			return nil, errors.Join(fmt.Errorf("schema %s: %w", path, err), db.Close())
 		}
 	}
@@ -232,9 +255,10 @@ func openState(ctx context.Context, base string, dirMode, fileMode os.FileMode) 
 	return &stateDB{db: db, path: path}, nil
 }
 
-// addColumn adds the TEXT column table.column to a state.db created before
-// the column existed. table and column are fixed names, never input.
-func addColumn(ctx context.Context, db *sql.DB, table, column string) error {
+// addColumn adds the column table.column of type typ to a state.db created
+// before the column existed. table, column and typ are fixed names, never
+// input.
+func addColumn(ctx context.Context, db *sql.DB, table, column, typ string) error {
 	var n int
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, table, column).Scan(&n); err != nil {
 		return err
@@ -242,7 +266,7 @@ func addColumn(ctx context.Context, db *sql.DB, table, column string) error {
 	if n > 0 {
 		return nil
 	}
-	_, err := db.ExecContext(ctx, `ALTER TABLE `+table+` ADD COLUMN `+column+` TEXT`) // #nosec G202 -- fixed names
+	_, err := db.ExecContext(ctx, `ALTER TABLE `+table+` ADD COLUMN `+column+` `+typ) // #nosec G202 -- fixed names
 	return err
 }
 
@@ -450,12 +474,20 @@ func (s *stateDB) addActivity(ctx context.Context, cls string, e ActivityEntry) 
 	}
 	_, err = s.db.ExecContext(ctx, `
 INSERT INTO activity (classifier, at, item_id, fields, category, reason, model, action, action_args, outcome, error, dry_run, rerun,
-  replies, missing_fields, shortened_fields)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  replies, missing_fields, shortened_fields, rules, unknown_rules)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		cls, ms(e.At), e.ItemID, string(data), nullable(e.Category), nullable(e.Reason), nullable(e.Model),
 		nullable(e.Action), nullable(cutRunes(e.ActionArgs, ActivityValueMax)), e.Outcome, nullable(e.Error), e.DryRun, e.Rerun,
-		jsonList(replies), jsonList(e.MissingFields), jsonList(e.ShortenedFields))
+		jsonList(replies), jsonList(e.MissingFields), jsonList(e.ShortenedFields), jsonList(e.Rules), nullableInt(e.UnknownRules))
 	return err
+}
+
+// nullableInt is n for a column, NULL when 0.
+func nullableInt(n int) any {
+	if n == 0 {
+		return nil
+	}
+	return n
 }
 
 func nullable(s string) any {
@@ -501,11 +533,15 @@ func (s *stateDB) activity(ctx context.Context, cls string, q ActivityQuery) (_ 
 	query := `SELECT at, COALESCE(item_id,''), fields, COALESCE(category,''), COALESCE(reason,''), COALESCE(model,''),
   COALESCE(action,''), COALESCE(action_args,''), outcome, COALESCE(error,''), dry_run, rerun,
   COALESCE(count,0), last_at, COALESCE(replies,''), COALESCE(missing_fields,''), COALESCE(shortened_fields,''),
-  COALESCE(detail,'') FROM activity WHERE classifier = ?`
+  COALESCE(detail,''), COALESCE(rules,''), COALESCE(unknown_rules,0) FROM activity WHERE classifier = ?`
 	args := []any{cls}
 	if q.Outcome != "" {
 		query += ` AND outcome = ?`
 		args = append(args, q.Outcome)
+	}
+	if q.rule != "" {
+		query += ` AND EXISTS (SELECT 1 FROM json_each(activity.rules) WHERE json_each.value = ?)`
+		args = append(args, q.rule)
 	}
 	if q.itemsOnly {
 		query += ` AND outcome <> ?`
@@ -530,18 +566,49 @@ func (s *stateDB) activity(ctx context.Context, cls string, q ActivityQuery) (_ 
 		var e ActivityEntry
 		var at int64
 		var lastAt sql.NullInt64
-		var fields, replies, missing, shortened string
+		var fields, replies, missing, shortened, rules string
 		if err := rows.Scan(&at, &e.ItemID, &fields, &e.Category, &e.Reason, &e.Model, &e.Action,
 			&e.ActionArgs, &e.Outcome, &e.Error, &e.DryRun, &e.Rerun, &e.Count, &lastAt,
-			&replies, &missing, &shortened, &e.Detail); err != nil {
+			&replies, &missing, &shortened, &e.Detail, &rules, &e.UnknownRules); err != nil {
 			return nil, err
 		}
 		e.At, e.LastAt = time.UnixMilli(at).UTC(), fromMS(lastAt)
 		e.Replies, e.MissingFields, e.ShortenedFields = fromJSONList(replies), fromJSONList(missing), fromJSONList(shortened)
+		e.Rules = fromJSONList(rules)
 		if err := json.Unmarshal([]byte(fields), &e.Fields); err != nil {
 			e.Fields = nil
 		}
 		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// citedRow is the citation of one item row in the activity log; decided
+// when the item was given a category.
+type citedRow struct {
+	rules   []string
+	unknown int
+	decided bool
+}
+
+// citations returns the citations of cls's item decisions logged at or
+// after since (a zero time: all), oldest first.
+func (s *stateDB) citations(ctx context.Context, cls string, since time.Time) (_ []citedRow, err error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT COALESCE(rules,''), COALESCE(unknown_rules,0), category IS NOT NULL FROM activity
+WHERE classifier = ? AND outcome <> ? AND at >= ? ORDER BY at, id`, cls, OutcomeRunFailed, ms(since))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { err = errors.Join(err, rows.Close()) }()
+	var out []citedRow
+	for rows.Next() {
+		var r citedRow
+		var rules string
+		if err := rows.Scan(&rules, &r.unknown, &r.decided); err != nil {
+			return nil, err
+		}
+		r.rules = fromJSONList(rules)
+		out = append(out, r)
 	}
 	return out, rows.Err()
 }

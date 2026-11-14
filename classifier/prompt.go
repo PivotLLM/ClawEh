@@ -15,8 +15,13 @@ import (
 	"unicode/utf8"
 )
 
-// replyContract is the output rule every request states.
-const replyContract = "Reply with exactly one category name on the first line, optionally followed by one line giving the reason. Nothing else."
+// replyContract is the output rule every request states. Only the first
+// line is required: parseReply accepts a reply without the reason or the
+// Rules line, and ignores a Rules line it cannot read.
+const replyContract = "Reply with exactly one category name on the first line. On the second line, give a brief reason. " +
+	"On the third line, write \"Rules:\" followed by the labels of only the rules that decided this item, comma-separated, " +
+	"or \"Rules: none\" if no rule applied. A rule's label is the heading of its section (the text after ##), " +
+	"or \"rule N\" for numbered rule N. Nothing else."
 
 // dataNotice says the item is data, not instructions (design 5.1e). %s is
 // the request's delimiter.
@@ -37,31 +42,31 @@ func newDelimiter() string {
 }
 
 // buildPrompt is one request about an item (design 5.1a): the system prompt
-// holds the instructions (inline, then the instructions file's content,
-// then each file of the instructions folder under a "## <name>" heading, in
-// load order), the rules in order, the categories with their descriptions,
-// the output contract and how the item is delimited; the user message holds
+// holds the instructions, each under a "## <label>" heading (inline as
+// "## instructions", then the instructions file and each file of the
+// instructions folder under its name, in load order; promptSections), the
+// rules numbered in order, the categories with their descriptions, the
+// output contract and how the item is delimited; the user message holds
 // the item's fields between lines carrying delim (a fresh random token,
 // newDelimiter). badReply, when not empty, is a previous reply that named
 // no category: the request then says so, after the item (design 5.1c).
+// Labels in in.exclude are left out; the rules keep their numbers.
 func buildPrompt(def *Definition, in instructions, data itemData, badReply, delim string) (system, user string) {
 	var s strings.Builder
-	var parts []string
-	if t := strings.TrimSpace(def.Classify.Instructions); t != "" {
-		parts = append(parts, t)
-	}
-	if t := strings.TrimSpace(in.file); t != "" {
-		parts = append(parts, t)
-	}
-	for _, f := range in.dir {
-		parts = append(parts, strings.TrimSpace("## "+f.Name+"\n\n"+strings.TrimSpace(f.Text)))
+	var parts, rules []string
+	for _, sec := range promptSections(def, in) {
+		if sec.rule > 0 {
+			rules = append(rules, strconv.Itoa(sec.rule)+". "+sec.text+"\n")
+			continue
+		}
+		parts = append(parts, strings.TrimSpace("## "+sec.label+"\n\n"+sec.text))
 	}
 	s.WriteString(strings.Join(parts, "\n\n"))
 	s.WriteString("\n")
-	if len(def.Classify.Rules) > 0 {
+	if len(rules) > 0 {
 		s.WriteString("\nRules:\n")
-		for i, r := range def.Classify.Rules {
-			s.WriteString(strconv.Itoa(i+1) + ". " + strings.TrimSpace(r) + "\n")
+		for _, r := range rules {
+			s.WriteString(r)
 		}
 	}
 	s.WriteString("\nCategories:\n")
@@ -107,12 +112,8 @@ func categoryList(def *Definition) string {
 	return strings.Join(names, ", ")
 }
 
-// parseReply reads a model reply strictly (design 5.1b): code fences and
-// surrounding quotes are dropped; the first non-empty line, cut at the first
-// ':', '—' or " - ", trimmed of quotes, spaces and end punctuation, must be a
-// category name (case-insensitive). The reason is the rest of that line, or
-// else the next non-empty line, on one line and cut to ReasonMax characters.
-func parseReply(reply string, def *Definition) (category, reason string, ok bool) {
+// replyLines are a reply's non-empty lines, trimmed, without code fences.
+func replyLines(reply string) []string {
 	var lines []string
 	for line := range strings.SplitSeq(strings.ReplaceAll(reply, "\r\n", "\n"), "\n") {
 		line = strings.TrimSpace(line)
@@ -121,6 +122,18 @@ func parseReply(reply string, def *Definition) (category, reason string, ok bool
 		}
 		lines = append(lines, line)
 	}
+	return lines
+}
+
+// parseReply reads a model reply strictly (design 5.1b): code fences and
+// surrounding quotes are dropped; the first non-empty line, cut at the first
+// ':', '—' or " - ", trimmed of quotes, spaces and end punctuation, must be a
+// category name (case-insensitive). The reason is the rest of that line, or
+// else the next non-empty line unless it is the Rules line, on one line and
+// cut to ReasonMax characters. The Rules line (parseCitation) never makes a
+// reply unreadable.
+func parseReply(reply string, def *Definition) (category, reason string, ok bool) {
+	lines := replyLines(reply)
 	if len(lines) == 0 {
 		return "", "", false
 	}
@@ -142,7 +155,9 @@ func parseReply(reply string, def *Definition) (category, reason string, ok bool
 	}
 	reason = strings.TrimSpace(rest)
 	if reason == "" && len(lines) > 1 {
-		reason = lines[1]
+		if _, isRules := rulesLineBody(lines[1]); !isRules {
+			reason = lines[1]
+		}
 	}
 	reason = strings.Trim(reason, "\"'` ")
 	if utf8.RuneCountInString(reason) > ReasonMax {

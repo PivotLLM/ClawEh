@@ -80,7 +80,13 @@ func (s *Service) decide(ctx context.Context, scope Scope, def *Definition, in i
 			return d
 		}
 	}
+	return s.classify(ctx, scope, def, in, d)
+}
 
+// classify asks the model about the item whose data d holds: the category,
+// reason and cited rules (matched against the labels the request sent), or
+// unclassified when neither the reply nor the retry names a category.
+func (s *Service) classify(ctx context.Context, scope Scope, def *Definition, in instructions, d decision) decision {
 	delim := newDelimiter()
 	system, user := buildPrompt(def, in, d.data, "", delim)
 	d.system = system
@@ -105,6 +111,7 @@ func (s *Service) decide(ctx context.Context, scope Scope, def *Definition, in i
 		}
 	}
 	d.Category, d.Reason = category, reason
+	d.Rules, d.UnknownRules = parseCitation(replyLines(reply)).resolve(promptLabels(def, in))
 	return d
 }
 
