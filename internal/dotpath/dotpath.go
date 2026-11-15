@@ -120,6 +120,7 @@ func lookupSegments(v any, segs []string) (any, Presence) {
 				out = append(out, got)
 			case Empty:
 				empty = true
+			case Absent: // this element lacks the path; others may have it
 			}
 		}
 		switch {

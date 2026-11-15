@@ -100,18 +100,17 @@ func fieldsFromFetch(result string, f *Fetch) itemData {
 		switch presence {
 		case dotpath.Absent:
 			d.missing = append(d.missing, name)
-			continue
 		case dotpath.Empty:
 			d.fetched[name] = v
 			d.fields = append(d.fields, Field{Name: name, Empty: true})
-			continue
+		case dotpath.Found:
+			d.fetched[name] = v
+			text := valueText(v)
+			if slices.Contains(f.HTML, name) {
+				text = htmlToText(text)
+			}
+			d.fields = append(d.fields, Field{Name: name, Value: text})
 		}
-		d.fetched[name] = v
-		text := valueText(v)
-		if slices.Contains(f.HTML, name) {
-			text = htmlToText(text)
-		}
-		d.fields = append(d.fields, Field{Name: name, Value: text})
 	}
 	return d
 }

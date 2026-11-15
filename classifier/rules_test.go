@@ -257,8 +257,9 @@ func TestEmptyCitation(t *testing.T) {
 		t.Errorf("unclassified m5 JSON = %s, want no rules", data)
 	}
 	ids := func(rule string) []string {
-		var out []string
-		for _, a := range e.activity(ActivityQuery{Rule: rule}) {
+		entries := e.activity(ActivityQuery{Rule: rule})
+		out := make([]string, 0, len(entries))
+		for _, a := range entries {
 			out = append(out, a.ItemID)
 		}
 		return out
