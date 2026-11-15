@@ -91,6 +91,10 @@ func buildPrompt(def *Definition, in instructions, data itemData, badReply, deli
 	}
 	for _, f := range data.fields {
 		head := "[" + delim + "] field " + strconv.Quote(f.Name)
+		if f.Empty {
+			u.WriteString(head + " (empty)\n") // there, with nothing in it: no value lines
+			continue
+		}
 		if f.Shortened {
 			head += " (shortened)"
 		}

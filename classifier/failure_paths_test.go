@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -142,6 +143,89 @@ func TestFetchMissingAndShortenedFields(t *testing.T) {
 	}
 	if res, err := e.svc.Test(context.Background(), e.scope, "inbox-priority", "m2"); err != nil || res.Error != wantM2 {
 		t.Errorf("Test m2 = %+v, %v", res.Decision, err)
+	}
+}
+
+// A fetch field whose path is in the result but holds nothing (an empty
+// list along the path, null, an empty string) is empty, not missing: the
+// model is shown it as empty, the activity row and classifier_test keep it
+// as "", and it is not in missing_fields. An item whose fields are all
+// empty is classified; one whose fields are all missing fails.
+func TestFetchEmptyFields(t *testing.T) {
+	e := newEnv(t)
+	def := definition()
+	obj(def["fetch"])["fields"] = map[string]any{
+		"from": "from.address", "subject": "subject", "body": "body.content", "cc": "ccRecipients.emailAddress.address",
+	}
+	e.create(def)
+	e.tools.set("mail_read", func(args map[string]any) (string, error) {
+		switch args["id"] {
+		case "m2": // every field empty
+			return `{"from":null,"subject":"","body":{"content":""},"ccRecipients":[]}`, nil
+		case "m3": // every field missing
+			return `{"other":"x"}`, nil
+		}
+		return `{"from":{"address":"bob@example.com"},"subject":"About m1","body":{"content":"Hi"},"ccRecipients":[]}`, nil
+	})
+	rec := e.run("inbox-priority")
+	if rec.Acted != 2 || rec.Failed != 1 || e.model.count() != 2 {
+		t.Fatalf("run = %+v, model calls %d; want m1 and m2 acted, m3 failed", rec, e.model.count())
+	}
+	rows := map[string]ActivityEntry{}
+	for _, r := range e.activity(ActivityQuery{}) {
+		rows[r.ItemID] = r
+	}
+	if r := rows["m1"]; r.MissingFields != nil || r.Fields["subject"] != "About m1" {
+		t.Errorf("m1 = missing %q, fields %q", r.MissingFields, r.Fields)
+	} else if v, ok := r.Fields["cc"]; !ok || v != "" {
+		t.Errorf("m1 cc = %q (kept %v), want \"\"", v, ok)
+	}
+	if r := rows["m2"]; r.Outcome != OutcomeActed || r.MissingFields != nil ||
+		!maps.Equal(r.Fields, map[string]string{"body": "", "cc": "", "from": "", "subject": ""}) {
+		t.Errorf("m2 = %+v", r)
+	}
+	if r := rows["m3"]; r.Outcome != OutcomeFailed || !slices.Equal(r.MissingFields, []string{"body", "cc", "from", "subject"}) {
+		t.Errorf("m3 = %+v", r)
+	}
+	var m1Prompt string
+	for _, c := range e.model.calls {
+		if strings.Contains(c, "About m1") {
+			m1Prompt = c
+		}
+	}
+	if !strings.Contains(m1Prompt, "] field \"cc\" (empty)\n[") || strings.Contains(m1Prompt, "not present") {
+		t.Errorf("the model was not shown cc as empty:\n%s", m1Prompt)
+	}
+	res, err := e.svc.Test(context.Background(), e.scope, "inbox-priority", "m1")
+	if err != nil || res.MissingFields != nil || res.Fields["subject"] != "About m1" {
+		t.Fatalf("Test m1 = %+v, %v", res, err)
+	}
+	if v, ok := res.Fields["cc"]; !ok || v != "" {
+		t.Errorf("Test m1 cc = %q (kept %v), want \"\"", v, ok)
+	}
+}
+
+// {{fetched.<name>}} of an empty field is the empty value the path met:
+// an empty list or string is passed on, null resolves to nothing.
+func TestFetchEmptyFieldSubstitution(t *testing.T) {
+	e := newEnv(t)
+	e.setInbox([]string{"m1", "m2"})
+	def := definition()
+	obj(obj(def["fetch"])["fields"])["cc"] = "ccRecipients.emailAddress.address"
+	obj(def["actions"])["urgent"] = map[string]any{"tool": "mail_move", "args": map[string]any{"id": "{{item.id}}", "destination": "{{fetched.cc}}"}}
+	e.create(def)
+	e.tools.set("mail_read", func(args map[string]any) (string, error) {
+		if args["id"] == "m2" {
+			return `{"from":{"address":"bob@example.com"},"ccRecipients":null}`, nil
+		}
+		return `{"from":{"address":"bob@example.com"},"ccRecipients":[]}`, nil
+	})
+	rec := e.run("inbox-priority")
+	if rec.Acted != 1 || rec.Failed != 1 {
+		t.Fatalf("run = %+v", rec)
+	}
+	if got, ok := e.moves()["m1"].([]any); !ok || len(got) != 0 {
+		t.Errorf("m1 destination = %#v, want an empty list", e.moves()["m1"])
 	}
 }
 

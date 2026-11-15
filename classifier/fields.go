@@ -23,12 +23,17 @@ type Field struct {
 	Name      string
 	Value     string
 	Shortened bool // cut to fit the item's budget
+	// Empty: the fetch field's path is in the result but holds nothing
+	// (dotpath.Empty: null, an empty list, an empty string); Value is "".
+	Empty bool
 }
 
 // itemData is what one item gives the prompt and the substitution: the
-// fields in name order, the names whose path resolved to nothing, and the
-// fetched values with their JSON types (for {{fetched.<name>}}). notJSON is
-// the parse error of a fetch result that is not JSON.
+// fields in name order (an empty one included, marked Empty), the names
+// whose path is not in the fetch result (dotpath.Absent), and the fetched
+// values with their JSON types (for {{fetched.<name>}}; an empty field
+// holds the empty value met). notJSON is the parse error of a fetch result
+// that is not JSON.
 type itemData struct {
 	fields  []Field
 	missing []string
@@ -43,6 +48,16 @@ func (d itemData) shortened() []string {
 		if f.Shortened {
 			out = append(out, f.Name)
 		}
+	}
+	return out
+}
+
+// values are the fields by name as the activity log and classifier_test
+// show them, each cut to ActivityValueMax characters; an empty field is "".
+func (d itemData) values() map[string]string {
+	out := make(map[string]string, len(d.fields))
+	for _, f := range d.fields {
+		out[f.Name] = cutRunes(f.Value, ActivityValueMax)
 	}
 	return out
 }
@@ -68,8 +83,10 @@ func fieldsFromElement(el any) itemData {
 }
 
 // fieldsFromFetch selects the fetch fields from a fetch result (JSON, or
-// plain text in which no path resolves), reducing the fields fetch.html names
-// from HTML to text.
+// plain text in which no path is found), reducing the fields fetch.html
+// names from HTML to text. Each field is found (its value), empty (there
+// with nothing in it: Empty, Value "") or missing (in missing), by the
+// rules of dotpath.Lookup.
 func fieldsFromFetch(result string, f *Fetch) itemData {
 	d := itemData{fetched: map[string]any{}}
 	var decoded any = result
@@ -79,9 +96,14 @@ func fieldsFromFetch(result string, f *Fetch) itemData {
 		d.notJSON = err
 	}
 	for _, name := range sortedKeys(f.Fields) {
-		v := dotpath.Get(decoded, f.Fields[name])
-		if v == nil {
+		v, presence := dotpath.Lookup(decoded, f.Fields[name])
+		switch presence {
+		case dotpath.Absent:
 			d.missing = append(d.missing, name)
+			continue
+		case dotpath.Empty:
+			d.fetched[name] = v
+			d.fields = append(d.fields, Field{Name: name, Empty: true})
 			continue
 		}
 		d.fetched[name] = v

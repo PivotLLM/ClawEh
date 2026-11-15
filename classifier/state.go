@@ -69,8 +69,9 @@ type Decision struct {
 	// counts the cited labels that matched no rule loaded for the request.
 	Rules        []string `json:"rules,omitempty"`
 	UnknownRules int      `json:"unknown_rules,omitempty"`
-	// MissingFields are the fetch fields whose path resolved to nothing in
-	// the fetch result; ShortenedFields are the fields cut to fit the
+	// MissingFields are the fetch fields whose path is not in the fetch
+	// result (dotpath.Absent; a field that is there but empty is in the
+	// fields as "", not here); ShortenedFields are the fields cut to fit the
 	// item's budget (fetch.max_chars).
 	MissingFields   []string  `json:"missing_fields,omitempty"`
 	ShortenedFields []string  `json:"shortened_fields,omitempty"`

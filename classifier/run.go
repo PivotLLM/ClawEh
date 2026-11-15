@@ -65,7 +65,8 @@ func (s *Service) decide(ctx context.Context, scope Scope, def *Definition, in i
 		d.data = fieldsFromFetch(result, f)
 		d.MissingFields = d.data.missing
 		if len(d.data.fields) == 0 {
-			// Nothing to classify: the item is not decided blind.
+			// Every field is missing (an empty one counts as there):
+			// nothing to classify, and the item is not decided blind.
 			return d.fetchFailed(item, noFetchFields(f.Tool, d.data, result))
 		}
 	} else {
@@ -116,8 +117,8 @@ func (s *Service) classify(ctx context.Context, scope Scope, def *Definition, in
 	return d
 }
 
-// noFetchFields is the failure of a fetch result in which no fetch field
-// resolved, naming the missing fields (and, when the result is not JSON,
+// noFetchFields is the failure of a fetch result in which every fetch
+// field is missing (not merely empty), naming the missing fields (and, when the result is not JSON,
 // the parse error and what came back, as the detail).
 func noFetchFields(tool string, data itemData, result string) error {
 	e := &noFieldsError{tool: tool, missing: data.missing}
@@ -297,11 +298,7 @@ func (s *Service) handleItem(ctx context.Context, scope Scope, def *Definition, 
 		}
 	}
 
-	fields := make(map[string]string, len(d.data.fields))
-	for _, f := range d.data.fields {
-		fields[f.Name] = f.Value
-	}
-	storeErr(st.addActivity(wctx, cls, ActivityEntry{Decision: d.Decision, Fields: fields}))
+	storeErr(st.addActivity(wctx, cls, ActivityEntry{Decision: d.Decision, Fields: d.data.values()}))
 	s.host.audit(AuditEvent{
 		Kind: AuditClassification, Agent: scope.AgentID, Classifier: def.ID, ItemID: item.id,
 		Category: d.Category, Action: d.Action, Outcome: d.Outcome, Clone: scope.Clone,

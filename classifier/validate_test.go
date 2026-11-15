@@ -235,7 +235,7 @@ func TestParseReply(t *testing.T) {
 func TestBuildPrompt(t *testing.T) {
 	def := decodeMap(t, definition())
 	system, user := buildPrompt(def, instructions{}, itemData{
-		fields:  []Field{{Name: "body", Value: "Hello", Shortened: true}, {Name: "subject", Value: "Hi"}},
+		fields:  []Field{{Name: "body", Value: "Hello", Shortened: true}, {Name: "cc", Empty: true}, {Name: "subject", Value: "Hi"}},
 		missing: []string{"from"},
 	}, "", "T0K")
 	for _, want := range []string{
@@ -249,7 +249,7 @@ func TestBuildPrompt(t *testing.T) {
 			t.Errorf("system lacks %q:\n%s", want, system)
 		}
 	}
-	want := "<item T0K>\n[T0K] fields not present: \"from\"\n[T0K] field \"body\" (shortened)\nHello\n[T0K] field \"subject\"\nHi\n</item T0K>\n"
+	want := "<item T0K>\n[T0K] fields not present: \"from\"\n[T0K] field \"body\" (shortened)\nHello\n[T0K] field \"cc\" (empty)\n[T0K] field \"subject\"\nHi\n</item T0K>\n"
 	if user != want {
 		t.Errorf("user =\n%q\nwant\n%q", user, want)
 	}

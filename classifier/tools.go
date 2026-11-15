@@ -56,7 +56,7 @@ func Tools(svc *Service, host ToolHost) []toolspec.ToolDefinition {
 		{Name: "status", Description: "A classifier's last run, counts, recent decisions, last error, whether its error notices are on, off or muted, and how often each rule was cited (rule_usage); omit id for all your classifiers", Handler: t.status, Parameters: []toolspec.Parameter{
 			{Name: "id", Type: "string", Description: "Classifier ID; omit for all"},
 		}},
-		{Name: "test", Description: "Classify one item without acting or storing anything: the category, reason, cited rules, the action that would run and the system prompt with your Markdown instructions loaded. With exclude_rules, the item is classified again without those rules and changed says whether the category changed; that costs two model calls", Handler: t.test, Parameters: []toolspec.Parameter{
+		{Name: "test", Description: "Classify one item without acting or storing anything: its fields (empty ones as \"\"; missing_fields: not in the fetch result), the category, reason, cited rules, the action that would run and the system prompt with your Markdown instructions loaded. With exclude_rules, the item is classified again without those rules and changed says whether the category changed; that costs two model calls", Handler: t.test, Parameters: []toolspec.Parameter{
 			id,
 			{Name: "item_id", Type: "string", Description: "The item's ID; omit for the first item the source lists"},
 			{Name: "exclude_rules", Type: "array", Items: "string", Description: "Rule labels to leave out of the second classification: a rule file's name, rule N, or instructions"},

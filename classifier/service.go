@@ -657,10 +657,13 @@ func (s *Service) pickItem(ctx context.Context, scope Scope, def *Definition, it
 // (or unclassified) changed; Changed is nil when either attempt failed.
 type TestResult struct {
 	Decision
-	SystemPrompt string    `json:"system_prompt"`
-	ExcludeRules []string  `json:"exclude_rules,omitempty"`
-	WithoutRules *Decision `json:"without_rules,omitempty"`
-	Changed      *bool     `json:"changed,omitempty"`
+	// Fields are the item's fields as the activity log keeps them: each
+	// value cut to ActivityValueMax characters, an empty one as "".
+	Fields       map[string]string `json:"fields,omitempty"`
+	SystemPrompt string            `json:"system_prompt"`
+	ExcludeRules []string          `json:"exclude_rules,omitempty"`
+	WithoutRules *Decision         `json:"without_rules,omitempty"`
+	Changed      *bool             `json:"changed,omitempty"`
 }
 
 // instructionsRefusal is a tool's refusal of Markdown instructions that
@@ -711,7 +714,7 @@ func (s *Service) TestExcluding(ctx context.Context, scope Scope, id, itemID str
 	if system == "" { // no model call: the fetch failed
 		system, _ = buildPrompt(def, in, itemData{}, "", newDelimiter())
 	}
-	res := TestResult{Decision: d.Decision, SystemPrompt: system}
+	res := TestResult{Decision: d.Decision, Fields: d.data.values(), SystemPrompt: system}
 	if without.exclude == nil || !answered(d) {
 		return res, nil // nothing excluded, or no answer to compare with
 	}
