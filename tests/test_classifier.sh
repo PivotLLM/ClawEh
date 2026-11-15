@@ -36,6 +36,12 @@
 #     refuses an unknown rule), classifier_status shows the cited file and
 #     the one never cited, and classifier_test with exclude_rules naming
 #     the deciding file reports that the category changed;
+#     rule_usage counts it as with_rules;
+#   - classifier_status shows a dry-run classifier's decisions as
+#     dry_run_counts, its counts staying live-only;
+#   - an item whose fetch field is an empty list is classified, logged
+#     with that field as "" and no missing_fields; the answer with no
+#     Rules line has an empty rules list, counted as no_citation;
 #   - a hand-edited invalid definition is never run, is logged, and is
 #     reported by the Check Up assessment API;
 #   - tools of an external MCP server (the stub's /mcp), whose results are
@@ -238,6 +244,18 @@ if echo "$OUT" | grep -qF "Classifier sort created."; then pass "classifier_crea
 OUT="$(mcp classifier_create "{\"definition\":$DRY}")"
 if echo "$OUT" | grep -qF "Classifier dry created."; then pass "classifier_create saves the dry-run classifier"; else fail "classifier_create (dry): $OUT"; fi
 
+# json_has <json> <python expression over d>: the expression is true for
+# the decoded JSON (the first {...} in the text, so a tool result wrapped
+# as untrusted content is read too).
+json_has() {
+    python3 -I - "$1" "$2" <<'PY'
+import json, sys
+text = sys.argv[1]
+d, _ = json.JSONDecoder().raw_decode(text[text.index("{"):])
+sys.exit(0 if eval(sys.argv[2], {"d": d}) else 1)
+PY
+}
+
 # ---- 2. The first runs. ----
 run_done() { [ -n "$(sql "SELECT ended_at FROM runs WHERE classifier='$1' AND ended_at IS NOT NULL")" ]; }
 if wait_for 30 run_done sort && wait_for 30 run_done dry; then
@@ -306,6 +324,12 @@ if echo "$OUT" | grep -q 'destination_path' && echo "$OUT" | grep -qF 'files/inv
     pass "classifier_activity shows and searches the dry run's action arguments"
 else
     fail "classifier_activity (dry): $OUT"
+fi
+OUT="$(mcp classifier_status '{"id":"dry"}')"
+if json_has "$OUT" 'd["dry_run_counts"] == {"invoice": 1} and d["counts"] == {}'; then
+    pass "classifier_status shows the dry run's decisions as dry_run_counts, counts staying live-only"
+else
+    fail "classifier_status (dry counts): $OUT"
 fi
 
 # ---- 5. The problem summary reached Alice's chat, once. ----
@@ -477,6 +501,11 @@ if echo "$USAGE" | grep -qF '"050-domain-example.md": 1' && echo "$USAGE" | grep
 else
     fail "classifier_status (rule usage): $OUT"
 fi
+if json_has "$OUT" 'd["rule_usage"]["with_rules"] == 1 and d["rule_usage"]["none"] == 0 and d["rule_usage"]["no_citation"] == 0'; then
+    pass "rule_usage counts the item that cited a rule as with_rules"
+else
+    fail "classifier_status (with_rules): $OUT"
+fi
 OUT="$(mcp classifier_test '{"id":"cite","item_id":"h","exclude_rules":["050-domain-example.md"]}')"
 if echo "$OUT" | grep -qF '"changed": true' && echo "$OUT" | grep -qF '"without_rules"'; then
     pass "classifier_test without the deciding rule file changes the category"
@@ -485,6 +514,43 @@ else
 fi
 OUT="$(mcp classifier_update '{"id":"cite","changes":{"enabled":false}}')"
 if ! echo "$OUT" | grep -qF "Classifier cite updated."; then fail "classifier_update (disable cite): $OUT"; fi
+
+# ---- 5d. An empty fetch field is there, not missing; no citation is empty. ----
+# The item's cc is an empty list, so the path cc.address finds nothing
+# there; nothing in the item matches a rule, so the stub's answer has no
+# Rules line.
+mkdir -p "$WS/files/empty-inbox"
+printf '{"subject":"Plain","body":"Just text.","cc":[]}\n' >"$WS/files/empty-inbox/k.json"
+printf '{"items":[%s]}\n' "$(item k empty-inbox)" >"$WS/files/empty-index.json"
+EMPTYFETCH='{"tool":"shell_exec","args":{"command":"{{item.read}}"},"fields":{"subject":"subject","body":"body","cc":"cc.address"}}'
+EMPTYDEF="{\"id\":\"empties\",\"enabled\":true,\"dry_run\":true,\"trigger\":{\"every_seconds\":2},\"source\":${SOURCE/index.json/empty-index.json},\"fetch\":$EMPTYFETCH,\"classify\":$CLASSIFY,\"report\":{\"summary\":\"never\"}}"
+OUT="$(mcp classifier_create "{\"definition\":$EMPTYDEF}")"
+if ! echo "$OUT" | grep -qF "Classifier empties created."; then fail "classifier_create (empties): $OUT"; fi
+empties_decided() { [ "$(sql "SELECT category FROM dry_run WHERE classifier='empties' AND item_id='k'")" = other ]; }
+if wait_for 30 empties_decided; then
+    ROW="$(sql "SELECT fields, IFNULL(missing_fields,'-'), outcome FROM activity WHERE classifier='empties' AND item_id='k'")"
+    if [ "$ROW" = '{"body":"Just text.","cc":"","subject":"Plain"}|-|recorded' ]; then
+        pass "an item with an empty list field is classified and logged with the field as \"\" and no missing_fields"
+    else
+        fail "empties activity: $ROW"
+    fi
+else
+    fail "empties decision: $(sql "SELECT outcome, error FROM activity WHERE classifier='empties'")"
+fi
+OUT="$(mcp classifier_activity '{"id":"empties"}')"
+if echo "$OUT" | grep -qF '"rules": []' && ! echo "$OUT" | grep -qF '"missing_fields"'; then
+    pass "classifier_activity shows an answer without a citation as an empty rules list"
+else
+    fail "classifier_activity (empties): $OUT"
+fi
+OUT="$(mcp classifier_status '{"id":"empties"}')"
+if json_has "$OUT" 'd["dry_run_counts"] == {"other": 1} and d["rule_usage"]["no_citation"] == 1 and d["rule_usage"]["with_rules"] == 0 and d["rule_usage"]["decisions"] == 1'; then
+    pass "rule_usage counts the answer without a citation as no_citation"
+else
+    fail "classifier_status (empties): $OUT"
+fi
+OUT="$(mcp classifier_update '{"id":"empties","changes":{"enabled":false}}')"
+if ! echo "$OUT" | grep -qF "Classifier empties updated."; then fail "classifier_update (disable empties): $OUT"; fi
 
 # ---- 6. A hand-edited invalid definition is not run and is reported. ----
 printf '{"id":"broken","owner":"alice","enabled":true,"trigger":{"every_seconds":0},"source":%s,"classify":%s}\n' "$SOURCE" "$CLASSIFY" >"$CLS_DIR/broken.json"
