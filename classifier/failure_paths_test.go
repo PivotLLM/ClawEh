@@ -205,27 +205,43 @@ func TestFetchEmptyFields(t *testing.T) {
 	}
 }
 
-// {{fetched.<name>}} of an empty field is the empty value the path met:
-// an empty list or string is passed on, null resolves to nothing.
+// {{fetched.<name>}} of an empty field (an empty list, null, an empty
+// string) fails the item before the tool is called, saying the field is
+// empty; of a missing field, saying it resolves to nothing. Nothing empty
+// reaches the tool.
 func TestFetchEmptyFieldSubstitution(t *testing.T) {
 	e := newEnv(t)
-	e.setInbox([]string{"m1", "m2"})
+	e.setInbox([]string{"m1", "m2", "m3", "m4"})
 	def := definition()
 	obj(obj(def["fetch"])["fields"])["cc"] = "ccRecipients.emailAddress.address"
 	obj(def["actions"])["urgent"] = map[string]any{"tool": "mail_move", "args": map[string]any{"id": "{{item.id}}", "destination": "{{fetched.cc}}"}}
 	e.create(def)
 	e.tools.set("mail_read", func(args map[string]any) (string, error) {
-		if args["id"] == "m2" {
+		switch args["id"] {
+		case "m1":
+			return `{"from":{"address":"bob@example.com"},"ccRecipients":[]}`, nil
+		case "m2":
 			return `{"from":{"address":"bob@example.com"},"ccRecipients":null}`, nil
+		case "m3":
+			return `{"from":{"address":"bob@example.com"},"ccRecipients":[{"emailAddress":{"address":""}}]}`, nil
 		}
-		return `{"from":{"address":"bob@example.com"},"ccRecipients":[]}`, nil
+		return `{"from":{"address":"bob@example.com"}}`, nil // m4: cc missing
 	})
 	rec := e.run("inbox-priority")
-	if rec.Acted != 1 || rec.Failed != 1 {
-		t.Fatalf("run = %+v", rec)
+	if rec.Acted != 0 || rec.Failed != 4 || len(e.tools.callsOf("mail_move")) != 0 {
+		t.Fatalf("run = %+v, moves %d; want every item failed before the tool", rec, len(e.tools.callsOf("mail_move")))
 	}
-	if got, ok := e.moves()["m1"].([]any); !ok || len(got) != 0 {
-		t.Errorf("m1 destination = %#v, want an empty list", e.moves()["m1"])
+	rows := map[string]ActivityEntry{}
+	for _, r := range e.activity(ActivityQuery{}) {
+		rows[r.ItemID] = r
+	}
+	for _, id := range []string{"m1", "m2", "m3"} {
+		if r := rows[id]; !strings.Contains(r.Error, "{{fetched.cc}} is empty for this item") {
+			t.Errorf("%s error = %q, want the field named as empty", id, r.Error)
+		}
+	}
+	if r := rows["m4"]; !strings.Contains(r.Error, "{{fetched.cc}} resolves to nothing for this item") {
+		t.Errorf("m4 error = %q, want the field named as resolving to nothing", r.Error)
 	}
 }
 

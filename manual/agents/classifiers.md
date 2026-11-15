@@ -165,7 +165,7 @@ A fetch field is found, empty or missing:
 An argument in `fetch.args` or `actions.<category>.args` may be exactly one placeholder, replaced by the value it names:
 
 - `{{item.<path>}}`: a value of the listed item.
-- `{{fetched.<name>}}`: one of the `fetch.fields` (actions only); an empty field gives its empty list or string, and `null` names nothing.
+- `{{fetched.<name>}}`: one of the `fetch.fields` (actions only). An empty field fails the item, saying it is empty (`{{fetched.cc}} is empty for this item`); the tool is not called.
 - `{{category}}`: the category the model chose (actions only).
 
 A placeholder must be the whole value: `"{{item.id}}"`, never `"id={{item.id}}"`. `source.args` takes none. A placeholder that names nothing fails that item; an empty value is never passed to a tool.

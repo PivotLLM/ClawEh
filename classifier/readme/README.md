@@ -250,8 +250,9 @@ An argument value of `fetch.args` or `actions.<category>.args` may be
 exactly one placeholder, replaced by what it names with its JSON type:
 
 - `{{item.<path>}}`: the path inside the item's list element.
-- `{{fetched.<name>}}`: a `fetch.fields` value (actions only); an empty
-  field gives its empty list or string, and `null` resolves to nothing.
+- `{{fetched.<name>}}`: a `fetch.fields` value (actions only). An empty
+  field fails the item (`{{fetched.cc}} is empty for this item`); the
+  tool is not called.
 - `{{category}}`: the category the model chose (actions only).
 
 A placeholder must be the whole value: `"{{item.id}}"`, never

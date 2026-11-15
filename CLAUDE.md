@@ -538,8 +538,9 @@ production instance directly; test against a dev instance.
   `field "x" (empty)` with no value lines and stored as `""` in `fields`;
   only absent (missing key, scalar where an object is expected, a
   non-empty list none of whose elements has it) is in `missing_fields`;
-  a fetch where every field is absent fails the item. `TestResult` has
-  `fields` too.
+  a fetch where every field is absent fails the item; `{{fetched.x}}` of
+  an empty field (`emptyField` in `fetched`) fails the item before the
+  tool ("... is empty for this item"). `TestResult` has `fields` too.
   `classifier_test`/`rerun` pass a failing source through as a refusal
   (`sourceRefusal`). `classifier_activity`
   takes `outcome` (`ActivityOutcomes`, others refused) and searches the

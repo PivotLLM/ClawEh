@@ -155,19 +155,30 @@ func allowedText(allowed []string) string {
 }
 
 // unresolvedError is a placeholder that resolved to nothing for one item
-// (design 4.3b): the item fails, nothing empty is passed to a tool.
+// (design 4.3b), or named a fetch field that is empty for it (empty): the
+// item fails, nothing empty is passed to a tool.
 type unresolvedError struct {
 	placeholder string
+	empty       bool
 }
 
 func (e *unresolvedError) Error() string {
+	if e.empty {
+		return e.placeholder + " is empty for this item"
+	}
 	return e.placeholder + " resolves to nothing for this item"
 }
+
+// emptyField stands in fetched for a fetch field that is there but empty
+// (Field.Empty), so a placeholder naming it fails instead of passing an
+// empty value to a tool.
+type emptyField struct{}
 
 // substitute returns a deep copy of args with every placeholder replaced: item
 // paths through dotpath.Get on the list element, fetched names from fetched,
 // {{category}} by category. A placeholder resolving to nothing (nil, or an
-// unknown fetched name, or no category) fails with *unresolvedError.
+// unknown fetched name, or no category) or naming an empty fetch field
+// (emptyField) fails with *unresolvedError.
 func substitute(args map[string]any, item any, fetched map[string]any, category string) (map[string]any, error) {
 	if args == nil {
 		return nil, nil
@@ -190,6 +201,9 @@ func substitute(args map[string]any, item any, fetched map[string]any, category 
 			if category != "" {
 				v = category
 			}
+		}
+		if _, empty := v.(emptyField); empty {
+			return nil, &unresolvedError{placeholder: p.text, empty: true}
 		}
 		if v == nil {
 			return nil, &unresolvedError{placeholder: p.text}

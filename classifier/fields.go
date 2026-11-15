@@ -32,7 +32,7 @@ type Field struct {
 // fields in name order (an empty one included, marked Empty), the names
 // whose path is not in the fetch result (dotpath.Absent), and the fetched
 // values with their JSON types (for {{fetched.<name>}}; an empty field
-// holds the empty value met). notJSON is the parse error of a fetch result
+// holds emptyField, so a placeholder naming it fails the item). notJSON is the parse error of a fetch result
 // that is not JSON.
 type itemData struct {
 	fields  []Field
@@ -101,7 +101,7 @@ func fieldsFromFetch(result string, f *Fetch) itemData {
 		case dotpath.Absent:
 			d.missing = append(d.missing, name)
 		case dotpath.Empty:
-			d.fetched[name] = v
+			d.fetched[name] = emptyField{}
 			d.fields = append(d.fields, Field{Name: name, Empty: true})
 		case dotpath.Found:
 			d.fetched[name] = v
