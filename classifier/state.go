@@ -846,21 +846,34 @@ func lastRunFrom(ctx context.Context, db *sql.DB, cls string) (*RunRecord, error
 	return &r, nil
 }
 
-// counts returns the number of cls's processed items by status.
-func (s *stateDB) counts(ctx context.Context, cls string) (_ map[string]int, err error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT status, COUNT(*) FROM processed WHERE classifier = ? GROUP BY status`, cls)
+// counts returns the number of cls's processed items (live decisions) by
+// status.
+func (s *stateDB) counts(ctx context.Context, cls string) (map[string]int, error) {
+	return s.countBy(ctx, `SELECT status, COUNT(*) FROM processed WHERE classifier = ? GROUP BY status`, cls)
+}
+
+// dryCounts returns the number of cls's dry-run decisions by category,
+// Unclassified for the items the model gave no category.
+func (s *stateDB) dryCounts(ctx context.Context, cls string) (map[string]int, error) {
+	return s.countBy(ctx, `SELECT COALESCE(category, '`+Unclassified+`'), COUNT(*) FROM dry_run WHERE classifier = ? GROUP BY 1`, cls)
+}
+
+// countBy runs query, which selects a key and a count for classifier cls,
+// into a map (empty, never nil, when nothing matches).
+func (s *stateDB) countBy(ctx context.Context, query, cls string) (_ map[string]int, err error) {
+	rows, err := s.db.QueryContext(ctx, query, cls)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { err = errors.Join(err, rows.Close()) }()
 	out := map[string]int{}
 	for rows.Next() {
-		var status string
+		var key string
 		var n int
-		if err := rows.Scan(&status, &n); err != nil {
+		if err := rows.Scan(&key, &n); err != nil {
 			return nil, err
 		}
-		out[status] = n
+		out[key] = n
 	}
 	return out, rows.Err()
 }

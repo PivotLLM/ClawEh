@@ -7,8 +7,10 @@ package classifier
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -218,6 +220,42 @@ func TestRunDryRunKeptSeparate(t *testing.T) {
 	rec = e.run("inbox-priority")
 	if rec.DryRun || rec.NewItems != 3 || rec.Acted != 3 || e.model.count() != calls+3 {
 		t.Errorf("live run after the dry run = %+v", rec)
+	}
+}
+
+// classifier_status counts live items by status (counts) and dry-run
+// decisions by category (dry_run_counts, unclassified for an item the
+// model gave no category), each from its own table.
+func TestStatusCountsDryRunSeparately(t *testing.T) {
+	e := newEnv(t)
+	def := definition()
+	def["dry_run"] = true
+	e.create(def)
+	e.model.setReply(func(_, user string) (string, error) {
+		switch {
+		case strings.Contains(user, "About m2"):
+			return "no idea", nil
+		case strings.Contains(user, "bob@example.com"):
+			return "urgent", nil
+		}
+		return "low", nil
+	})
+	e.run("inbox-priority")
+	st := e.status()
+	if len(st.Counts) != 0 || !maps.Equal(st.DryRunCounts, map[string]int{"urgent": 2, Unclassified: 1}) {
+		t.Errorf("dry run: counts %v, dry_run_counts %v", st.Counts, st.DryRunCounts)
+	}
+	if err := e.svc.Update(context.Background(), e.scope, "inbox-priority", []byte(`{"dry_run": false}`)); err != nil {
+		t.Fatal(err)
+	}
+	e.run("inbox-priority")
+	st = e.status()
+	if !maps.Equal(st.Counts, map[string]int{StatusActed: 2, StatusUnclassified: 1}) || !maps.Equal(st.DryRunCounts, map[string]int{"urgent": 2, Unclassified: 1}) {
+		t.Errorf("live run: counts %v, dry_run_counts %v", st.Counts, st.DryRunCounts)
+	}
+	data, err := json.Marshal(Status{Counts: map[string]int{}, DryRunCounts: map[string]int{}})
+	if err != nil || !strings.Contains(string(data), `"counts":{},"dry_run_counts":{}`) {
+		t.Errorf("empty status = %s, %v; want both counts present", data, err)
 	}
 }
 

@@ -81,15 +81,18 @@ type Summary struct {
 	ErrorsMutedUntil time.Time `json:"errors_muted_until,omitzero"`
 }
 
-// Status is a classifier's Summary with its processed items by status, its
-// most recent decisions, its last run's error, its failed runs in a row
-// as error notices count them, and how often each rule was cited.
+// Status is a classifier's Summary with its live items by status (Counts),
+// its dry-run decisions by category (DryRunCounts, Unclassified for the
+// items the model gave no category), its most recent decisions, its last
+// run's error, its failed runs in a row as error notices count them, and
+// how often each rule was cited.
 type Status struct {
 	Summary
-	Counts     map[string]int `json:"counts"`
-	Recent     []Decision     `json:"recent,omitempty"`
-	LastError  string         `json:"last_error,omitempty"`
-	FailedRuns int            `json:"failed_runs"`
+	Counts       map[string]int `json:"counts"`
+	DryRunCounts map[string]int `json:"dry_run_counts"`
+	Recent       []Decision     `json:"recent,omitempty"`
+	LastError    string         `json:"last_error,omitempty"`
+	FailedRuns   int            `json:"failed_runs"`
 	// RuleUsage is how often each rule was cited; nil for an invalid file
 	// or Markdown that cannot be read.
 	RuleUsage *RuleUsage `json:"rule_usage,omitempty"`
@@ -565,6 +568,9 @@ func (s *Service) Status(scope Scope, id string) ([]Status, error) {
 			status.LastError = status.LastRun.Error
 		}
 		if status.Counts, err = st.counts(ctx, cls); err != nil {
+			return nil, err
+		}
+		if status.DryRunCounts, err = st.dryCounts(ctx, cls); err != nil {
 			return nil, err
 		}
 		status.FailedRuns = failuresOf(ctx, st.db, &status.Summary, s.host.clock().Now()).failures
