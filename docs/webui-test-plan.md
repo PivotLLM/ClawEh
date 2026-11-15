@@ -3,7 +3,7 @@
 Regression coverage for the ClawEh web interface. Every step below has an ID, a
 process, and an expected result, so it can be followed by hand — and every one is
 also automated in `tests/frontend-e2e.mjs`, which prints the same IDs. There are
-177 checks in all; the runner prints the same tally at the end.
+178 checks in all; the runner prints the same tally at the end.
 
 ```
 export CLAW_E2E_USER=<admin>  CLAW_E2E_PASSWORD=<password>
@@ -279,7 +279,8 @@ covers it.
 ## N. Memory curation
 
 Creates a domain called `e2e-probe` in the first memory store, works inside it,
-and deletes it at the end. Nothing outside that domain is touched.
+and deletes it at the end; N17 imports a domain called `e2e-keywords` and
+deletes it again. Nothing outside those domains is touched.
 
 | ID | Process | Expected |
 |---|---|---|
@@ -299,6 +300,7 @@ and deletes it at the end. Nothing outside that domain is touched.
 | N14 | **Add memory** on the domain, type some text, **Add** | The memory is in the store with `origin: "user"` |
 | N15 | Retire a row, then click **Show retired** | It disappears from the default view and comes back behind the toggle. Without that it could never be restored |
 | N16 | `DELETE /api/memory/{id}/domains/{domain}` | `204`, and the probe domain is gone even with `include_retired=1` |
+| N17 | Merge-import a domain `e2e-keywords` with `keyword_triggers`, `auto_keywords` and `blocked_keywords` set, open `/memory` on that store, then delete the domain | The card shows three labelled lines, **Keywords**, **Keywords added automatically** and **Blocked keywords**, each with its own list, and no editable field. All three decide whether the domain loads, so the operator must be able to tell them apart |
 
 ## O. Status page
 

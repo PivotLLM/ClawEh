@@ -58,7 +58,12 @@ export interface MemoryDomain {
   status: string
   summary: string
   triggers?: string
+  /** The agent's own keywords. */
   keyword_triggers?: string
+  /** Keywords consolidation added; read-only here. */
+  auto_keywords?: string
+  /** Keywords the agent removed from the automatic list; never added back. */
+  blocked_keywords?: string
   last_used?: string
   memories: MemoryMemory[]
 }

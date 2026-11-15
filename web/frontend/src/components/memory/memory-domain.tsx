@@ -237,8 +237,29 @@ export function DomainCard({
           </p>
         )}
         {d.keyword_triggers && (
-          <p className="text-muted-foreground mb-2 text-[11px]">
+          <p
+            className="text-muted-foreground mb-2 text-[11px]"
+            data-testid="domain-keywords"
+          >
             {t("pages.memory.keyword_triggers")}: {d.keyword_triggers}
+          </p>
+        )}
+        {d.auto_keywords && (
+          <p
+            className="text-muted-foreground mb-2 text-[11px]"
+            data-testid="domain-auto-keywords"
+            title={t("pages.memory.auto_keywords_hint")}
+          >
+            {t("pages.memory.auto_keywords")}: {d.auto_keywords}
+          </p>
+        )}
+        {d.blocked_keywords && (
+          <p
+            className="text-muted-foreground mb-2 text-[11px]"
+            data-testid="domain-blocked-keywords"
+            title={t("pages.memory.blocked_keywords_hint")}
+          >
+            {t("pages.memory.blocked_keywords")}: {d.blocked_keywords}
           </p>
         )}
         {d.last_used && (

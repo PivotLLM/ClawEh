@@ -276,4 +276,52 @@ describe("DomainCard", () => {
     fireEvent.click(screen.getByLabelText("pages.memory.delete_domain"))
     expect(onDelete).toHaveBeenCalledWith(expect.objectContaining({ id: "d1" }))
   })
+
+  // The agent's keywords, the ones consolidation added and the ones the agent
+  // blocked all decide whether the domain loads, so each is shown under its
+  // own label — as text, never as a field that could be edited.
+  it("shows the three keyword lists apart and read-only", () => {
+    const { container } = render(
+      <DomainCard
+        d={domain({
+          keyword_triggers: "monthly invoice",
+          auto_keywords: "invoice run,billing cycle",
+          blocked_keywords: "accounts payable",
+        })}
+        onDeleteDomain={vi.fn()}
+        onAddMemory={vi.fn()}
+        onSelectAll={vi.fn()}
+        allSelected={false}
+        someSelected={false}
+        rowActions={() => actions()}
+      />,
+    )
+    expect(screen.getByTestId("domain-keywords").textContent).toBe(
+      "pages.memory.keyword_triggers: monthly invoice",
+    )
+    expect(screen.getByTestId("domain-auto-keywords").textContent).toBe(
+      "pages.memory.auto_keywords: invoice run,billing cycle",
+    )
+    expect(screen.getByTestId("domain-blocked-keywords").textContent).toBe(
+      "pages.memory.blocked_keywords: accounts payable",
+    )
+    expect(container.querySelector("input[type=text], textarea")).toBeNull()
+  })
+
+  it("omits keyword lists that are empty", () => {
+    render(
+      <DomainCard
+        d={domain({ auto_keywords: "invoice run" })}
+        onDeleteDomain={vi.fn()}
+        onAddMemory={vi.fn()}
+        onSelectAll={vi.fn()}
+        allSelected={false}
+        someSelected={false}
+        rowActions={() => actions()}
+      />,
+    )
+    expect(screen.getByTestId("domain-auto-keywords")).toBeTruthy()
+    expect(screen.queryByTestId("domain-keywords")).toBeNull()
+    expect(screen.queryByTestId("domain-blocked-keywords")).toBeNull()
+  })
 })

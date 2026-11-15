@@ -370,6 +370,52 @@ func TestExportImportRoundTripOverHTTP(t *testing.T) {
 	}
 }
 
+// TestImportKeepsKeywordListsApart: a document carrying the agent's, the
+// automatic and the blocked keywords (the shape the browser suite's N17
+// imports) lands with each list in its own field, readable by the page.
+func TestImportKeepsKeywordListsApart(t *testing.T) {
+	id, mux, _ := curateEnv(t)
+	doc := strings.Join([]string{
+		"format_version: 1",
+		"domains:",
+		"  - name: e2e-keywords",
+		"    status: active",
+		"    keyword_triggers: e2e agent phrase",
+		"    auto_keywords: e2e automatic phrase",
+		"    blocked_keywords: e2e blocked phrase",
+		"    memories:",
+		"      - type: fact",
+		"        status: active",
+		"        confidence: 1",
+		"        origin: user",
+		"        text: e2e keyword probe",
+		"",
+	}, "\n")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost,
+		"/api/memory/"+id+"/import?mode=merge", strings.NewReader(doc)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("import = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	rec = do(t, mux, http.MethodGet, "/api/memory/"+id, nil)
+	var detail memoryDetailResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	for _, d := range detail.Domains {
+		if d.Name != "e2e-keywords" {
+			continue
+		}
+		if d.KeywordTriggers != "e2e agent phrase" || d.AutoKeywords != "e2e automatic phrase" ||
+			d.BlockedKeywords != "e2e blocked phrase" {
+			t.Errorf("lists = %q / %q / %q", d.KeywordTriggers, d.AutoKeywords, d.BlockedKeywords)
+		}
+		return
+	}
+	t.Fatalf("imported domain missing: %s", rec.Body.String())
+}
+
 func TestImportRejectsBadInput(t *testing.T) {
 	id, mux, _ := curateEnv(t)
 	base := "/api/memory/" + id + "/import"

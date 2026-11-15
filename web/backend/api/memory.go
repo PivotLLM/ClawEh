@@ -61,8 +61,10 @@ type memoryDomain struct {
 	Status          string         `json:"status"`
 	Summary         string         `json:"summary"`
 	Triggers        string         `json:"triggers,omitempty"`
-	KeywordTriggers string         `json:"keyword_triggers,omitempty"`
-	LastUsed        string         `json:"last_used,omitempty"` // RFC3339; empty = never used since creation
+	KeywordTriggers string         `json:"keyword_triggers,omitempty"` // the agent's own
+	AutoKeywords    string         `json:"auto_keywords,omitempty"`    // added by consolidation
+	BlockedKeywords string         `json:"blocked_keywords,omitempty"` // removed by the agent; never added back
+	LastUsed        string         `json:"last_used,omitempty"`        // RFC3339; empty = never used since creation
 	Memories        []memoryMemory `json:"memories"`
 }
 
@@ -269,6 +271,8 @@ func (h *Handler) handleGetMemoryStore(w http.ResponseWriter, r *http.Request) {
 			Summary:         d.Summary,
 			Triggers:        d.Triggers,
 			KeywordTriggers: d.KeywordTriggers,
+			AutoKeywords:    d.AutoKeywords,
+			BlockedKeywords: d.BlockedKeywords,
 			LastUsed:        domainLastUsed(d),
 			Memories:        make([]memoryMemory, 0, len(mems)),
 		}

@@ -175,6 +175,65 @@ func TestHandleGetMemoryStore_NotFound(t *testing.T) {
 	}
 }
 
+// TestHandleGetMemoryStore_KeywordLists: a domain's three keyword lists reach
+// the page under their own names, so the agent's list, the automatic one and
+// the blocked one can be shown apart.
+func TestHandleGetMemoryStore_KeywordLists(t *testing.T) {
+	configPath := setupTestEnv(t)
+	id := seedCogmemDB(t, configPath)
+
+	path := memoryDBForSessionsDir(sessionsTestDir(t, configPath))
+	s, err := cogmemstore.Open(path)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	if _, err := s.CreateDomain(context.Background(), s.DB(), cogmemstore.CreateDomainParams{
+		Name:            "Invoices",
+		Status:          cogmemstore.StatusActive,
+		KeywordTriggers: "monthly invoice",
+		AutoKeywords:    "invoice run,billing cycle",
+		BlockedKeywords: "accounts payable",
+	}); err != nil {
+		t.Fatalf("CreateDomain() error = %v", err)
+	}
+	utils.CloseQuietly(s)
+
+	h := NewHandler(configPath)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/memory/"+id, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	var raw struct {
+		Domains []map[string]any `json:"domains"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	var got map[string]any
+	for _, d := range raw.Domains {
+		if d["name"] == "Invoices" {
+			got = d
+		}
+	}
+	if got == nil {
+		t.Fatalf("domain missing: %s", rec.Body.String())
+	}
+	want := map[string]string{
+		"keyword_triggers": "monthly invoice",
+		"auto_keywords":    "invoice run,billing cycle",
+		"blocked_keywords": "accounts payable",
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("%s = %v, want %q", k, got[k], v)
+		}
+	}
+}
+
 func TestHandleDeleteMemoryAndDomain(t *testing.T) {
 	configPath := setupTestEnv(t)
 

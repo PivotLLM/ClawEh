@@ -3292,6 +3292,73 @@ if (useGroup("N", "Memory curation")) {
       "the probe domain survived cleanup",
     )
   })
+
+  await check(17, "keyword lists are shown apart and read-only", async () => {
+    assert(store, "no store")
+    // A domain carrying all three lists can only be written by import (the
+    // automatic list is consolidation's), so merge one in and remove it after.
+    const name = "e2e-keywords"
+    const doc = [
+      "format_version: 1",
+      "domains:",
+      `  - name: ${name}`,
+      "    status: active",
+      "    keyword_triggers: e2e agent phrase",
+      "    auto_keywords: e2e automatic phrase",
+      "    blocked_keywords: e2e blocked phrase",
+      "    memories:",
+      "      - type: fact",
+      "        status: active",
+      "        confidence: 1",
+      "        origin: user",
+      "        text: e2e keyword probe",
+      "",
+    ].join("\n")
+    const imp = await api(`/api/memory/${store}/import?mode=merge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/yaml" },
+      body: doc,
+    })
+    assert(imp.status === 200, `import: ${imp.status} ${imp.text}`)
+    const domainId = ((await api(`/api/memory/${store}`)).json.domains ?? [])
+      .find((d) => d.name === name)?.id
+    assert(domainId, "the imported domain is not in the store")
+
+    let lines, inputs, problems
+    try {
+      const o = await open("/memory")
+      problems = o.problems
+      await o.page.locator(`[data-store-id="${store}"]`).click()
+      const card = o.page.locator(
+        `[data-testid=memory-domain][data-domain-name="${name}"]`,
+      )
+      await card.waitFor({ state: "visible", timeout: 10000 })
+      const text = async (id) =>
+        (await card.locator(`[data-testid=${id}]`).innerText()).trim()
+      lines = {
+        agent: await text("domain-keywords"),
+        auto: await text("domain-auto-keywords"),
+        blocked: await text("domain-blocked-keywords"),
+      }
+      inputs = await card.locator("input[type=text], textarea").count()
+      await o.close()
+    } finally {
+      await api(`/api/memory/${store}/domains/${domainId}`, { method: "DELETE" })
+    }
+
+    assert(problems.length === 0, `console: ${problems[0]}`)
+    assert(lines.agent === "Keywords: e2e agent phrase", `agent line: ${lines.agent}`)
+    assert(
+      lines.auto === "Keywords added automatically: e2e automatic phrase",
+      `automatic line: ${lines.auto}`,
+    )
+    assert(
+      lines.blocked === "Blocked keywords: e2e blocked phrase",
+      `blocked line: ${lines.blocked}`,
+    )
+    assert(inputs === 0, `${inputs} editable fields on the domain card`)
+    return "3 labelled lines, no fields"
+  })
 }
 
 // L. Setup wizard
