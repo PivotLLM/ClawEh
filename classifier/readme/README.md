@@ -244,6 +244,35 @@ A fetch field is one of:
 For a list of objects, the field takes the values of the elements that have
 it; a list where none has it is missing; an empty list is empty.
 
+### Example: who an email was sent and copied to
+
+With these fetch fields:
+
+```json
+"fields": {
+  "to": "toRecipients.emailAddress.address",
+  "cc": "ccRecipients.emailAddress.address"
+}
+```
+
+- A mail sent to Alice and copied to Bob: the model sees `to` as
+  `["alice@example.com"]` and `cc` as `["bob@example.com"]`, and the
+  activity log has the same values in `fields`.
+- A mail sent to Alice with nobody copied: the service returns an empty CC
+  list, so `cc` is **empty**. The model sees `field "cc" (empty)`, the log
+  has `"cc": ""`, and `missing_fields` does not list it. This is the usual
+  case and nothing is wrong: the classifier read CC and there was none.
+- A mail with no To recipients at all (sent only as blind copies, for
+  example) has an empty `to` in the same way.
+- If `cc` is in `missing_fields` on every item, the path or the tool's
+  arguments are wrong (a misspelt path, or a `select` argument that leaves
+  the field out). Fix the definition.
+
+So a rule can rely on CC: "when `to` does not name Alice and `cc` does, she
+was only copied" works, and a mail with an empty `cc` simply does not match
+it. Write rules for an empty field as "when `cc` is empty", not "when `cc`
+is missing".
+
 ## Substitution
 
 An argument value of `fetch.args` or `actions.<category>.args` may be
