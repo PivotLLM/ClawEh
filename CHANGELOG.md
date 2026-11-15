@@ -23,6 +23,12 @@
 
 ### Added
 
+- **The Memory page shows a domain's automatic and blocked keywords.**
+  Beside **Keywords** (the agent's own), a domain shows **Keywords added
+  automatically** and, when there are any, **Blocked keywords**, read-only.
+  `GET /api/memory/{id}` returns them per domain as `auto_keywords` and
+  `blocked_keywords`.
+
 - **A classifier can keep its rules in Markdown files.** Two optional keys
   in a definition's `classify`: `instructions_file`, one `.md` file, and
   `instructions_dir`, a folder whose `.md` files (not sub-folders, not
@@ -278,6 +284,23 @@
   shows that it works.
 
 ### Changed
+
+- **Memory domains load by keywords, not by word matches** (cogmem
+  v0.0.11). A topic domain no longer loads because a word of the message
+  appears in its memories, name or summary. It loads when a tool the agent
+  just used matches its tool triggers, when one of its keywords is in the
+  incoming message or in one of the three before it, or by recency. Each
+  domain now has the agent's keywords and keywords consolidation adds
+  automatically; a keyword the agent removes from the automatic list is
+  blocked and never added back, and common words or phrases already used by
+  three other domains are refused. After the upgrade, existing domains have no
+  automatic keywords until consolidation next runs for that agent, so until
+  then they load only by the triggers the agent already set or by recency.
+  Generic keywords already stored keep working until that domain's list is
+  next set. A consolidation run that left out proposed keywords says so in
+  its note on the **Memory** page (`keywords not added: …`). Each agent's
+  memory database is upgraded on first open, after a one-time copy beside it
+  (`cogmem.db.pre-v8.db`).
 
 - **An alert about a problem that lasts is sent once, then at most once a
   day.** A model out of credit was reported again every time its cooldown

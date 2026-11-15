@@ -59,7 +59,7 @@ don't see it yet, nothing has been recorded — start recording.
   — so `cogmem_domain_list` always answers "what am I working on?".
   Keep its summary, blockers, and next actions current with `cogmem_domain_update`
   (current status lives on the domain, not as separate memories). Non-sticky domains are
-  loaded only when relevant — by recency, by your message wording, or by triggers.
+  loaded only when relevant — by tool or keyword triggers, or by recency.
 - **Memory types:** every memory is a `fact` (something true), a `preference` (how
   the user likes things done), or a `rule` (a hard directive).
 - **Export:** `cogmem_export` dumps your entire memory to one Markdown file
