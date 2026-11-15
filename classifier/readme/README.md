@@ -23,8 +23,10 @@ for you; a definition does not name one.
    Tell the user it is in dry run and that its decisions are kept for
    `activity_hours` (72 by default), so they should review it within that
    time or ask you to raise it.
-3. **Review when asked.** `classifier_status` gives the last run, counts and
-   recent decisions; `classifier_activity` gives each decision with its
+3. **Review when asked.** `classifier_status` gives the last run, the
+   counts and recent decisions (`counts`: live items by status;
+   `dry_run_counts`: dry-run decisions by category, `unclassified` for
+   items the model could not place); `classifier_activity` gives each decision with its
    reason and the action it would have run (`action_args`), filtered by
    `search` (a sender, a subject word, a destination). Summarise for the
    user: what went where, and anything that looks wrong.
@@ -176,25 +178,37 @@ files are not labels. Labels:
   `files/classifiers/inbox-priority/guide.md`.
 - The file name of each folder file, such as `050-domain-example.md`.
 - `rule N`: numbered rule N of `rules`.
-- `none` (`Rules: none`): no rule applied. A folder file `none.md` is
-  cited only as `none.md`.
+- `none` (`Rules: none`, in any case): no rule applied. A folder file
+  `none.md` is cited only as `none.md`.
 
-Each decision stores `rules` (the labels cited, or `["none"]`) and
-`unknown_rules` (cited labels that matched no rule). A label may also be
-written in any case, without `.md`, the instructions file by its bare name,
-and a numbered rule as `rule #3`, `#3` or `3`, but such a form counts only
-when it fits exactly one label; otherwise it is unknown.
+Every decision with a category has `rules`, one of:
+
+- the labels cited, such as `["050-domain-example.md", "rule 2"]`;
+- `["none"]`: the model said no rule applies. That is a gap: consider
+  writing a rule for such items;
+- `[]` (empty): the model gave no citation, or cited only names that are
+  not rules (`unknown_rules` counts them). Many empty ones mean the model
+  is ignoring the request; consider another classifier model.
+
+`none` written beside labels is dropped. A label may also be written in
+any case, without `.md`, the instructions file by its bare name, and a
+numbered rule as `rule #3`, `#3` or `3`, but such a form counts only when
+it fits exactly one label; otherwise it is unknown.
 
 A citation shows where to look; it is the model's own account, not proof.
 
 - `classifier_activity` with `"rule": "050-domain-example.md"` lists what
-  that rule decided; `"rule": "none"` lists items no rule decided.
+  that rule decided; `"rule": "none"` lists items for which the model said
+  no rule applies.
 - `classifier_status` gives `rule_usage` over `activity_hours`, counting
   each item once by its latest answer (a rerun, a replay or a live run
   after a dry run replaces the earlier one): `decisions` (items given a
-  category), items per rule (`cited`), rules no item cited (`never_cited`,
-  maybe dead), items citing `none` (many of them: write a rule), `unknown`,
-  and cited files since removed (`no_longer_present`).
+  category), split into `with_rules` (cited at least one rule), `none`
+  (many of them: write a rule) and `no_citation` (empty `rules`; many of
+  them: consider another model), which add up to `decisions`; items per
+  rule (`cited`), rules no item cited (`never_cited`, maybe dead),
+  `unknown` (items citing a name that is not a rule), and cited files
+  since removed (`no_longer_present`).
 - Before editing a rule because of an item, confirm the rule decided it:
   `classifier_test` with `exclude_rules` classifies the item with all rules
   and again without those, and `changed` says whether the category
@@ -212,13 +226,32 @@ A dot-path names a value in a tool's JSON result: `subject`,
 `from.address`. When a path meets a list, the rest of the path is applied to
 every element.
 
+A fetch field is one of:
+
+- **found**: the path gives a value.
+- **empty**: the path is there but holds nothing: an empty list anywhere
+  along it (a mail with no CC: `ccRecipients` is `[]`, so
+  `ccRecipients.emailAddress.address` is empty), `null`, or an empty
+  string. The model sees the field marked empty and the activity log shows
+  it as `""`. The item has nothing there; nothing to fix.
+- **missing**: the path is not in the result: a key along it does not
+  exist (a wrong path, a field the tool was not asked to return, a changed
+  result), it meets a text, number or true/false where an object is
+  expected, or a list's elements all lack it. It is listed in
+  `missing_fields`. The classifier is not getting that field: check the
+  path and the tool's arguments.
+
+For a list of objects, the field takes the values of the elements that have
+it; a list where none has it is missing; an empty list is empty.
+
 ## Substitution
 
 An argument value of `fetch.args` or `actions.<category>.args` may be
 exactly one placeholder, replaced by what it names with its JSON type:
 
 - `{{item.<path>}}`: the path inside the item's list element.
-- `{{fetched.<name>}}`: a `fetch.fields` value (actions only).
+- `{{fetched.<name>}}`: a `fetch.fields` value (actions only); an empty
+  field gives its empty list or string, and `null` resolves to nothing.
 - `{{category}}`: the category the model chose (actions only).
 
 A placeholder must be the whole value: `"{{item.id}}"`, never
@@ -237,11 +270,12 @@ resolves to nothing fails that item; nothing empty is passed to a tool.
   entries show each action's arguments (`action_args`) after substitution.
 - Each activity entry says what went wrong with an item: `replies` (the
   model's two answers when it named no category), `missing_fields` (fetch
-  fields that resolved to nothing), `shortened_fields` (cut to
-  `fetch.max_chars`), `action_args` of an action that failed, and for a
-  failed fetch the list entry's own fields. An item none of whose fetch
-  fields resolved fails; it is never classified blind. `classifier_test`
-  shows the same.
+  fields not in the result; an empty one is in `fields` as `""` instead,
+  see "Paths"), `shortened_fields` (cut to `fetch.max_chars`),
+  `action_args` of an action that failed, and for a failed fetch the list
+  entry's own fields. An item all of whose fetch fields are missing fails;
+  it is never classified blind (empty fields count as there).
+  `classifier_test` shows the same, with the item's `fields`.
 - When the model cannot be used (none set, or in cooldown), the run stops and
   its items are tried again on the next run.
 - When a run fails (your Markdown files can't be read or are too long, the
@@ -299,7 +333,8 @@ resolves to nothing fails that item; nothing empty is passed to a tool.
 - `classifier_validate`: the same checks without saving.
 - `classifier_list`, `classifier_get`, `classifier_status`.
 - `classifier_test`: classify one item (or the first listed) without acting
-  or storing anything; it shows the system prompt the model got.
+  or storing anything; it shows the fields and the system prompt the model
+  got.
   `exclude_rules` also classifies it without those rules (two model calls).
 - `classifier_rerun`: classify one item again and run its action.
 - `classifier_activity`: the activity log, newest first, with `limit`,

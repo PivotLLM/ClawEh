@@ -39,12 +39,15 @@
   source of rules starts with a `=== Rules from <label> ===` line in the
   prompt (`instructions`, the instructions file by its workspace path, each
   rules-folder file by name; inline rules are `rule N`), and the model is
-  asked for a `Rules:` line after its reason;
-  answers without one are still accepted. The activity log keeps the
-  labels it cited (`rules`, or `none`) and counts unknown ones
-  (`unknown_rules`). `classifier_activity` takes `rule` to list what one
-  rule decided; `classifier_status` shows `rule_usage` (items per rule,
-  each by its latest answer, rules never cited, items citing none); `classifier_test` takes
+  asked for a `Rules:` line after its reason, `Rules: none` when no rule
+  applied; answers without one are still accepted. Every decision with a
+  category keeps `rules`: the labels it cited, `["none"]` (written in any
+  case), or an empty list when the model cited nothing or only names that
+  are not rules (counted as `unknown_rules`). `classifier_activity` takes
+  `rule` to list what one rule decided; `classifier_status` shows
+  `rule_usage` (items per rule, each by its latest answer, rules never
+  cited, and the items that cited a rule, `none` or nothing:
+  `with_rules`, `none`, `no_citation`); `classifier_test` takes
   `exclude_rules` to classify an item again without those rules and say
   whether the category changed (two model calls).
 - **`file_glob` finds files by name pattern.** A new file tool: `pattern`
@@ -314,12 +317,18 @@
   failed runs.
 - **A classifier's activity shows what went wrong with an item.** An
   `unclassified` item keeps the model's two replies (`replies`); entries
-  name fetch fields not found (`missing_fields`) or cut to
+  name fetch fields not in the fetch result (`missing_fields`) or cut to
   `fetch.max_chars` (`shortened_fields`); a failed action keeps the
   arguments it was called with (`action_args`); a failed fetch keeps the
-  listed item's own fields. `classifier_test` shows the same. An item none
-  of whose fetch fields resolved now fails instead of being classified
-  blind.
+  listed item's own fields. A fetch field that is there but holds nothing
+  (an empty list along its path, such as a mail with no CC, `null` or an
+  empty string) is empty, not missing: the model sees it marked empty and
+  the entry shows it as `""`. `classifier_test` shows the same, with the
+  item's fields. An item all of whose fetch fields are missing now fails
+  instead of being classified blind.
+- **`classifier_status` shows a dry-run classifier's decisions.**
+  `dry_run_counts` gives the dry-run decisions by category (`unclassified`
+  for items the model could not place); `counts` stays live items only.
 - **A hand-edited classifier definition that is no longer valid is
   reported to its agent** ("Classifier inbox is not run (...)") once per
   broken version of the file, also across restarts, counted and muted like

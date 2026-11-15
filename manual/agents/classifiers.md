@@ -142,12 +142,13 @@ files/classifiers/inbox-priority/
 
 ### Which rule decided
 
-The model names the rules that decided each item, so the agent can see where to tune. Each source of rules has a label, shown on the `=== Rules from <label> ===` line its section starts with (headings inside the files are not labels): `instructions` for the inline instructions, the workspace path of the instructions file (such as `files/classifiers/inbox-priority/guide.md`), the file name of each folder file (such as `050-domain-example.md`), and `rule N` for the numbered `rules`. The model answers with the category, a short reason and a line such as `Rules: 050-domain-example.md, rule 2`, or `Rules: none` when no rule applied. The reason and the Rules line are optional: an answer without them, or with a Rules line that cannot be read, is still classified.
+The model names the rules that decided each item, so the agent can see where to tune. Each source of rules has a label, shown on the `=== Rules from <label> ===` line its section starts with (headings inside the files are not labels): `instructions` for the inline instructions, the workspace path of the instructions file (such as `files/classifiers/inbox-priority/guide.md`), the file name of each folder file (such as `050-domain-example.md`), and `rule N` for the numbered `rules`. The model answers with the category, a short reason and a line such as `Rules: 050-domain-example.md, rule 2`; it is told to write `Rules: none` when no rule applied. The reason and the Rules line are optional: an answer without them, or with a Rules line that cannot be read, is still classified.
 
-- A cited label is matched to the rules sent with that item. It may also be written in any case, without `.md`, the instructions file by its bare name, and a numbered rule as `rule #3`, `#3` or `3`, but such a form counts only when it fits exactly one label. `none` always means no rule; a folder file `none.md` is cited only as `none.md`. The activity log keeps the known labels (`rules`, or `["none"]`) and counts the others (`unknown_rules`).
+- A cited label is matched to the rules sent with that item. It may also be written in any case, without `.md`, the instructions file by its bare name, and a numbered rule as `rule #3`, `#3` or `3`, but such a form counts only when it fits exactly one label. `none`, in any case, always means no rule; a folder file `none.md` is cited only as `none.md`, and `none` written beside labels is dropped.
+- Every decision with a category keeps `rules`, one of: the known labels cited; `["none"]`, the model said no rule applies (a gap: a rule may be missing); or an empty list, the model gave no citation or cited only names that are not rules (counted in `unknown_rules`). Many empty ones mean the model ignores the request; another classifier model may do better.
 - The citation is the model's own account, not proof. To confirm that a rule decided an item, the agent calls `classifier_test` with `exclude_rules`: it classifies the item twice, with all rules and without the ones named, and says whether the category changed (`changed`). That costs two model calls and stores nothing.
-- `classifier_activity` with `rule` lists the items that cited a rule; `rule: "none"` lists those that cited none.
-- `classifier_status` shows `rule_usage` over `activity_hours`, counting each item once by its latest answer (a rerun, a replay after a failed action or a live run after a dry run replaces the earlier one): the items given a category (`decisions`), how many cited each current rule, the rules never cited, how many cited none or an unknown label, and cited labels whose file is gone (`no_longer_present`). Rules never cited may be dead; many items citing none may need a new rule.
+- `classifier_activity` with `rule` lists the items that cited a rule; `rule: "none"` lists those for which the model said no rule applies.
+- `classifier_status` shows `rule_usage` over `activity_hours`, counting each item once by its latest answer (a rerun, a replay after a failed action or a live run after a dry run replaces the earlier one): the items given a category (`decisions`), split into those that cited a rule (`with_rules`), `none` and no citation (`no_citation`), which add up to `decisions`; how many cited each current rule, the rules never cited, how many cited an unknown label, and cited labels whose file is gone (`no_longer_present`). Rules never cited may be dead; many items citing none may need a new rule.
 
 ### Paths and placeholders
 
@@ -155,10 +156,16 @@ The model names the rules that decided each item, so the agent can see where to 
 
 A path names a value in a tool's JSON result: `subject`, `from.address`. When a path meets a list, the rest of the path applies to every element.
 
+A fetch field is found, empty or missing:
+
+- **Found**: the path gives a value. For a list of objects, the values of the elements that have it.
+- **Empty**: the path is there but holds nothing: an empty list anywhere along it (a mail with no CC: `ccRecipients` is `[]`, so `ccRecipients.emailAddress.address` is empty), `null`, an empty string, or a list whose elements that have it all hold nothing. The model is shown the field as empty and the activity log keeps it as `""`. The item simply has nothing there.
+- **Missing**: the path is not in the result: a key along it does not exist (a wrong path, a field the tool was not asked to return, a changed result), it meets text, a number or true/false where an object is expected, or no element of a non-empty list has it. It is listed in `missing_fields`: the classifier is not getting that field, so check the path or the tool.
+
 An argument in `fetch.args` or `actions.<category>.args` may be exactly one placeholder, replaced by the value it names:
 
 - `{{item.<path>}}`: a value of the listed item.
-- `{{fetched.<name>}}`: one of the `fetch.fields` (actions only).
+- `{{fetched.<name>}}`: one of the `fetch.fields` (actions only); an empty field gives its empty list or string, and `null` names nothing.
 - `{{category}}`: the category the model chose (actions only).
 
 A placeholder must be the whole value: `"{{item.id}}"`, never `"id={{item.id}}"`. `source.args` takes none. A placeholder that names nothing fails that item; an empty value is never passed to a tool.
@@ -168,7 +175,7 @@ A placeholder must be the whole value: `"{{item.id}}"`, never `"id={{item.id}}"`
 ## Runs
 
 - An item is done once its action succeeds. A failed item is tried again on the next run, with the model's first answer if it already gave one. An answer that is not a category is asked again once, then the item is `unclassified` and left where it is.
-- An item none of whose `fetch.fields` is found in the fetch result (for example, the fetch tool answered with text, not JSON) fails; it is never classified or acted on blind.
+- An item all of whose `fetch.fields` are missing from the fetch result (for example, the fetch tool answered with text, not JSON) fails; it is never classified or acted on blind. Empty fields count as there.
 - Results that ClawEh marks as external content for the model (tools of external MCP servers, the web tools) are read as the JSON they carry.
 - Stopping ClawEh in the middle of a run is not a failure: what it interrupted is taken again at the next start.
 - Changing the rules (in the definition or its Markdown files), categories or actions does not reprocess items already handled. `classifier_rerun` classifies one item again on purpose.
@@ -193,11 +200,11 @@ Every failed run is written to the [activity log](#activity-log) and logged as a
 
 ### Dry run
 
-With `dry_run` on, the classifier decides but runs no action; the log shows the action and the arguments it would have been given. Dry-run decisions are kept apart: when you switch to live, every item is classified again with the current rules.
+With `dry_run` on, the classifier decides but runs no action; the log shows the action and the arguments it would have been given. Dry-run decisions are kept apart: when you switch to live, every item is classified again with the current rules. `classifier_status` counts them separately: `counts` are live items by status, `dry_run_counts` dry-run decisions by category (`unclassified` for items the model could not place).
 
 ### Activity log
 
-Every item handled (live or dry run) is logged with the fields sent to the model (each cut to 500 characters), the category, the reason, the rules the model cited, the action and its outcome (`acted`, `recorded`, `unclassified` or `failed`). An entry also shows what went wrong: the model's two answers of an `unclassified` item (`replies`), fetch fields not found (`missing_fields`) or cut to `fetch.max_chars` (`shortened_fields`), the arguments of an action that failed (`action_args`), and, when the fetch failed, the listed item's own fields. Every failed run is logged too, as `run_failed` with its error and no item; the same error in a row is one entry with `count`, the first time (`at`) and the latest (`last_at`). Entries are kept `activity_hours` (a `run_failed` entry from its latest time) and marked when they come from a dry run. Ask the agent ("what did the inbox classifier do with mail from bob@example.com?", "why did the inbox classifier fail?"); it reads the log with `classifier_activity`, which can filter by `outcome` or by cited `rule` and search the text, errors included. Nothing is sent to the agent unless you ask.
+Every item handled (live or dry run) is logged with the fields sent to the model (each cut to 500 characters), the category, the reason, the rules the model cited, the action and its outcome (`acted`, `recorded`, `unclassified` or `failed`). An entry also shows what went wrong: the model's two answers of an `unclassified` item (`replies`), fetch fields missing from the fetch result (`missing_fields`; an empty field is in the fields as `""` instead) or cut to `fetch.max_chars` (`shortened_fields`), the arguments of an action that failed (`action_args`), and, when the fetch failed, the listed item's own fields. Every failed run is logged too, as `run_failed` with its error and no item; the same error in a row is one entry with `count`, the first time (`at`) and the latest (`last_at`). Entries are kept `activity_hours` (a `run_failed` entry from its latest time) and marked when they come from a dry run. Ask the agent ("what did the inbox classifier do with mail from bob@example.com?", "why did the inbox classifier fail?"); it reads the log with `classifier_activity`, which can filter by `outcome` or by cited `rule` and search the text, errors included. Nothing is sent to the agent unless you ask.
 
 ## Tools
 
@@ -207,8 +214,8 @@ Every item handled (live or dry run) is logged with the fields sent to the model
 | `classifier_list`, `classifier_get` | The agent's classifiers; one definition. |
 | `classifier_create`, `classifier_update`, `classifier_delete` | Save, change (a JSON merge patch) or remove a classifier. A save checks the definition and calls the source tool once. |
 | `classifier_validate` | The same checks, without saving. |
-| `classifier_status` | Last run, counts, recent decisions, the last error, whether error notices are on, off or muted, and how often each rule was cited (`rule_usage`). |
-| `classifier_test` | Classifies one item without acting or storing anything, and shows the system prompt the model got. With `exclude_rules`, also classifies it without those rules and says whether the category changed. |
+| `classifier_status` | Last run, live counts (`counts`) and dry-run counts (`dry_run_counts`), recent decisions, the last error, whether error notices are on, off or muted, and how often each rule was cited (`rule_usage`). |
+| `classifier_test` | Classifies one item without acting or storing anything, and shows the item's fields and the system prompt the model got. With `exclude_rules`, also classifies it without those rules and says whether the category changed. |
 | `classifier_rerun` | Classifies one item again and runs its action. |
 | `classifier_activity` | The activity log, newest first, with `limit`, `offset`, `search`, `outcome` and `rule`. |
 

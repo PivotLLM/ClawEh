@@ -530,7 +530,16 @@ production instance directly; test against a dev instance.
   kept per folder until it opens or nothing met it for `ErrorMute`; only a classifier with `report.errors` on reports it and starts the mute). Activity rows also carry
   `replies` (both model replies of an unclassified item), `missing_fields`,
   `shortened_fields`, `action_args` of a failed action, and a failed
-  fetch's list-entry fields; a fetch where no field resolved fails the item.
+  fetch's list-entry fields. Fetch fields are three-state by
+  `dotpath.Lookup` (`Found`/`Empty`/`Absent`; `dotpath.Get`, used by watch
+  probes, substitution and source paths, is unchanged): empty (null, an
+  empty list anywhere along the path, an ending empty string, or a fan-out
+  whose holders are all empty) is `Field.Empty`, shown to the model as
+  `field "x" (empty)` with no value lines and stored as `""` in `fields`;
+  only absent (missing key, scalar where an object is expected, a
+  non-empty list none of whose elements has it) is in `missing_fields`;
+  a fetch where every field is absent fails the item. `TestResult` has
+  `fields` too.
   `classifier_test`/`rerun` pass a failing source through as a refusal
   (`sourceRefusal`). `classifier_activity`
   takes `outcome` (`ActivityOutcomes`, others refused) and searches the
@@ -553,19 +562,27 @@ production instance directly; test against a dev instance.
   **Rule citations** (`classifier/rules.go`, `citations.go`): every source
   has a label (`promptSections`: `instructions`, the instructions file's
   cleaned workspace path, each folder file's name, `rule N`);
-  `replyContract` asks for line 2 a reason, line 3 `Rules: <labels>` or
-  `Rules: none`, both optional: `parseCitation` reads a `Rules:` line
+  `replyContract` asks for line 2 a reason, line 3 `Rules: <labels>`, and
+  tells the model to write exactly `Rules: none` when no rule applied
+  (never leave it out); both lines stay optional to the parser: `parseCitation` reads a `Rules:` line
   (plural only; `Rule:` is a reason) in place 2 or 3 only, a malformed one
   is ignored, never a retry. `resolveLabel`: the exact label wins; loose
   forms (any case, without `.md`, the instructions file's bare name, `rule
   #N`/`rules N`/`#N`/`N`) count only when they fit exactly one label;
-  bare `none` is never a label. Activity and processed columns `rules`
-  (JSON list, `["none"]`) and `unknown_rules` (INTEGER, `addColumn` takes a
-  type); a reused answer reuses its stored citation. `ActivityQuery.Rule`
+  bare `none` (any case) is never a label; `none` beside labels is
+  dropped. Activity and processed columns `rules`
+  (JSON list, `["none"]`, NULL when empty) and `unknown_rules` (INTEGER, `addColumn` takes a
+  type); a reused answer reuses its stored citation. `Decision.Rules`
+  (`omitzero`) is never nil for a decision with a category: labels,
+  `["none"]`, or `[]` for no Rules line / only unknown labels (`resolve`;
+  `storedRules` on reuse and activity reads, so old rows read `[]`). `ActivityQuery.Rule`
   (`json_each`; resolved against current labels plus every label the log
   cites, unknown refused), `Status.RuleUsage` over `activity_hours` (each
   item once, by its latest categorised row; current labels only; gone ones
-  in `no_longer_present`; nil when the Markdown cannot be read), `TestExcluding` (`classifier_test` `exclude_rules`:
+  in `no_longer_present`; `with_rules` + `none` + `no_citation` =
+  `decisions`; nil when the Markdown cannot be read), `Status.Counts`
+  (processed by status, live only) and `DryRunCounts` (`dry_run` table by
+  category, `unclassified` included), `TestExcluding` (`classifier_test` `exclude_rules`:
   `instructions.exclude` drops sections, rules keep their numbers; one
   fetch, two model calls, `changed` nil unless both answered). A missing/unreadable file or a prompt over
   `max_prompt_chars` ends the run in `RunError` before the source is called;
