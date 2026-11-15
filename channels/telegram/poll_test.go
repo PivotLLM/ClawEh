@@ -64,6 +64,25 @@ func TestPollFailed_AlertsOnlyOnRejectedToken(t *testing.T) {
 	require.Equal(t, `telegram: 401 "Unauthorized"`, rec.alerts[0].Description)
 }
 
+// A rejected token is met again on every poll, a minute apart: it alerts
+// once, not on each, and again at once when it returns after a poll worked.
+func TestPollFailed_RejectedTokenAlertsOncePerOutage(t *testing.T) {
+	ch := newTestChannel(t, &stubCaller{})
+	rec := &alertRecorder{}
+	ch.SetAlerter(rec)
+	unauthorized := &ta.Error{ErrorCode: 401, Description: "Unauthorized"}
+
+	for range 30 {
+		ch.pollFailed(unauthorized, time.Minute)
+	}
+	require.Len(t, rec.alerts, 1, "repeated rejections are one alert")
+
+	ch.ReportConnected() // a poll worked: the token is accepted again
+	ch.pollFailed(unauthorized, time.Minute)
+	require.Len(t, rec.alerts, 2, "a rejection after a working poll is a new alert")
+	require.Equal(t, `telegram: 401 "Unauthorized"`, rec.alerts[1].Description)
+}
+
 func updatesResponse(t *testing.T, ids ...int) *ta.Response {
 	t.Helper()
 	ups := make([]telego.Update, 0, len(ids))

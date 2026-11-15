@@ -262,13 +262,14 @@ const pollAlertMsgLimit = 200
 
 // alertPollFailure raises an alert for a long-poll failure that no retry can
 // fix: Telegram rejecting the bot token (401). The poll loop keeps retrying at
-// its slowest rate in case the token is restored; the alerter de-duplicates
-// the repeats on the channel name (EventID, filled in by Alert).
+// its slowest rate in case the token is restored, so the alert is raised once
+// and then once a day while the token stays rejected (AlertLasting), keyed by
+// the channel name (EventID, filled in by Alert).
 func (c *TelegramChannel) alertPollFailure(msg string) {
 	if r := []rune(msg); len(r) > pollAlertMsgLimit {
 		msg = string(r[:pollAlertMsgLimit]) + "..."
 	}
-	c.Alert(alerter.Alert{
+	c.AlertLasting(alerter.Alert{
 		Title:       "Telegram polling failed",
 		Description: c.Name() + ": " + msg,
 	})
@@ -448,7 +449,8 @@ func pollRetryWait(err error, backoff time.Duration) (wait, next time.Duration) 
 }
 
 // pollFailed records a failed getUpdates. A rejected token (401) cannot be
-// fixed by retrying, so it alerts at once; every other failure feeds the
+// fixed by retrying, so it alerts at once (then once a day while it lasts);
+// every other failure feeds the
 // channel's outage tracker, which alerts only if the outage outlasts
 // channels.ConnDownAlertAfter.
 func (c *TelegramChannel) pollFailed(err error, wait time.Duration) {

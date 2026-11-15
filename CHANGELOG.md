@@ -270,8 +270,39 @@
   "no response" message. The note is sent only with that request: it is
   not stored in the conversation. Command-line models and requests without
   tools do not get it.
+- **A "Model working again" alert.** When a model that was reported by
+  "Model authentication or billing failure" or "Model parked after repeated
+  failures" answers a request again, one alert (id `<provider>/<model>-up`)
+  names the model and since when it had been failing, so you know nothing is
+  left to do. A model nothing uses any more raises nothing: only a request
+  shows that it works.
 
 ### Changed
+
+- **An alert about a problem that lasts is sent once, then at most once a
+  day.** A model out of credit was reported again every time its cooldown
+  ended and something tried it (every 30 minutes by default), a rejected
+  Telegram, Slack or Matrix token every ten minutes, an MCP server that
+  stayed down every hour. These are now reported when the problem starts and
+  then at most once every 24 hours while it lasts; the reminder ends with
+  since when and how many were held back ("ongoing since Nov 14 09:02, 47
+  more since the last alert"). When the problem is gone, the next one is new
+  and is reported at once (the same alert is still never sent twice within
+  ten minutes). It applies to: "Model authentication or billing
+  failure" and "Model parked after repeated failures" (per model, ended when
+  the model answers; `/cooldowns clear` and `/retry` let the next failure be
+  reported without waiting for the day to pass), "Telegram polling failed" and "Channel credentials
+  rejected" (per channel, ended by a working connection), "MCP `<name>`
+  down" (its "still down" reminder now carries the date), "Channel send
+  failed" (per channel, ended by a delivered message), "Scheduled job
+  failed" (per job, ended by a run that succeeds), "Voice transcription
+  rejected" (per model, ended by a transcription that works) and the three
+  session-store alerts (per agent, ended by a write that is stored). Every
+  occurrence is still in the ClawEh log; `alerts.log` and the configured
+  alert channels get only what is sent. The count starts with ClawEh, so a
+  problem still there after a restart is reported again. If you counted on
+  the repeats (a webhook that re-opens a ticket on every alert), expect one
+  alert a day for a problem that stays.
 
 - **A classifier run that fails is logged and reported in the chat and to
   the agent, twice, then muted for 24 hours.** When a run fails outright

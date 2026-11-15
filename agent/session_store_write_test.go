@@ -104,3 +104,58 @@ func TestRunAgentLoop_SessionStoreWriteFailureFailsTurn(t *testing.T) {
 		})
 	}
 }
+
+// TestRunAgentLoop_SessionStoreWriteFailureAlertsOncePerOutage: a store that
+// refuses the user message refuses it on every turn, but only the first turn
+// alerts; a turn whose messages are recorded and saved ends that, so the next
+// refusal alerts again.
+func TestRunAgentLoop_SessionStoreWriteFailureAlertsOncePerOutage(t *testing.T) {
+	storeErr := errors.New("disk full")
+	al := newTestAgentLoop(t).al
+	rec := &alertRecorder{}
+	al.SetAlerter(rec)
+	agent := al.registry.Default()
+	if agent == nil {
+		t.Fatal("no default agent")
+	}
+	agent.Provider = &finalLLMProvider{}
+
+	const sessionKey = "store-write-outage"
+	cm := &storeWriteFailingContextManager{failUser: storeErr}
+	entry := &cmEntry{cm: cm, sessionKey: sessionKey}
+	entry.touch()
+	al.contextManagers.Store(agent.ID+":"+sessionKey, entry)
+	turn := func() error {
+		t.Helper()
+		_, err := al.runAgentLoop(context.Background(), agent, processOptions{
+			SessionKey: sessionKey, Channel: "cli", ChatID: "direct", UserMessage: "hello",
+		})
+		return err
+	}
+	alertCount := func() int {
+		rec.mu.Lock()
+		defer rec.mu.Unlock()
+		return len(rec.alerts)
+	}
+
+	for range 3 {
+		if err := turn(); !errors.Is(err, storeErr) {
+			t.Fatalf("turn error = %v, want the store error", err)
+		}
+	}
+	if n := alertCount(); n != 1 {
+		t.Fatalf("three refused turns must raise one alert, got %d", n)
+	}
+
+	cm.failUser = nil
+	if err := turn(); err != nil {
+		t.Fatalf("turn on a working store: %v", err)
+	}
+	cm.failUser = storeErr
+	if err := turn(); !errors.Is(err, storeErr) {
+		t.Fatalf("turn error = %v, want the store error", err)
+	}
+	if n := alertCount(); n != 2 {
+		t.Fatalf("a refusal after a turn that was saved must alert as new, got %d alerts", n)
+	}
+}

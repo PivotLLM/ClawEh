@@ -49,7 +49,23 @@ Each channel can be limited to a minimum priority with `ALERTER_PUSHOVER_MIN_PRI
 
 ## Repeats
 
-The same alert about the same thing within ten minutes is counted, not sent again. The next one after that says how many were held back.
+A problem that lasts is reported when it starts and then at most once a day while it lasts. The daily reminder says since when and how many times it happened in between, for example `ongoing since Nov 14 09:02, 47 more since the last alert`. Once the problem is gone, the next time it happens counts as new and is reported at once.
+
+This covers:
+
+- a model set aside for a key, login or credit problem, or after repeated failures; when the model answers again you get one **Model working again** alert, so you know nothing is left to do
+- a rejected channel token (Telegram, Slack, Matrix)
+- an MCP server that stays down
+- a channel that cannot deliver messages
+- a scheduled job that fails on every run
+- voice transcription refused for a key or credit problem
+- a conversation store that cannot be written
+
+Clearing a model's cooldown (`/cooldowns clear`, `/retry`) lets its next failure be reported without waiting for the day to pass.
+
+The reminders are counted from when ClawEh started; after a restart, a problem that is still there is reported again.
+
+On top of this, the same alert about the same thing within ten minutes of the last one is never sent twice: it is counted, and the next one after that says how many were held back. So a problem that ends and comes back within ten minutes is reported once.
 
 ## The alerts
 
@@ -61,6 +77,7 @@ See [Cooldowns](../providers/concepts.md#cooldowns) for when a model is set asid
 |---|---|
 | Model authentication or billing failure | A model failed for a key, login or credit problem; it is set aside until fixed. |
 | Model parked after repeated failures | A model kept failing for another reason and is set aside for a while. |
+| Model working again | A model reported by one of the two alerts above answered a request. |
 | Daily model spend over threshold | The day's model cost reached `agents.defaults.daily_spend_alert_usd`. |
 | Context compaction breaker tripped | Summarizing a long conversation failed three times in a row; check the memory models. |
 
@@ -80,7 +97,7 @@ See [Channels](../channels/index.md#when-a-message-cannot-be-delivered) for whic
 | SecMsg account discovery failed | The SecMsg service could not be asked for its accounts. |
 | SecMsg has no linked accounts | The SecMsg service has no account to use. |
 | Voice transcription rejected | The transcription service refused the key or credit. |
-| Speech backend not usable | A model in the Transcription list on the Task models page can't be used; urgent when no other model works. |
+| Speech backend not usable | A model in the Transcription list on the Task models page can't be used. |
 | Voice message not transcribed | Every model in the Transcription list failed on a voice message. |
 | Device source not started | A device event source failed to start. |
 | USB device monitor stopped | USB plug/unplug monitoring ended. |

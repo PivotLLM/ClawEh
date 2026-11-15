@@ -18,6 +18,7 @@ import (
 	"github.com/tenebris-tech/alerter"
 	"golang.org/x/time/rate"
 
+	"github.com/PivotLLM/ClawEh/alerts"
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/constants"
@@ -179,6 +180,10 @@ type Manager struct {
 	// alerter, when set, hears about channels that give up (start or send).
 	alerterMu sync.RWMutex
 	alerter   alerter.Alerter
+	// sendFaults holds each channel's "Channel send failed" alerts to one when
+	// its sends start failing and one a day while they keep failing; a send
+	// that is delivered ends it (see reportSendFailure, sendDelivered).
+	sendFaults alerts.Incidents
 	// clock times retries and their backoff; nil means clock.Real (tests set
 	// a fake).
 	clock clock.Clock
@@ -202,6 +207,13 @@ func (m *Manager) SetAlerter(a alerter.Alerter) {
 			setter.SetAlerter(a)
 		}
 	}
+}
+
+// hasAlerter reports whether an alerter is set.
+func (m *Manager) hasAlerter() bool {
+	m.alerterMu.RLock()
+	defer m.alerterMu.RUnlock()
+	return m.alerter != nil
 }
 
 func (m *Manager) alert(a alerter.Alert) {
@@ -791,6 +803,7 @@ func (m *Manager) sendWithRetry(ctx context.Context, name string, w *channelWork
 
 	// Pre-send: stop typing and try to edit placeholder
 	if m.preSend(ctx, name, msg, w.ch) {
+		m.sendDelivered(name)
 		return nil // placeholder was edited successfully, skip Send
 	}
 
@@ -798,10 +811,19 @@ func (m *Manager) sendWithRetry(ctx context.Context, name string, w *channelWork
 	// further resumes after the parts it already delivered.
 	sendCtx := WithSendProgress(ctx)
 	retries, err := m.retrySend(ctx, func() error { return w.ch.Send(sendCtx, msg) })
-	if err != nil && ctx.Err() == nil {
+	switch {
+	case err == nil:
+		m.sendDelivered(name)
+	case ctx.Err() == nil:
 		m.reportSendFailure(name, msg.ChatID, "message", err, retries)
 	}
 	return err
+}
+
+// sendDelivered records that channel name delivered a message or file: its
+// sends work, so a failure after this is a new fault and alerts at once.
+func (m *Manager) sendDelivered(name string) {
+	m.sendFaults.Resolve(name)
 }
 
 // retrySend calls send until it succeeds or fails for good, and returns the
@@ -840,7 +862,9 @@ func (m *Manager) retrySend(ctx context.Context, send func() error) (int, error)
 
 // reportSendFailure logs a send (what: "message" or "file") that failed after
 // retries retries, and alerts when the failure is an outage rather than a
-// state of the recipient or the configuration.
+// state of the recipient or the configuration. A channel whose sends keep
+// failing alerts once, then once a day with the count of the failures held
+// back, until one is delivered (sendDelivered); every failure is logged.
 func (m *Manager) reportSendFailure(name, chatID, what string, err error, retries int) {
 	// Receive-only rejection is an expected operator choice, not a fault — log it
 	// at INFO so it doesn't read as an error.
@@ -874,6 +898,13 @@ func (m *Manager) reportSendFailure(name, chatID, what string, err error, retrie
 		"error":   err.Error(),
 		"retries": retries,
 	})
+	if !m.hasAlerter() {
+		return
+	}
+	o := m.sendFaults.Report(name, m.clk().Now())
+	if !o.Alert {
+		return
+	}
 	description := name + ": a " + what + " could not be delivered"
 	switch {
 	case retries > 0:
@@ -883,7 +914,7 @@ func (m *Manager) reportSendFailure(name, chatID, what string, err error, retrie
 	}
 	m.alert(alerter.Alert{
 		Title:       "Channel send failed",
-		Description: description,
+		Description: description + o.Note(),
 		Details:     err.Error(),
 		EventID:     name,
 	})
@@ -1121,7 +1152,10 @@ func (m *Manager) sendMediaWithRetry(ctx context.Context, name string, w *channe
 	}
 
 	retries, err := m.retrySend(ctx, func() error { return ms.SendMedia(ctx, msg) })
-	if err != nil && ctx.Err() == nil {
+	switch {
+	case err == nil:
+		m.sendDelivered(name)
+	case ctx.Err() == nil:
 		m.reportSendFailure(name, msg.ChatID, "file", err, retries)
 	}
 	return err

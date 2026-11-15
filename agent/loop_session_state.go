@@ -117,7 +117,9 @@ func (al *AgentLoop) setActiveModelIndex(agent *AgentInstance, sessionKey string
 		if err := store.SetCompactionState(sessionKey, st); err != nil {
 			logger.WarnCF("agent", "active model index: persist failed",
 				map[string]any{"session_key": sessionKey, "error": err.Error()})
-			al.alertSessionStateNotPersisted("active model index", err)
+			al.alertSessionStateNotPersisted(agent, "active model index", err)
+		} else {
+			al.storeFaultOver(agent, alertSessionStateNotStored)
 		}
 	}
 	return nil
@@ -167,7 +169,9 @@ func (al *AgentLoop) setExposeReasoning(agent *AgentInstance, sessionKey string,
 		if err := store.SetCompactionState(sessionKey, st); err != nil {
 			logger.WarnCF("agent", "expose reasoning: persist failed",
 				map[string]any{"session_key": sessionKey, "error": err.Error()})
-			al.alertSessionStateNotPersisted("expose reasoning", err)
+			al.alertSessionStateNotPersisted(agent, "expose reasoning", err)
+		} else {
+			al.storeFaultOver(agent, alertSessionStateNotStored)
 		}
 	}
 }
@@ -232,19 +236,23 @@ func (al *AgentLoop) setShowToolActivity(agent *AgentInstance, sessionKey string
 		if err := store.SetCompactionState(sessionKey, st); err != nil {
 			logger.WarnCF("agent", "show tool activity: persist failed",
 				map[string]any{"session_key": sessionKey, "error": err.Error()})
-			al.alertSessionStateNotPersisted("show tool activity", err)
+			al.alertSessionStateNotPersisted(agent, "show tool activity", err)
+		} else {
+			al.storeFaultOver(agent, alertSessionStateNotStored)
 		}
 	}
 }
 
 // alertSessionStateNotPersisted raises the low alert for a per-session
-// setting that stayed in memory only; what names the setting.
-func (al *AgentLoop) alertSessionStateNotPersisted(what string, err error) {
-	al.Alerter().Send(alerter.Alert{
-		Title:       "Session state not persisted",
+// setting of agent's that stayed in memory only; what names the setting. A
+// store that refuses one setting refuses the next: one alert, then one a day
+// (alertStoreFault), until a setting is stored again.
+func (al *AgentLoop) alertSessionStateNotPersisted(agent *AgentInstance, what string, err error) {
+	al.alertStoreFault(agent, alerter.Alert{
+		Title:       alertSessionStateNotStored,
 		Description: what + ": the setting reverts on restart",
 		Details:     err.Error(),
-		EventID:     "session-store",
+		EventID:     sessionStoreAlertID,
 	})
 }
 

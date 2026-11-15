@@ -43,8 +43,10 @@ func (w *connWatch) resetLocked() {
 // ending any outage in progress. Channels call it on every successful poll,
 // connect or reconnect; it is cheap when nothing is wrong. When it is the last
 // channel of its platform to recover from an alerted outage, it raises the
-// "<Platform> up" alert.
+// "<Platform> up" alert. It also ends the faults raised with AlertLasting: a
+// connection that works has credentials that are accepted.
 func (c *BaseChannel) ReportConnected() {
+	c.lasting.ResolveAll()
 	w := &c.conn
 	w.mu.Lock()
 	if w.downSince.IsZero() {

@@ -19,6 +19,7 @@ import (
 	"github.com/PivotLLM/spawnllm/speech"
 	"github.com/tenebris-tech/alerter"
 
+	"github.com/PivotLLM/ClawEh/alerts"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/utils"
@@ -187,6 +188,7 @@ func (t *speechTranscriber) Transcribe(ctx context.Context, audio AudioFile) (*T
 		})
 		return nil, err
 	}
+	rejections.Resolve(rejectionKey(t.name)) // the key and account are accepted again
 	out := &TranscriptionResponse{Text: res.Text, Language: res.Language, Duration: res.DurationSeconds, CostUSD: res.CostUSD}
 	logger.InfoCF("voice", "Transcription completed successfully", map[string]any{
 		"model":            t.name,
@@ -205,10 +207,22 @@ func orNop(a alerter.Alerter) alerter.Alerter {
 	return a
 }
 
+// rejections holds each model's "Voice transcription rejected" alerts to one
+// when its key or account is first refused and one a day while it stays
+// refused; a transcription that works ends it. It is process-wide, like the
+// alert's id, because the transcribers are rebuilt on every config reload and
+// a reload must not raise the alert again.
+var rejections alerts.Incidents
+
+// rejectionKey is model's key in rejections, and its alert id.
+func rejectionKey(model string) string { return "voice:" + model }
+
 // alertRejected raises an alert when the API turned the request away for a
 // reason that persists across requests: bad credentials (401/403, or
 // Gemini's 400 API_KEY_INVALID) or an exhausted account (402). Other
 // statuses are per-request failures and stay in the log only.
+// Every voice message meets the same refusal, so the alert is raised for the
+// first and then once a day (rejections).
 func alertRejected(a alerter.Alerter, model string, status int, body string) {
 	switch {
 	case status == http.StatusUnauthorized, status == http.StatusPaymentRequired, status == http.StatusForbidden:
@@ -217,15 +231,22 @@ func alertRejected(a alerter.Alerter, model string, status int, body string) {
 	default:
 		return
 	}
+	if _, none := a.(alerter.Nop); none {
+		return // nobody to tell: the first refusal with an alerter is the first alert
+	}
+	o := rejections.Report(rejectionKey(model), time.Now())
+	if !o.Alert {
+		return
+	}
 	details := []rune(strings.TrimSpace(body))
 	if len(details) > 200 {
 		details = details[:200]
 	}
 	a.Send(alerter.Alert{
 		Title:       "Voice transcription rejected",
-		Description: fmt.Sprintf("%s: status %d; voice messages are not transcribed until the key or account is fixed", model, status),
+		Description: fmt.Sprintf("%s: status %d; voice messages are not transcribed until the key or account is fixed%s", model, status, o.Note()),
 		Details:     string(details),
-		EventID:     "voice:" + model,
+		EventID:     rejectionKey(model),
 	})
 }
 
@@ -299,8 +320,7 @@ func DetectTranscriber(cfg *config.Config) Transcriber {
 
 // DetectTranscriberWithAlerter is DetectTranscriber with an alerter that
 // receives the alert raised when a provider rejects the key or account, and
-// one alert per STT model that is skipped as unusable: urgent when no model
-// is usable (transcription is off), normal when another one is.
+// one alert per STT model that is skipped as unusable.
 func DetectTranscriberWithAlerter(cfg *config.Config, a alerter.Alerter) Transcriber {
 	var chain []Transcriber
 	var skipped []skippedSTT

@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/tenebris-tech/alerter"
+
+	"github.com/PivotLLM/ClawEh/alerts"
 )
 
 // Alert cadence and retry backoff for servers that cannot be (re)connected.
@@ -18,8 +20,8 @@ const (
 	// on the first failed attempt after this much time since the first failure.
 	downAlertAfter = 5 * time.Minute
 	// alertReminderInterval is the least time between two alerts for a server
-	// that stays unreachable.
-	alertReminderInterval = time.Hour
+	// that stays unreachable: a day, as for every lasting condition.
+	alertReminderInterval = alerts.RemindEvery
 	// maxReconnectBackoff caps the wait between attempts for a server that
 	// keeps failing (unless the configured initial cooldown is longer).
 	maxReconnectBackoff = 10 * time.Minute
@@ -73,7 +75,8 @@ func (m *Manager) recordFailure(name string, err error) {
 		}
 	case now.Sub(h.lastAlert) >= alertReminderInterval:
 		h.lastAlert = now
-		a := downAlert(name, err, "still down since "+h.downSince.Format("15:04")+": ")
+		// With the date: a reminder comes a day or more after the outage began.
+		a := downAlert(name, err, "still down since "+alerts.Stamp(h.downSince)+": ")
 		alert = &a
 	}
 	m.cooldownMu.Unlock()

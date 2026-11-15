@@ -8,10 +8,14 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/tenebris-tech/alerter"
+
+	"github.com/PivotLLM/ClawEh/internal/clock"
 )
 
 type alertRecorder struct {
@@ -52,6 +56,66 @@ func TestExecuteJobByID_AlertsOnFailure(t *testing.T) {
 	if len(rec.alerts) != 1 || rec.alerts[0].Priority != alerter.Normal || rec.alerts[0].EventID != job.ID ||
 		rec.alerts[0].Title != "Scheduled job failed" || rec.alerts[0].Details != "handler failure" {
 		t.Fatalf("failure must alert low once for the job, got %+v", rec.alerts)
+	}
+}
+
+// TestExecuteJobByID_FailingJobAlertsOnceThenDaily: a job whose every run
+// fails alerts on the first, then once a day with the count of failed runs
+// held back; a run that succeeds ends that, so the next failure alerts at
+// once.
+func TestExecuteJobByID_FailingJobAlertsOnceThenDaily(t *testing.T) {
+	fail := true
+	cs := newTestServiceWithHandler(t, func(*CronJob) (string, error) {
+		if fail {
+			return "", errors.New("handler failure")
+		}
+		return "ok", nil
+	})
+	fc := clock.NewFake(time.Date(2026, time.November, 14, 9, 2, 0, 0, time.UTC))
+	cs.clock = fc
+	rec := &alertRecorder{}
+	cs.SetAlerter(rec)
+	job := addEnabledJob(t, cs, "every", new(int64(3_600_000)))
+
+	for range 24 { // hourly, for a day
+		cs.executeJobByID(job.ID)
+		fc.Advance(time.Hour)
+	}
+	if len(rec.alerts) != 1 || strings.Contains(rec.alerts[0].Description, "ongoing") {
+		t.Fatalf("a day of failed hourly runs must raise one alert, got %+v", rec.alerts)
+	}
+
+	cs.executeJobByID(job.ID)
+	if len(rec.alerts) != 2 || rec.alerts[1].EventID != job.ID ||
+		!strings.HasSuffix(rec.alerts[1].Description, "; ongoing since Nov 14 09:02, 23 more since the last alert") {
+		t.Fatalf("a day later the job must alert once more with the count, got %+v", rec.alerts)
+	}
+
+	fail = false
+	cs.executeJobByID(job.ID)
+	fail = true
+	cs.executeJobByID(job.ID)
+	if len(rec.alerts) != 3 || strings.Contains(rec.alerts[2].Description, "ongoing") {
+		t.Fatalf("a failure after a successful run must alert as new, got %+v", rec.alerts)
+	}
+}
+
+// TestRemoveJob_EndsItsFailureAlert: a removed job leaves nothing behind, so
+// a job that later gets the same id alerts on its first failure.
+func TestRemoveJob_EndsItsFailureAlert(t *testing.T) {
+	cs := newTestServiceWithHandler(t, func(*CronJob) (string, error) {
+		return "", errors.New("handler failure")
+	})
+	rec := &alertRecorder{}
+	cs.SetAlerter(rec)
+	job := addEnabledJob(t, cs, "every", new(int64(60_000)))
+
+	cs.executeJobByID(job.ID)
+	if removed, err := cs.RemoveJob(job.ID); err != nil || !removed {
+		t.Fatalf("RemoveJob = %v, %v", removed, err)
+	}
+	if o := cs.jobFaults.Report(job.ID, time.Now()); !o.Alert || o.Ongoing {
+		t.Fatalf("a removed job's failure state must be gone, got %+v", o)
 	}
 }
 

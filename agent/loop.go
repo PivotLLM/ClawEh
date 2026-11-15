@@ -191,6 +191,10 @@ type AgentLoop struct {
 	// fileChannels says which channels can send files: the channel manager
 	// (SetChannelManager); tests substitute a fake.
 	fileChannels fileChannels
+	// storeFaults holds the session-store alerts to one when a store starts
+	// refusing writes and one a day while it keeps refusing them (see
+	// alertStoreFault).
+	storeFaults alerts.Incidents
 }
 
 // clk is the clock the loop's timing runs on (AgentLoop.clock).

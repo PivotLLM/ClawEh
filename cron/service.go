@@ -15,6 +15,8 @@ import (
 	"github.com/adhocore/gronx"
 	"github.com/tenebris-tech/alerter"
 
+	"github.com/PivotLLM/ClawEh/alerts"
+	"github.com/PivotLLM/ClawEh/internal/clock"
 	"github.com/PivotLLM/ClawEh/internal/perms"
 	"github.com/PivotLLM/ClawEh/logger"
 )
@@ -166,6 +168,12 @@ type CronService struct {
 	fileModTime time.Time // mtime of store file at last load or save
 	alerter     alerter.Alerter
 	loadErr     error // store load failure at construction, see LoadError
+	// jobFaults holds each job's "Scheduled job failed" alerts to one when its
+	// runs start failing and one a day while they keep failing; a run that
+	// succeeds ends it, and so does removing the job.
+	jobFaults alerts.Incidents
+	// clock times jobFaults; nil means clock.Real (tests set a fake).
+	clock clock.Clock
 }
 
 // LoadError returns the error from loading the store when the service was
@@ -367,17 +375,22 @@ func (cs *CronService) executeJobByID(jobID string) {
 			"duration_ms": execDuration,
 			"error":       err.Error(),
 		})
+		// Every failed run is logged and kept in the job's state; the operator
+		// is alerted on the first, then once a day while every run fails.
 		if cs.alerter != nil {
-			cs.alerter.Send(alerter.Alert{
-				Title:       "Scheduled job failed",
-				Description: job.Name + " (" + job.ID + ")",
-				Details:     err.Error(),
-				EventID:     job.ID,
-			})
+			if o := cs.jobFaults.Report(job.ID, clock.Or(cs.clock).Now()); o.Alert {
+				cs.alerter.Send(alerter.Alert{
+					Title:       "Scheduled job failed",
+					Description: job.Name + " (" + job.ID + ")" + o.Note(),
+					Details:     err.Error(),
+					EventID:     job.ID,
+				})
+			}
 		}
 	} else {
 		job.State.LastStatus = "ok"
 		job.State.LastError = ""
+		cs.jobFaults.Resolve(job.ID) // it runs again: its next failure is news
 	}
 
 	// Compute next run time
@@ -651,6 +664,7 @@ func (cs *CronService) removeJobUnsafe(jobID string) (bool, error) {
 	removed := len(cs.store.Jobs) < before
 
 	if removed {
+		cs.jobFaults.Resolve(jobID)
 		if err := cs.saveStoreUnsafe(); err != nil {
 			return true, err
 		}

@@ -95,7 +95,7 @@ In each key, 0 means the default and a negative number turns cooldown off for th
 ### What you see
 
 - In the chat: `⚠️ Claude Sonnet 5.5 unavailable — rate limited (retry in 7m). Using OpenAI GPT 5.5.` Several skipped models are summed up on one line.
-- Operator [alerts](../admin/alerts.md): one when a model is parked for a key or billing failure (raised on the first such failure), and one when a model is parked after repeated failures of another kind, once the 1, 3 and 5 minute steps are used up.
+- Operator [alerts](../admin/alerts.md): one when a model is parked for a key or billing failure (raised on the first such failure), and one when a model is parked after repeated failures of another kind, once the 1, 3 and 5 minute steps are used up. A model that stays broken is parked again each time its cooldown ends, but the alert is sent once and then at most once a day; when the model answers again, one "Model working again" alert says so.
 - Chat commands: `/cooldowns list` shows parked models; `/cooldowns clear` clears all of them, and `/cooldowns clear <provider>/<model>` clears one. `/retry` clears all cooldowns and resends your last message.
 
 ## Context window and output length

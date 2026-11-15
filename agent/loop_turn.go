@@ -513,14 +513,67 @@ func (al *AgentLoop) saveAssistantReply(
 	if err := agent.Sessions.Save(sessionKey); err != nil {
 		logger.WarnCF("agent", "Failed to save session",
 			map[string]any{"error": err.Error(), "session": sessionKey})
-		al.Alerter().Send(alerter.Alert{
-			Title:       "Session not saved",
+		al.alertStoreFault(agent, alerter.Alert{
+			Title:       alertSessionNotSaved,
 			Description: "conversation history is being lost (disk full or unwritable?)",
 			Details:     err.Error(),
-			EventID:     "session-store",
+			EventID:     sessionStoreAlertID,
 		})
+	} else {
+		// The turn's messages were recorded and saved: the store takes writes.
+		al.storeFaultOver(agent, alertSessionNotSaved, alertSessionWriteFailed)
 	}
 	return nil
+}
+
+// Titles and the shared id of the session-store alerts. One id for every
+// session and all three, so a full disk is one alert in the alerter's window.
+const (
+	alertSessionNotSaved       = "Session not saved"
+	alertSessionWriteFailed    = "Session store write failed"
+	alertSessionStateNotStored = "Session state not persisted"
+	sessionStoreAlertID        = "session-store"
+)
+
+// alertStoreFault raises a, an alert about agent's session store. A store
+// that refuses one write refuses the next, on every turn, so the alert is
+// raised when that starts and then once a day while it lasts
+// (al.storeFaults), with a note of since when and how many were held back;
+// storeFaultOver ends it. Every failure is logged by the caller.
+func (al *AgentLoop) alertStoreFault(agent *AgentInstance, a alerter.Alert) {
+	out := al.Alerter()
+	if _, none := out.(alerter.Nop); none {
+		return // nobody to tell: the first failure with an alerter is the first alert
+	}
+	o := al.storeFaults.Report(storeFaultKey(agent, a.Title), al.clk().Now())
+	if !o.Alert {
+		return
+	}
+	a.Description += o.Note()
+	out.Send(a)
+}
+
+// storeFaultOver records that agent's session store took the writes the
+// alerts with these titles are about, so the next refusal alerts at once.
+func (al *AgentLoop) storeFaultOver(agent *AgentInstance, titles ...string) {
+	for _, title := range titles {
+		al.storeFaults.Resolve(storeFaultKey(agent, title))
+	}
+}
+
+// storeFaultKey names one alert about one session store. A configured agent
+// has its own; a clone counts as its source and every other temporary agent
+// as one, because they come and go by the dozen (one per sub-agent, one per
+// forum participant) and a full disk must not alert once for each.
+func storeFaultKey(agent *AgentInstance, title string) string {
+	owner := agent.ID
+	switch {
+	case agent.Spec.IsClone():
+		owner = agent.Spec.SourceID
+	case agent.IsTemp():
+		owner = "temporary agents"
+	}
+	return title + "\x00" + owner
 }
 
 // publishTurnReply sends the reply to the turn's chat, reporting its
@@ -720,11 +773,11 @@ func (al *AgentLoop) sessionStoreWriteFailed(agent *AgentInstance, sessionKey, w
 		"message":     what,
 		"error":       err.Error(),
 	})
-	al.Alerter().Send(alerter.Alert{
-		Title:       "Session store write failed",
+	al.alertStoreFault(agent, alerter.Alert{
+		Title:       alertSessionWriteFailed,
 		Description: "a " + what + " could not be written to the session store and the turn was abandoned (disk full or unwritable?)",
 		Details:     err.Error(),
-		EventID:     "session-store",
+		EventID:     sessionStoreAlertID,
 	})
 	return fmt.Errorf("session store rejected the %s, so the turn was abandoned: %w", what, err)
 }

@@ -104,8 +104,8 @@ func (c *SlackChannel) Start(ctx context.Context) error {
 // retries a failing connect itself, but RunContext returns when an established
 // connection drops or the token is rejected and leaves retrying that to the
 // caller, so it is re-run here with backoff. A rejected token cannot be fixed
-// by retrying: it alerts at once, and the loop keeps retrying at its slowest
-// rate in case the token is restored.
+// by retrying: it alerts at once, then once a day while it stays rejected, and
+// the loop keeps retrying at its slowest rate in case the token is restored.
 func (c *SlackChannel) runSocket() {
 	var backoff time.Duration
 	for {
@@ -119,7 +119,7 @@ func (c *SlackChannel) runSocket() {
 			logger.ErrorCF("slack", "Slack rejected the app token", map[string]any{
 				"error": err.Error(),
 			})
-			c.Alert(alerter.Alert{
+			c.AlertLasting(alerter.Alert{
 				Title:       "Channel credentials rejected",
 				Description: c.Name() + ": Slack rejected the app token; no messages are received until it is replaced",
 				Details:     err.Error(),

@@ -104,8 +104,9 @@ func TestRetryDisconnected_AlertsUnreachable(t *testing.T) {
 }
 
 // TestAlertCadence: failures inside the grace period do not alert, the first
-// failure after it does, repeats within the hour do not, a failure after 61
-// minutes reminds, and recovery alerts once.
+// failure after it does, repeats within the day do not, a failure a day after
+// the down alert reminds (with the date the outage began), and recovery
+// alerts once.
 func TestAlertCadence(t *testing.T) {
 	mgr, rec, clock := newAlertingManager(t)
 	fail := errors.New("failed to connect: transport error: transport closed")
@@ -137,12 +138,18 @@ func TestAlertCadence(t *testing.T) {
 		t.Fatalf("failure right after the down alert must not alert, got %+v", got)
 	}
 
-	clock.advance(61 * time.Minute)
+	clock.advance(23 * time.Hour)
+	mgr.recordFailure("www", fail)
+	if got = rec.take(); len(got) != 0 {
+		t.Fatalf("failure 23 hours after the down alert must not alert, got %+v", got)
+	}
+
+	clock.advance(59 * time.Minute)
 	mgr.recordFailure("www", fail)
 	got = rec.take()
 	if len(got) != 1 || got[0].Title != "MCP www down" ||
-		!strings.HasPrefix(got[0].Description, "still down since 14:05: ") {
-		t.Fatalf("failure after 61 minutes: want one reminder, got %+v", got)
+		!strings.HasPrefix(got[0].Description, "still down since Sep 27 14:05: ") {
+		t.Fatalf("failure a day after the down alert: want one reminder, got %+v", got)
 	}
 
 	clock.advance(time.Minute)
@@ -154,7 +161,7 @@ func TestAlertCadence(t *testing.T) {
 	mgr.recordSuccess("www")
 	got = rec.take()
 	if len(got) != 1 || got[0].Title != "MCP www up" || got[0].EventID != "www-up" ||
-		got[0].Description != "reconnected after 1h8m" {
+		got[0].Description != "reconnected after 24h6m" {
 		t.Fatalf("recovery: want one up alert, got %+v", got)
 	}
 	if msg, _ := mgr.lastError("www"); msg != "" {
@@ -251,8 +258,8 @@ func TestDownAlertText(t *testing.T) {
 		}
 	}
 
-	reminder := downAlert("www", err, "still down since 14:05: ")
-	if !strings.HasPrefix(reminder.Description, "still down since 14:05: Error:") ||
+	reminder := downAlert("www", err, "still down since Sep 27 14:05: ")
+	if !strings.HasPrefix(reminder.Description, "still down since Sep 27 14:05: Error:") ||
 		len([]rune(reminder.Description)) > alertReasonMax {
 		t.Fatalf("reminder description = %q", reminder.Description)
 	}

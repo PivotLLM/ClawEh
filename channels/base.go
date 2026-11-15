@@ -15,6 +15,7 @@ import (
 
 	"github.com/tenebris-tech/alerter"
 
+	"github.com/PivotLLM/ClawEh/alerts"
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/identity"
@@ -157,6 +158,9 @@ type BaseChannel struct {
 	alerter   alerter.Alerter
 	// conn tracks connection outages; see ReportConnFailure.
 	conn connWatch
+	// lasting holds a fault that is met again on every retry to one alert and
+	// one a day; see AlertLasting.
+	lasting alerts.Incidents
 	// platform groups connection outages across channels; see SetPlatform.
 	platform string
 	// outages aggregates connection outages per platform (connOutages;
@@ -472,6 +476,27 @@ func (c *BaseChannel) Alert(a alerter.Alert) {
 		a.EventID = c.name
 	}
 	al.Send(a)
+}
+
+// AlertLasting raises a like Alert, for a fault that lasts until someone fixes
+// it and is met again on every retry, such as a rejected token: the first
+// report is sent, the next ones are held until alerts.RemindEvery has passed,
+// and the one sent then says since when and how many were held. A working
+// connection (ReportConnected) ends it, so the fault alerts at once if it
+// returns. Faults are told apart by the alert's title.
+func (c *BaseChannel) AlertLasting(a alerter.Alert) {
+	c.alerterMu.RLock()
+	al := c.alerter
+	c.alerterMu.RUnlock()
+	if al == nil {
+		return // nobody to tell yet: the first report with an alerter is the first alert
+	}
+	o := c.lasting.Report(a.Title, c.conn.clk().Now())
+	if !o.Alert {
+		return
+	}
+	a.Description += o.Note()
+	c.Alert(a)
 }
 
 // SetOwner injects the concrete channel that embeds this BaseChannel.
