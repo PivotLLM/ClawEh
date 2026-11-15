@@ -119,7 +119,13 @@ func TestParseReplyWithRules(t *testing.T) {
 		{"urgent\nx\nRules: GUIDE.MD; instructions", "urgent", "x", []string{"files/x/guide.md", "instructions"}, 0},
 		{"urgent\nx\nRules: rule 9, nope.md, rule 1", "urgent", "x", []string{"rule 1"}, 2},
 		{"urgent\nx\nRules: nope", "urgent", "x", nil, 1},
-		{"urgent\nx\nRules: none, rule 1", "urgent", "x", []string{"rule 1"}, 0},
+		{"urgent\nx\nRules: none, rule 1", "urgent", "x", []string{"rule 1"}, 0}, // none beside a label is dropped
+		{"urgent\nx\nRules: none, nope", "urgent", "x", nil, 1},                  // ... also beside an unknown one
+		{"low\nx\nRules: NONE", "low", "x", []string{RulesNone}, 0},
+		{"low\nx\nRules: NoNe", "low", "x", []string{RulesNone}, 0},
+		{"low\nx\nRules: *None*", "low", "x", []string{RulesNone}, 0},
+		{"low\nx\nRules: `none`.", "low", "x", []string{RulesNone}, 0},
+		{"low\nx\nRules: [None]", "low", "x", []string{RulesNone}, 0},
 		{"urgent\nx\nRules:", "urgent", "x", nil, 0},                   // lists nothing: ignored
 		{"urgent\nx\nRules: , ;", "urgent", "x", nil, 0},               // lists nothing: ignored
 		{"urgent\nx\ny\nRules: rule 1", "urgent", "x", nil, 0},         // fourth line: not read
@@ -131,7 +137,7 @@ func TestParseReplyWithRules(t *testing.T) {
 			t.Errorf("parseReply(%q) = %q, %q, %v; want %q, %q", tc.reply, c, r, ok, tc.category, tc.reason)
 		}
 		rules, unknown := parseCitation(replyLines(tc.reply)).resolve(labels)
-		if !slices.Equal(rules, tc.rules) || unknown != tc.unknown {
+		if rules == nil || !slices.Equal(rules, tc.rules) || unknown != tc.unknown { // nil want: an empty list
 			t.Errorf("citation of %q = %v, %d; want %v, %d", tc.reply, rules, unknown, tc.rules, tc.unknown)
 		}
 	}
@@ -204,8 +210,75 @@ func TestRunStoresCitations(t *testing.T) {
 	if a := got["m2"]; !slices.Equal(a.Rules, []string{RulesNone}) || a.UnknownRules != 0 {
 		t.Errorf("m2 = %v, %d", a.Rules, a.UnknownRules)
 	}
-	if a := got["m3"]; a.Rules != nil || a.UnknownRules != 0 || a.Category != "urgent" { // "???" lists nothing: ignored
+	if a := got["m3"]; a.Rules == nil || len(a.Rules) != 0 || a.UnknownRules != 0 || a.Category != "urgent" { // "???" lists nothing: empty
 		t.Errorf("m3 = %+v", a)
+	}
+	if data := string(mustJSON(t, got["m3"])); !strings.Contains(data, `"rules":[]`) {
+		t.Errorf("m3 JSON = %s, want an empty rules list", data)
+	}
+}
+
+// Every decision with a category has rules: an answer without a Rules
+// line, or citing only unknown labels, has an empty list; a decision
+// without a category has none. rule_usage counts each decision as
+// with_rules, none or no_citation, which add up to decisions.
+func TestEmptyCitation(t *testing.T) {
+	e := citeEnv(t)
+	e.setInbox([]string{"m1", "m2", "m3", "m4", "m5"})
+	e.model.setReply(func(_, user string) (string, error) {
+		switch {
+		case strings.Contains(user, "About m1\n"):
+			return "urgent\nfrom a client", nil // no Rules line
+		case strings.Contains(user, "About m2\n"):
+			return "low\nx\nRules: nope.md", nil // only an unknown label
+		case strings.Contains(user, "About m3\n"):
+			return "urgent\nx\nRules: rule 1", nil
+		case strings.Contains(user, "About m4\n"):
+			return "low\nx\nRules: None", nil
+		}
+		return "no idea", nil // m5: unclassified
+	})
+	if rec := e.run("inbox-priority"); rec.Classified != 4 || rec.Unclassified != 1 {
+		t.Fatalf("run = %+v", rec)
+	}
+	got := map[string]ActivityEntry{}
+	for _, a := range e.activity(ActivityQuery{}) {
+		got[a.ItemID] = a
+	}
+	for id, want := range map[string][]string{"m1": {}, "m2": {}, "m3": {"rule 1"}, "m4": {RulesNone}} {
+		if a := got[id]; a.Rules == nil || !slices.Equal(a.Rules, want) {
+			t.Errorf("%s rules = %#v, want %q", id, a.Rules, want)
+		}
+	}
+	if a := got["m2"]; a.UnknownRules != 1 {
+		t.Errorf("m2 unknown_rules = %d, want 1", a.UnknownRules)
+	}
+	if data := string(mustJSON(t, got["m5"])); strings.Contains(data, `"rules"`) {
+		t.Errorf("unclassified m5 JSON = %s, want no rules", data)
+	}
+	ids := func(rule string) []string {
+		var out []string
+		for _, a := range e.activity(ActivityQuery{Rule: rule}) {
+			out = append(out, a.ItemID)
+		}
+		return out
+	}
+	if got := ids("NONE"); !slices.Equal(got, []string{"m4"}) {
+		t.Errorf("rule NONE = %v, want [m4]", got)
+	}
+	st, err := e.svc.Status(e.scope, "inbox-priority")
+	if err != nil || len(st) != 1 || st[0].RuleUsage == nil {
+		t.Fatalf("status = %+v, %v", st, err)
+	}
+	u := st[0].RuleUsage
+	if u.Decisions != 4 || u.WithRules != 1 || u.None != 1 || u.NoCitation != 2 || u.Unknown != 1 ||
+		u.WithRules+u.None+u.NoCitation != u.Decisions {
+		t.Errorf("rule usage = %+v", u)
+	}
+	for _, d := range st[0].Recent {
+		if d.Category != "" && d.Rules == nil {
+			t.Errorf("recent %s has no rules", d.ItemID)
+		}
 	}
 }
 
@@ -236,7 +309,8 @@ func writeCitelessStateDB(t *testing.T, path string) {
 }
 
 // An existing state.db gains the rules and unknown_rules columns on open;
-// its rows read with no citation and new rows store theirs.
+// its categorised rows read with an empty citation and new rows store
+// theirs.
 func TestStateMigrationAddsRules(t *testing.T) {
 	base := filepath.Join(t.TempDir(), "classifiers")
 	if err := os.MkdirAll(base, 0o700); err != nil {
@@ -264,7 +338,7 @@ func TestStateMigrationAddsRules(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || !slices.Equal(got[0].Rules, []string{"rule 1"}) || got[0].UnknownRules != 2 || got[1].Rules != nil || got[1].UnknownRules != 0 {
+	if len(got) != 2 || !slices.Equal(got[0].Rules, []string{"rule 1"}) || got[0].UnknownRules != 2 || got[1].Rules == nil || len(got[1].Rules) != 0 || got[1].UnknownRules != 0 {
 		t.Errorf("activity = %+v", got)
 	}
 	var stored string
@@ -354,6 +428,7 @@ func TestStatusRuleUsage(t *testing.T) {
 		Hours: 72, Decisions: 3,
 		Cited:           map[string]int{"050-domain-example.md": 1, "rule 1": 1},
 		NeverCited:      []string{"instructions", "files/classifiers/inbox/guide.md", "060-news.md", "rule 2"},
+		WithRules:       2,
 		None:            1,
 		Unknown:         1,
 		NoLongerPresent: map[string]int{"070-old.md": 1},

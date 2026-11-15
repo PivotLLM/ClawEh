@@ -53,7 +53,7 @@ func Tools(svc *Service, host ToolHost) []toolspec.ToolDefinition {
 		}},
 		{Name: "delete", Description: "Delete a classifier and its state", Handler: t.delete, Parameters: []toolspec.Parameter{id}},
 		{Name: "validate", Description: "Check a definition without saving it, including your tools and one call of its source tool", Handler: t.validate, Parameters: []toolspec.Parameter{definition}},
-		{Name: "status", Description: "A classifier's last run, live items by status (counts) and dry-run decisions by category (dry_run_counts), recent decisions, last error, whether its error notices are on, off or muted, and how often each rule was cited (rule_usage); omit id for all your classifiers", Handler: t.status, Parameters: []toolspec.Parameter{
+		{Name: "status", Description: "A classifier's last run, live items by status (counts) and dry-run decisions by category (dry_run_counts), recent decisions, last error, whether its error notices are on, off or muted, and how often each rule was cited (rule_usage; with_rules, none and no_citation add up to decisions); omit id for all your classifiers", Handler: t.status, Parameters: []toolspec.Parameter{
 			{Name: "id", Type: "string", Description: "Classifier ID; omit for all"},
 		}},
 		{Name: "test", Description: "Classify one item without acting or storing anything: its fields (empty ones as \"\"; missing_fields: not in the fetch result), the category, reason, cited rules, the action that would run and the system prompt with your Markdown instructions loaded. With exclude_rules, the item is classified again without those rules and changed says whether the category changed; that costs two model calls", Handler: t.test, Parameters: []toolspec.Parameter{
@@ -65,13 +65,13 @@ func Tools(svc *Service, host ToolHost) []toolspec.ToolDefinition {
 			id,
 			{Name: "item_id", Type: "string", Required: true, Description: "The item's ID"},
 		}},
-		{Name: "activity", Description: "A classifier's activity log, newest first: each item handled with its fields, category, reason, cited rules and action, and each failed run with its error (the same error in a row is one entry with count, at and last_at)", Handler: t.activity, Parameters: []toolspec.Parameter{
+		{Name: "activity", Description: "A classifier's activity log, newest first: each item handled with its fields (an empty one as \"\"; missing_fields: not in the fetch result), category, reason, cited rules (rules: the labels, [\"none\"] when the model said no rule applies, [] when it cited nothing usable) and action, and each failed run with its error (the same error in a row is one entry with count, at and last_at)", Handler: t.activity, Parameters: []toolspec.Parameter{
 			id,
 			{Name: "limit", Type: "integer", Description: fmt.Sprintf("Entries to return; %d when omitted, at most %d", DefaultActivityLimit, MaxActivityLimit)},
 			{Name: "offset", Type: "integer", Description: "Entries to skip"},
 			{Name: "search", Type: "string", Description: "Only entries whose fields, item ID, category, reason, action arguments or error contain this text (case-insensitive)"},
 			{Name: "outcome", Type: "string", Description: "Only entries with this outcome: " + strings.Join(ActivityOutcomes, ", ") + " (run_failed: failed runs)"},
-			{Name: "rule", Type: "string", Description: "Only entries that cited this rule (a rule file's name, rule N, or instructions); none for those that cited no rule"},
+			{Name: "rule", Type: "string", Description: "Only entries that cited this rule (a rule file's name, rule N, or instructions); none for those where the model said no rule applies"},
 		}},
 	}
 	for i := range defs {

@@ -213,10 +213,12 @@ func parseCitation(lines []string) citation {
 
 // resolve matches the citation against the labels loaded for the request:
 // the known labels in the reply's order without repeats, or [RulesNone],
-// and how many tokens named no loaded label. No Rules line is nil, 0.
+// and how many tokens named no loaded label. The list is never nil: it is
+// empty when the reply had no Rules line or cited only unknown labels.
 func (c citation) resolve(labels []string) (rules []string, unknown int) {
+	rules = []string{}
 	if !c.given {
-		return nil, 0
+		return rules, 0
 	}
 	if c.none {
 		return []string{RulesNone}, 0
@@ -231,4 +233,14 @@ func (c citation) resolve(labels []string) (rules []string, unknown int) {
 		}
 	}
 	return rules, unknown
+}
+
+// storedRules is the citation of a categorised decision as read back from
+// state: a row written before rules were stored, or one whose citation
+// was empty, has an empty list, never nil.
+func storedRules(rules []string) []string {
+	if rules == nil {
+		return []string{}
+	}
+	return rules
 }

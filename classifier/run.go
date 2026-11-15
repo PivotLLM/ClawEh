@@ -78,7 +78,7 @@ func (s *Service) decide(ctx context.Context, scope Scope, def *Definition, in i
 	if reuse != nil && reuse.category != "" {
 		if c, ok := def.categoryNamed(reuse.category); ok {
 			d.Category, d.Reason, d.Model = c.Name, reuse.reason, reuse.model
-			d.Rules, d.UnknownRules = reuse.rules, reuse.unknownRules
+			d.Rules, d.UnknownRules = storedRules(reuse.rules), reuse.unknownRules
 			return d
 		}
 	}

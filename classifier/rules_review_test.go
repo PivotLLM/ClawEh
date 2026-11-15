@@ -171,6 +171,33 @@ func TestReusedAnswerKeepsCitation(t *testing.T) {
 	}
 }
 
+// A reused answer stored before citations were (rules NULL) has an empty
+// citation, not none.
+func TestReusedOldAnswerHasEmptyCitation(t *testing.T) {
+	e := citeEnv(t)
+	e.model.setReply(func(string, string) (string, error) { return "urgent\nx\nRules: rule 1", nil })
+	e.tools.set("mail_move", func(map[string]any) (string, error) { return "", errBoom })
+	if rec := e.run("inbox-priority"); rec.Failed != 3 {
+		t.Fatalf("failing run = %+v", rec)
+	}
+	st, err := e.svc.state(context.Background(), e.scope.BaseDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = st.db.ExecContext(context.Background(), `UPDATE processed SET rules = NULL, unknown_rules = NULL`); err != nil {
+		t.Fatal(err)
+	}
+	e.tools.set("mail_move", func(map[string]any) (string, error) { return "moved", nil })
+	if rec := e.run("inbox-priority"); rec.Acted != 3 {
+		t.Fatalf("replay run = %+v", rec)
+	}
+	for _, a := range e.activity(ActivityQuery{Outcome: OutcomeActed}) {
+		if a.Rules == nil || len(a.Rules) != 0 {
+			t.Errorf("reused row %s rules = %#v, want an empty list", a.ItemID, a.Rules)
+		}
+	}
+}
+
 // An existing processed table gains rules and unknown_rules on open, and
 // a stored answer keeps its citation.
 func TestStateMigrationAddsProcessedRules(t *testing.T) {

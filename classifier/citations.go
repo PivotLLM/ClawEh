@@ -19,16 +19,22 @@ import (
 // earlier one): Decisions are the items given a category in the window;
 // Cited counts, per label of the rules loaded now, the items whose answer
 // cited it; NeverCited are the labels loaded now that no item's answer
-// cited; None counts the items whose answer cited no rule, Unknown those
-// whose answer cited a label matching no rule of its request;
-// NoLongerPresent counts, per cited label not among the rules now (a file
-// removed or renamed), the items whose answer cited it.
+// cited. Each decision is one of: WithRules, the items whose answer cited
+// at least one rule loaded for its request; None, those whose answer was
+// "Rules: none"; NoCitation, those whose answer cited nothing usable (no
+// Rules line, or only unknown labels), so WithRules + None + NoCitation =
+// Decisions. Unknown counts the items whose answer cited a label matching
+// no rule of its request; NoLongerPresent counts, per cited label not
+// among the rules now (a file removed or renamed), the items whose answer
+// cited it.
 type RuleUsage struct {
 	Hours           int            `json:"hours"`
 	Decisions       int            `json:"decisions"`
 	Cited           map[string]int `json:"cited,omitempty"`
 	NeverCited      []string       `json:"never_cited,omitempty"`
+	WithRules       int            `json:"with_rules"`
 	None            int            `json:"none"`
+	NoCitation      int            `json:"no_citation"`
 	Unknown         int            `json:"unknown"`
 	NoLongerPresent map[string]int `json:"no_longer_present,omitempty"`
 }
@@ -61,10 +67,15 @@ func (s *Service) ruleUsage(ctx context.Context, scope Scope, def *Definition, s
 		if r.unknown > 0 {
 			u.Unknown++
 		}
-		if slices.Equal(r.rules, []string{RulesNone}) {
+		switch {
+		case len(r.rules) == 0:
+			u.NoCitation++
+			continue
+		case slices.Equal(r.rules, []string{RulesNone}):
 			u.None++
 			continue
 		}
+		u.WithRules++
 		for _, l := range r.rules {
 			cited[l]++
 		}

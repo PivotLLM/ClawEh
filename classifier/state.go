@@ -63,11 +63,13 @@ type Decision struct {
 	// Replies are the model's replies to an item left unclassified, the
 	// first and the retry's, each cut to ActivityValueMax characters.
 	Replies []string `json:"replies,omitempty"`
-	// Rules are the labels of the rules the model cited for its answer
-	// (rules.go), known labels only, in its order; [RulesNone] when it said
-	// no rule applied; nil when it cited nothing readable. UnknownRules
-	// counts the cited labels that matched no rule loaded for the request.
-	Rules        []string `json:"rules,omitempty"`
+	// Rules are, for a decision with a category, always set: the labels of
+	// the rules the model cited for its answer (rules.go), known labels
+	// only, in its order; [RulesNone] when it said no rule applied; empty
+	// when it gave no Rules line or cited only unknown labels. A decision
+	// without a category has none (nil, left out). UnknownRules counts the
+	// cited labels that matched no rule loaded for the request.
+	Rules        []string `json:"rules,omitzero"`
 	UnknownRules int      `json:"unknown_rules,omitempty"`
 	// MissingFields are the fetch fields whose path is not in the fetch
 	// result (dotpath.Absent; a field that is there but empty is in the
@@ -175,8 +177,9 @@ CREATE TABLE IF NOT EXISTS invalid_reports (classifier TEXT PRIMARY KEY, hash TE
 // activityTable creates the activity table. A run_failed row has no item_id
 // (NULL) and has count and last_at. replies, missing_fields and
 // shortened_fields are JSON lists of strings, NULL when empty; so is rules,
-// the cited labels (Decision.Rules), with unknown_rules their count of
-// unknown labels (NULL when none).
+// the cited labels (Decision.Rules, read back as an empty list for a row
+// with a category), with unknown_rules their count of unknown labels (NULL
+// when none).
 const activityTable = `CREATE TABLE IF NOT EXISTS activity (
   id INTEGER PRIMARY KEY, classifier TEXT NOT NULL, at INTEGER NOT NULL, item_id TEXT,
   fields TEXT NOT NULL,
@@ -594,7 +597,9 @@ func (s *stateDB) activity(ctx context.Context, cls string, q ActivityQuery) (_ 
 		}
 		e.At, e.LastAt = time.UnixMilli(at).UTC(), fromMS(lastAt)
 		e.Replies, e.MissingFields, e.ShortenedFields = fromJSONList(replies), fromJSONList(missing), fromJSONList(shortened)
-		e.Rules = fromJSONList(rules)
+		if e.Rules = fromJSONList(rules); e.Category != "" {
+			e.Rules = storedRules(e.Rules)
+		}
 		if err := json.Unmarshal([]byte(fields), &e.Fields); err != nil {
 			e.Fields = nil
 		}

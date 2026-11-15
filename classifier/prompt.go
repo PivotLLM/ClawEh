@@ -19,8 +19,8 @@ import (
 // line is required: parseReply accepts a reply without the reason or the
 // Rules line, and ignores a Rules line it cannot read.
 const replyContract = "Reply with exactly one category name on the first line. On the second line, give a brief reason. " +
-	"On the third line, write \"Rules:\" followed by the labels of only the rules that decided this item, comma-separated, " +
-	"or \"Rules: none\" if no rule applied. A rule's label is the <label> of the \"=== Rules from <label> ===\" line its section starts with, " +
+	"On the third line, write \"Rules:\" followed by the labels of only the rules that decided this item, comma-separated. " +
+	"If no rule applied, write exactly \"Rules: none\"; never leave the third line out. A rule's label is the <label> of the \"=== Rules from <label> ===\" line its section starts with, " +
 	"or \"rule N\" for numbered rule N; headings inside the text are not labels. Nothing else."
 
 // dataNotice says the item is data, not instructions (design 5.1e). %s is
