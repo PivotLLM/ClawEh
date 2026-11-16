@@ -4,8 +4,8 @@ github.com/PivotLLM/MCPFusion v0.4.9 h1:8O97nGzWSVES1SO2d12l2DFgkdepEUm6KGuhBxjM
 github.com/PivotLLM/MCPFusion v0.4.9/go.mod h1:6ZMze7MK449x3n+3val+pVzfVjVlnBhmTpoupb8255o=
 github.com/PivotLLM/Maestro v0.5.9 h1:7TxK7u0bM6AGNzc38eBxGdsra0YfWC4XaWUqKzpCmec=
 github.com/PivotLLM/Maestro v0.5.9/go.mod h1:txwfJ0n2tVD4RyQZ55lCzKr6ObSvgWgMKfC86MZn68I=
-github.com/PivotLLM/cogmem v0.0.11 h1:G21huG7x92V+kAQ0kK3pwiD/9H4vP9EwxNM8mId3Q2s=
-github.com/PivotLLM/cogmem v0.0.11/go.mod h1:Ia26/pqKzvTrO9YM0xgqaVJiawRP9jCAR1y53hi/9kc=
+github.com/PivotLLM/cogmem v0.0.12 h1:IvMnn/28bfX6h0v3DHJTdzfQbCLrA9wKgkZt34fydNE=
+github.com/PivotLLM/cogmem v0.0.12/go.mod h1:Ia26/pqKzvTrO9YM0xgqaVJiawRP9jCAR1y53hi/9kc=
 github.com/PivotLLM/ctxengine v0.0.13 h1:Jg4J5Hzks/QO8ozHQ7sRUkhklOt0FWE2kBJeMgFPVnA=
 github.com/PivotLLM/ctxengine v0.0.13/go.mod h1:85xNQzn/mO12UAc7Cr8xU7YWuNpE3Xa5bzVp1X6FbZM=
 github.com/PivotLLM/spawnllm v0.1.27 h1:tT7V3S01hoKlLvUsmwdId/hGsVl8zK/UEiruw5CcnKM=

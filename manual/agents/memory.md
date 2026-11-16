@@ -96,7 +96,7 @@ The **Memory** page shows each agent's memory store. There you can:
 
 Memory text cannot be edited: retire the memory and add a new one.
 
-Under **Last consolidation**, a note such as `keywords not added: d7 "today" (too common)` lists keywords consolidation proposed and left out; nothing failed.
+Under **Last consolidation**, a note such as `keywords not added: travel "today" (too common)` names each domain and the keywords consolidation proposed for it and left out; nothing failed. The same keywords are in the log line "consolidation run finished".
 
 ### Shape what is remembered
 

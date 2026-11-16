@@ -298,9 +298,12 @@
   then they load only by the triggers the agent already set or by recency.
   Generic keywords already stored keep working until that domain's list is
   next set. A consolidation run that left out proposed keywords says so in
-  its note on the **Memory** page (`keywords not added: …`). Each agent's
+  its note on the **Memory** page (`keywords not added: …`), naming each
+  domain, and in the log line "consolidation run finished"
+  (`dropped_keywords`, `dropped_keyword_list`). Each agent's
   memory database is upgraded on first open, after a one-time copy beside it
-  (`cogmem.db.pre-v8.db`).
+  (`cogmem.db.pre-v8.db`). A memory export file now starts with the comment
+  `# cogmem export.`; files exported earlier still import.
 
 - **An alert about a problem that lasts is sent once, then at most once a
   day.** A model out of credit was reported again every time its cooldown
