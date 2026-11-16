@@ -5,6 +5,8 @@ import relativeTime from "dayjs/plugin/relativeTime"
 import i18n from "i18next"
 import { initReactI18next } from "react-i18next"
 
+import { productNameVariables } from "@/store/product"
+
 import en from "./locales/en.json"
 
 dayjs.extend(relativeTime)
@@ -28,6 +30,9 @@ i18n
 
     interpolation: {
       escapeValue: false, // not needed for react as it escapes by default
+      // {{name}}, {{shortName}} and {{binaryName}} in any string: the
+      // product's names from the server (store/product).
+      defaultVariables: productNameVariables,
     },
   })
 

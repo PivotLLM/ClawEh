@@ -257,11 +257,11 @@
       "reasoningEffortHint": "Sets the OpenAI-style reasoning_effort request field on supported models (xAI Grok, OpenAI o-series). Accepted values: none, low, medium, high. \"none\" is sent explicitly (e.g. to disable reasoning); leave unset to omit the field entirely.",
       "reasoningEffortUnset": "(unset)",
       "extraBody": "Extra Request Body",
-      "extraBodyHint": "Free-form JSON merged into the OpenAI-compatible request body for per-provider knobs not modelled natively. Must be a JSON object. Reserved keys claimed by claw are rejected.",
+      "extraBodyHint": "Free-form JSON merged into the OpenAI-compatible request body for per-provider knobs not modelled natively. Must be a JSON object. Reserved keys claimed by {{shortName}} are rejected.",
       "extraBodyPlaceholder": "{\n  \"search_parameters\": { \"mode\": \"on\" }\n}",
       "extraBodyInvalidJSON": "Must be a valid JSON object.",
       "extraBodyNotObject": "Top-level value must be a JSON object.",
-      "extraBodyReservedKey": "Key \"{{key}}\" is claimed by claw and cannot be overridden via extra_body.",
+      "extraBodyReservedKey": "Key \"{{key}}\" is claimed by {{shortName}} and cannot be overridden via extra_body.",
       "dropParams": "Drop Request Fields",
       "dropParamsHint": "Comma-separated request body fields to strip before sending (e.g. temperature). Use for parameters a model or upstream rejects — such as temperature on OpenRouter reasoning models that 404 under require_parameters. Applied after extra_body.",
       "strictAlternation": "Strict Role Alternation",
@@ -290,6 +290,7 @@
     "field": {
       "secmsgName": "Channel Name",
       "secmsgAddress": "Daemon Address",
+      "secmsgAccounts": "{{shortName}} discovers this daemon's linked accounts automatically — each becomes its own channel. Link devices below.",
       "secmsgAccount": "Account",
       "token": "Bot Token",
       "tokenPlaceholder": "Enter bot token",
@@ -406,12 +407,12 @@
       "restart_required": "Restart required to apply changes.",
       "urls": {
         "title": "Addresses",
-        "desc": "Where ClawEh can be opened right now.",
+        "desc": "Where {{shortName}} can be opened right now.",
         "localhost": "On this host",
         "http": "On the network (plain HTTP)",
         "http_warning": "Plain-text HTTP exposed to network.",
         "https": "On the network (HTTPS)",
-        "none": "HTTPS is off — ClawEh is reachable from this host only.",
+        "none": "HTTPS is off — {{shortName}} is reachable from this host only.",
         "unavailable": "The listener status could not be read: {{message}}"
       },
       "http": {
@@ -428,7 +429,7 @@
       },
       "https": {
         "title": "HTTPS",
-        "desc": "The encrypted listener for reaching ClawEh from other machines.",
+        "desc": "The encrypted listener for reaching {{shortName}} from other machines.",
         "mode": "Listen on",
         "mode_hint": "Which addresses the HTTPS listener binds.",
         "mode_all": "All interfaces (default)",
@@ -436,7 +437,7 @@
         "mode_localhost": "Localhost only",
         "mode_localhost_hint": "HTTPS on this machine only — for a reverse proxy on the same host.",
         "mode_off": "Off",
-        "mode_off_hint": "No HTTPS listener; ClawEh is reachable from this host only.",
+        "mode_off_hint": "No HTTPS listener; {{shortName}} is reachable from this host only.",
         "port": "HTTPS port",
         "port_hint": "Port of the HTTPS listener (default 18443), different from the HTTP port.",
         "external_url": "Hostname / external URL",
@@ -512,14 +513,14 @@
       },
       "mcp": {
         "title": "MCP host",
-        "desc": "The MCP server the CLI providers on this machine call for ClawEh's host-side tools.",
+        "desc": "The MCP server the CLI providers on this machine call for {{shortName}}'s host-side tools.",
         "listen": "Listen address",
         "listen_hint": "Localhost only; change the port on the MCP page.",
         "link": "MCP config"
       },
       "restart_now": "Restart now",
       "restarting": "Restarting…",
-      "restart_timeout": "ClawEh has not come back yet; reload the page to check."
+      "restart_timeout": "{{shortName}} has not come back yet; reload the page to check."
     },
     "system": {
       "title": "System"
@@ -668,7 +669,7 @@
       "lines": "Show",
       "refresh": "Refresh",
       "source": "Log",
-      "source_log": "ClawEh log",
+      "source_log": "{{shortName}} log",
       "source_alerts": "Alerts"
     },
     "audit": {
@@ -715,7 +716,7 @@
         "external_tools": "External MCP tool visibility",
         "client": "External MCP Servers"
       },
-      "enable_desc": "Controls whether claw runs an MCP server so CLI-based providers (claude-cli, codex-cli, antigravity-cli, cursor-cli) can call claw's host-side tools natively.",
+      "enable_desc": "Controls whether {{shortName}} runs an MCP server so CLI-based providers (claude-cli, codex-cli, antigravity-cli, cursor-cli) can call {{shortName}}'s host-side tools natively.",
       "enabled": "Enabled",
       "enabled_hint": "When true, the MCP server always starts at daemon launch.",
       "auto_enable": "Auto-enable",
@@ -726,7 +727,7 @@
       "endpoint_path": "Endpoint Path",
       "endpoint_path_hint": "HTTP path the MCP handler is mounted under. Must start with '/'.",
       "internal_tools_desc": "Advanced option to limit which tools are visible at the MCP layer. Authorization to use the tools is still controlled by the individual agent configurations.",
-      "internal_tools_note": "Governs /internal — the endpoint ClawEh's CLI-based agents use.",
+      "internal_tools_note": "Governs /internal — the endpoint {{shortName}}'s CLI-based agents use.",
       "external_tools_desc": "Advanced option to limit which tools are visible at the MCP layer. Authorization to use the tools is still controlled by the individual agent configurations.",
       "external_tools_note": "Governs the bearer endpoint (/mcp, or whatever endpoint path is set above).",
       "tools_pattern_hint": "One entry per row. Local tools: an exact name or a prefix (file, session_info). Upstream MCP tools: the server or group prefix, no mcp_ needed (fusion, fusion_wxca). '*' exposes all.",
@@ -736,7 +737,9 @@
       "tools_preview_title": "Matches ({{matched}} of {{total}})",
       "tools_always_excluded": "Always excluded: {{tools}}",
       "tools_none_registered": "No tools registered yet.",
-      "client_hint": "Upstream MCP servers claw connects out to. Their tools are offered to your agents (API agents directly, CLI agents via claw). Add as many as you like.",
+      "resilience_desc": "How {{shortName}} recovers when an outbound MCP session to one of the external servers above drops or stops responding.",
+      "liveness_probe_hint": "60 by default; 0 disables. {{shortName}} asks each connected server for its tool list on this interval: a failed probe reconnects the server so the next real call finds a live session, and a changed list refreshes the server's tools.",
+      "client_hint": "Upstream MCP servers {{shortName}} connects out to. Their tools are offered to your agents (API agents directly, CLI agents via {{shortName}}). Add as many as you like.",
       "client_empty": "No external servers configured.",
       "server_add": "Add server",
       "apply_now": "Apply now",
@@ -967,11 +970,11 @@
     },
     "network": {
       "title": "Network access",
-      "body": "Choose how ClawEh can be reached; the defaults are safe and can be changed later in Settings.",
+      "body": "Choose how {{shortName}} can be reached; the defaults are safe and can be changed later in Settings.",
       "accessLabel": "Enable network access",
-      "accessHint": "Off (recommended): ClawEh is reachable only from this machine; turn it on to reach the WebUI from other machines on your network over HTTPS.",
+      "accessHint": "Off (recommended): {{shortName}} is reachable only from this machine; turn it on to reach the WebUI from other machines on your network over HTTPS.",
       "portLabel": "Web port",
-      "portHint": "HTTP port the ClawEh Web server listens on.",
+      "portHint": "HTTP port the {{shortName}} Web server listens on.",
       "externalLabel": "External URL",
       "externalHint": "The URL external tools use to reach this server; defaults to how you are accessing it now.",
       "restartNote": "Restart required to apply changes."
@@ -982,7 +985,7 @@
       "point1": "Connect one AI provider and verify the API key live.",
       "point2": "Pick a model to use by default.",
       "point3": "Create your first agent.",
-      "alreadyConfigured": "ClawEh already has a usable model configured. Continuing will add a new agent and make the model you pick the new default — your existing providers, models, and agents are kept. Cancel to leave your current setup unchanged."
+      "alreadyConfigured": "{{shortName}} already has a usable model configured. Continuing will add a new agent and make the model you pick the new default — your existing providers, models, and agents are kept. Cancel to leave your current setup unchanged."
     },
     "provider": {
       "title": "Connect an AI provider",
@@ -1028,9 +1031,8 @@
   },
   "auth": {
     "login": {
-      "title": "ClawEh",
       "checking": "Checking the server...",
-      "unreachable": "The server could not be reached. Is ClawEh running?",
+      "unreachable": "The server could not be reached. Is it running?",
       "username": "Username",
       "password": "Password",
       "submit": "Sign in",
@@ -1042,7 +1044,7 @@
     "noAdmin": {
       "title": "No admin account",
       "body": "On the server run:",
-      "hint": "Then check again. ClawEh picks the account up within a minute.",
+      "hint": "Then check again. {{shortName}} picks the account up within a minute.",
       "retry": "Check again"
     },
     "logout": "Sign out"

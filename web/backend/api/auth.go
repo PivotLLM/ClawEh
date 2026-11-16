@@ -50,9 +50,16 @@ func (h *Handler) registerAuthRoutes(mux *http.ServeMux) {
 // handleAuthStatus reports whether an admin account exists and whether the
 // caller holds a session. The frontend gate reads it on every navigation.
 //
-//	GET /api/auth/status → {"configured":bool,"authenticated":bool,"username":"..."}
+// It also carries the product's names (productNames), which the login page
+// and the document title need before there is a session.
+//
+//	GET /api/auth/status → {"configured":bool,"authenticated":bool,"username":"...",
+//	                        "name":"...","short_name":"...","binary_name":"..."}
 func (h *Handler) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
 	out := map[string]any{"configured": false, "authenticated": false, "username": ""}
+	for k, v := range productNames() {
+		out[k] = v
+	}
 	if s := h.authStore(); s != nil {
 		out["configured"] = s.Configured()
 		if user, ok := s.Authenticate(r); ok {

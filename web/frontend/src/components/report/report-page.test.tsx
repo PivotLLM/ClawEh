@@ -46,7 +46,7 @@ function renderPage() {
 
 const sample = {
   identity: {
-    name: "ClawEh",
+    name: "Alice",
     version: "0.6.0+abcdef12",
     build: "2026-09-21T12:00:00+0000",
     platform: "linux/amd64 on testbox",
@@ -80,7 +80,7 @@ describe("ReportPage", () => {
 
     await waitFor(() =>
       expect(screen.getByTestId("report-identity").textContent).toBe(
-        "ClawEh 0.6.0+abcdef12 · pages.report.build 2026-09-21T12:00:00+0000 · linux/amd64 on testbox",
+        "Alice 0.6.0+abcdef12 · pages.report.build 2026-09-21T12:00:00+0000 · linux/amd64 on testbox",
       ),
     )
     expect(screen.getByText("pages.report.col.action")).toBeTruthy()
@@ -143,7 +143,7 @@ describe("ReportPage", () => {
               action: true,
               item: "Encrypted Matrix rooms",
               status:
-                "ClawEh can't read these encrypted rooms: !alice:example.org.",
+                "Alice can't read these encrypted rooms: !alice:example.org.",
               link: "/manual/channels/matrix.html#encryption",
             },
           ],
@@ -172,7 +172,7 @@ describe("ReportPage", () => {
     renderPage()
     await waitFor(() =>
       expect(screen.getByTestId("report-identity").textContent).toBe(
-        "ClawEh 0.6.0+abcdef12 · linux/amd64 on testbox",
+        "Alice 0.6.0+abcdef12 · linux/amd64 on testbox",
       ),
     )
   })

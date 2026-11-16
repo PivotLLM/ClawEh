@@ -1,9 +1,10 @@
 // API client for the WebUI login session (POST /api/auth/login etc.). The
 // session lives in an HttpOnly cookie the browser attaches on its own, so
 // nothing here stores a credential.
+import { type ProductNameFields, setProductNames } from "@/store/product"
 
-export interface AuthStatus {
-  /** An admin account exists (`claw admin` has been run on the server). */
+export interface AuthStatus extends ProductNameFields {
+  /** An admin account exists (the admin command has been run on the server). */
   configured: boolean
   /** This browser holds a live session. */
   authenticated: boolean
@@ -29,7 +30,9 @@ export async function getAuthStatus(): Promise<AuthStatus> {
   if (!res.ok) {
     throw new Error(`API error: ${res.status} ${res.statusText}`)
   }
-  return res.json() as Promise<AuthStatus>
+  const status = (await res.json()) as AuthStatus
+  setProductNames(status)
+  return status
 }
 
 export async function login(username: string, password: string): Promise<void> {

@@ -4,9 +4,11 @@ import { Link } from "@tanstack/react-router"
 import { Button } from "@/components/ui/button.tsx"
 import { SidebarTrigger } from "@/components/ui/sidebar"
 import { useTheme } from "@/hooks/use-theme.ts"
+import { useProductNames } from "@/store/product"
 
 export function AppHeader() {
   const { theme, toggleTheme } = useTheme()
+  const { name } = useProductNames()
 
   return (
     <header className="bg-background/95 supports-backdrop-filter:bg-background/60 border-b-border/50 sticky top-0 z-50 flex h-14 shrink-0 items-center justify-between border-b px-4 backdrop-blur">
@@ -27,7 +29,7 @@ export function AppHeader() {
             href="https://github.com/PivotLLM/ClawEh"
             target="_blank"
             rel="noreferrer"
-            aria-label="ClawEh on GitHub"
+            aria-label={`${name} on GitHub`}
           >
             <IconBook className="size-4.5" />
           </a>

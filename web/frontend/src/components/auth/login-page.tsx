@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { safeNext } from "@/lib/auth-redirect"
+import { useProductNames } from "@/store/product"
 
 interface LoginPageProps {
   /** Where to go after signing in; validated by safeNext. */
@@ -16,9 +17,10 @@ interface LoginPageProps {
 
 // LoginPage is the only thing an unauthenticated visitor sees. Three states:
 // loading the auth status, "no admin account" (the server has never had
-// `claw admin` run — nothing the browser can do about it), and the form.
+// the admin command run on it — nothing the browser can do about it), and the form.
 export function LoginPage({ next }: LoginPageProps) {
   const { t } = useTranslation()
+  const { name, shortName, binaryName } = useProductNames()
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
   const [submitting, setSubmitting] = useState(false)
@@ -74,7 +76,7 @@ export function LoginPage({ next }: LoginPageProps) {
       <div className="border-border/60 bg-card w-full max-w-sm rounded-xl border p-8 shadow-sm">
         <div className="mb-6 flex items-center gap-3">
           <img className="h-10 w-auto" src="/logo.png" alt="" />
-          <h1 className="text-lg font-semibold">{t("auth.login.title")}</h1>
+          <h1 className="text-lg font-semibold">{name}</h1>
         </div>
 
         {statusQuery.isPending && (
@@ -108,11 +110,14 @@ export function LoginPage({ next }: LoginPageProps) {
                 <p className="text-muted-foreground">
                   {t("auth.noAdmin.body")}
                 </p>
-                <pre className="bg-muted rounded-md px-3 py-2 font-mono text-sm">
-                  claw admin
+                <pre
+                  className="bg-muted rounded-md px-3 py-2 font-mono text-sm"
+                  data-testid="login-admin-command"
+                >
+                  {`${binaryName} admin`}
                 </pre>
                 <p className="text-muted-foreground">
-                  {t("auth.noAdmin.hint")}
+                  {t("auth.noAdmin.hint", { shortName })}
                 </p>
               </div>
             </div>

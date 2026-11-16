@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm"
 
 import { Button } from "@/components/ui/button"
 import { formatMessageTime } from "@/hooks/use-claw-chat"
+import { useProductNames } from "@/store/product"
 
 interface AssistantMessageProps {
   content: string
@@ -17,6 +18,7 @@ export function AssistantMessage({
   timestamp = "",
 }: AssistantMessageProps) {
   const [isCopied, setIsCopied] = useState(false)
+  const { shortName } = useProductNames()
   const formattedTimestamp =
     timestamp !== "" ? formatMessageTime(timestamp) : ""
 
@@ -31,7 +33,7 @@ export function AssistantMessage({
     <div className="group flex w-full flex-col gap-1.5">
       <div className="text-muted-foreground flex items-center justify-between gap-2 px-1 text-xs opacity-70">
         <div className="flex items-center gap-2">
-          <span>ClawEh</span>
+          <span>{shortName}</span>
           {formattedTimestamp && (
             <>
               <span className="opacity-50">•</span>

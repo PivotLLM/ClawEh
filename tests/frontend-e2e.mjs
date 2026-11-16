@@ -282,7 +282,16 @@ const I18N_KEY =
 
 browser = await chromium.launch({ executablePath: CHROME })
 ctx = await browser.newContext()
-console.log(`ClawEh WebUI regression suite — ${BASE}`)
+// The product's names come from the server (GET /api/auth/status, answered
+// before login); checks compare against them rather than a hard-coded name.
+const PRODUCT = (await apiAnonymous("/api/auth/status")).json ?? {}
+if (!PRODUCT.name) {
+  console.error(`${BASE}/api/auth/status carries no product name; is this build older than the suite?`)
+  process.exit(2)
+}
+// escapeRegExp makes a literal string safe to embed in a RegExp.
+const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+console.log(`${PRODUCT.name} WebUI regression suite — ${BASE}`)
 await signIn()
 console.log(`   signed in as ${USER}`)
 
@@ -333,8 +342,11 @@ if (useGroup("P", "Authentication")) {
     const submit = await page.getByRole("button", { name: "Sign in" }).count()
     const heading = (await page.locator("h1").first().innerText()).trim()
     const body = await page.locator("body").innerText()
+    const title = await page.title()
     await close()
     assert(problems.length === 0, `console: ${problems[0]}`)
+    // The tab title comes from /api/auth/status too; index.html holds none.
+    assert(title === PRODUCT.name, `tab title reads ${JSON.stringify(title)}, want ${PRODUCT.name}`)
     // The frontend gate sends the visitor to /login and remembers where they
     // were going, so a bookmark still works after signing in.
     assert(url.pathname === "/login", `landed on ${url.pathname}, want /login`)
@@ -342,7 +354,7 @@ if (useGroup("P", "Authentication")) {
     assert(fields === 2, `${fields} of 2 credential fields rendered`)
     assert(submit === 1, "no Sign in button")
     // The card is headed by the product name; the button still says Sign in.
-    assert(heading === "ClawEh", `heading reads ${JSON.stringify(heading)}, want ClawEh`)
+    assert(heading === PRODUCT.name, `heading reads ${JSON.stringify(heading)}, want ${PRODUCT.name}`)
     assert(
       !/Use the admin account created on the server/.test(body),
       "the removed 'Use the admin account…' line is back",
@@ -525,7 +537,7 @@ if (useGroup("C", "Shell and navigation")) {
     const { close, text } = await open("/agents")
     const body = await text()
     await close()
-    assert(/ClawEh v\d+\.\d+\.\d+/.test(body), "version not shown in sidebar")
+    assert(new RegExp(`${escapeRegExp(PRODUCT.name)} v\\d+\\.\\d+\\.\\d+`).test(body), "version not shown in sidebar")
   })
   await check(3, "sidebar groups expand and their links navigate client-side", async () => {
     // The top-level sidebar entries are collapsible GROUPS (aria-expanded),
@@ -2635,7 +2647,7 @@ if (useGroup("K", "Logs, MCP, memory, task models, report")) {
     await close()
     assert(navLabel === "Check Up", `sidebar label = ${JSON.stringify(navLabel)}`)
     assert(heading === "Check Up", `page heading = ${JSON.stringify(heading)}`)
-    assert(/^ClawEh \d+\.\d+\.\d+/.test(identity), `identity line = ${JSON.stringify(identity)}`)
+    assert(new RegExp(`^${escapeRegExp(PRODUCT.name)} \\d+\\.\\d+\\.\\d+`).test(identity), `identity line = ${JSON.stringify(identity)}`)
     assert(identity.includes(" on "), `identity line names no platform: ${identity}`)
     assert(headers.join("|") === "Action|Item|Status", `table headers = ${headers.join("|")}`)
     assert(rows > 0, "the assessment table has no rows")
@@ -2676,7 +2688,7 @@ if (useGroup("K", "Logs, MCP, memory, task models, report")) {
     for (const k of ["name", "version", "build", "platform", "generated_at"]) {
       assert(k in id, `identity.${k} missing: ${JSON.stringify(id)}`)
     }
-    assert(id.name === "ClawEh", `identity.name = ${id.name}`)
+    assert(id.name === PRODUCT.name, `identity.name = ${id.name}, want ${PRODUCT.name}`)
     assert(Array.isArray(json.assessment) && json.assessment.length > 0, "no assessment rows")
     for (const row of json.assessment) {
       assert(typeof row.action === "boolean", `row.action = ${JSON.stringify(row)}`)

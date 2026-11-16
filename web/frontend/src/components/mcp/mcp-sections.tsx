@@ -311,10 +311,11 @@ export function ResilienceSection({
   livenessProbeSeconds,
   onFieldChange,
 }: ResilienceSectionProps) {
+  const { t } = useTranslation()
   return (
     <SectionCard
       title="Client Resilience"
-      description="How claw recovers when an outbound MCP session to one of the external servers above drops or stops responding."
+      description={t("pages.mcp.resilience_desc")}
     >
       <Field
         label="Reconnect cooldown (seconds)"
@@ -346,7 +347,7 @@ export function ResilienceSection({
       </Field>
       <Field
         label="Liveness probe interval (seconds)"
-        hint="60 by default; 0 disables. Claw asks each connected server for its tool list on this interval: a failed probe reconnects the server so the next real call finds a live session, and a changed list refreshes the server's tools."
+        hint={t("pages.mcp.liveness_probe_hint")}
         layout="setting-row"
       >
         <Input

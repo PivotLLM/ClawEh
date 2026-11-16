@@ -4,6 +4,8 @@ import { describe, expect, it, vi } from "vitest"
 import { SidebarProvider } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
 
+import { setProductNames } from "@/store/product"
+
 import { AppSidebar } from "./app-sidebar"
 
 vi.mock("react-i18next", () => ({
@@ -29,7 +31,7 @@ vi.mock("@tanstack/react-router", () => ({
 
 vi.mock("@/api/auth", () => ({ logout: vi.fn() }))
 vi.mock("@/api/system", () => ({
-  getVersion: vi.fn().mockResolvedValue("1.2.3"),
+  getVersion: vi.fn().mockResolvedValue({ version: "1.2.3" }),
 }))
 vi.mock("@/hooks/use-sidebar-channels", () => ({
   useSidebarChannels: () => ({ channelItems: [] }),
@@ -37,6 +39,8 @@ vi.mock("@/hooks/use-sidebar-channels", () => ({
 vi.mock("@/lib/claw-chat-controller", () => ({ teardownChatStore: vi.fn() }))
 
 async function renderSidebar() {
+  // The product name comes from the server; the sidebar holds none of its own.
+  setProductNames({ name: "Alice" })
   const view = render(
     <TooltipProvider>
       <SidebarProvider>
@@ -46,11 +50,16 @@ async function renderSidebar() {
   )
   // The footer version lands asynchronously; wait for it so the state
   // update happens inside the test.
-  await screen.findByText("ClawEh v1.2.3")
+  await screen.findByText("Alice v1.2.3")
   return view
 }
 
 describe("AppSidebar", () => {
+  it("names the product from the server in the footer", async () => {
+    await renderSidebar()
+    expect(screen.getByTestId("nav-product").textContent).toBe("Alice v1.2.3")
+  })
+
   it("renders Chat as a direct link, not a disclosure group", async () => {
     await renderSidebar()
 

@@ -5,6 +5,11 @@ process, and an expected result, so it can be followed by hand — and every one
 also automated in `tests/frontend-e2e.mjs`, which prints the same IDs. There are
 178 checks in all; the runner prints the same tally at the end.
 
+The WebUI holds no product name of its own: it shows the names the server
+returns (`name`, `short_name`, `binary_name` on `GET /api/auth/status` and
+`GET /api/system/version`). Below, *the product name* means `name` from either
+response; the runner reads it once at start and compares against it.
+
 ```
 export CLAW_E2E_USER=<admin>  CLAW_E2E_PASSWORD=<password>
 node tests/frontend-e2e.mjs                      # whole plan
@@ -89,7 +94,7 @@ until curl -sf http://127.0.0.1:8077/ready >/dev/null; do sleep 1; done
 | ID | Process | Expected |
 |---|---|---|
 | C1 | Look at the sidebar | Contains Chat, Agents, Models, Channels, Services. Chat is a direct link (`a[href="/"]`), not a disclosure button |
-| C2 | Look at the sidebar footer | Shows `ClawEh v<version>` |
+| C2 | Look at the sidebar footer | Shows `<product name> v<version>` |
 | C3 | Click the **Models** sidebar entry, then the **Models** link beneath it | The entry is a disclosure control (`aria-expanded`), not a link. It expands, and the link navigates to `/models` without a full page load |
 | C4 | `curl -o /dev/null -w '%{http_code}' $BASE/no-such-route` | `200` — unknown paths fall through to the SPA |
 | C5 | On every route in the suite's list, set the window to 1100×420 and compare each clipping `<main>`'s scroll height with its visible height | No page has content below the frame that cannot be scrolled to: each page scrolls inside its own area |
@@ -254,11 +259,11 @@ covers it.
 | K1 | Load `/logs` | Shows log lines |
 | K2 | Load `/mcp` and `/mcp/servers` | Both render, no console errors |
 | K3 | Load `/memory` and `/task-models` | Both render, no console errors |
-| K4 | Click **Check Up** in the sidebar (below the groups) | `/report` renders with the heading **Check Up**, an identity line starting `ClawEh <version>` and naming the platform (`… on <host>`), a table with the headers **Action / Item / Status** and at least one row, and below it a **Full report** button whose `href` is `/api/report/pdf`; no console errors |
+| K4 | Click **Check Up** in the sidebar (below the groups) | `/report` renders with the heading **Check Up**, an identity line starting `<product name> <version>` and naming the platform (`… on <host>`), a table with the headers **Action / Item / Status** and at least one row, and below it a **Full report** button whose `href` is `/api/report/pdf`; no console errors |
 | K5 | `GET /api/report/pdf` | 200, `Content-Type: application/pdf`, `Content-Disposition: inline; …`, body starts with `%PDF-` |
 | K6 | `POST /api/mcp/servers/no-such-server/reconnect` | 404 with a JSON `error` (the Reconnect button on `/mcp/servers` calls this for the selected server) |
 | K7 | `GET /api/gateway/alerts` | 200 with a JSON `logs` array (the operator alerts log; the Logs page shows it when its source selector is set to Alerts) |
-| K8 | `GET /api/report/assessment` | 200, `Cache-Control: no-store`; JSON `identity` with `name` (`ClawEh`), `version`, `build`, `platform`, `generated_at`, and a non-empty `assessment` array of `{action: bool, item, status}` — the PDF's security assessment rows in order. No credential-shaped value (`sk-…`, `xoxb-`, `xapp-`) anywhere in the body |
+| K8 | `GET /api/report/assessment` | 200, `Cache-Control: no-store`; JSON `identity` with `name` (the product name), `version`, `build`, `platform`, `generated_at`, and a non-empty `assessment` array of `{action: bool, item, status}` — the PDF's security assessment rows in order. No credential-shaped value (`sk-…`, `xoxb-`, `xapp-`) anywhere in the body |
 | K9 | `curl -b jar $BASE/api/task-models`, then load `/task-models` and read it **before clicking anything** | Six sections in order (**Generate text**, **Generate images**, **Text to speech**, **Transcription**, **Describe images**, **Classification**), each with one row per entry of its list (`task_models.text` … `task_models.classify`), in that order, and a *No models.* line exactly when the list is empty. A row is marked *<model>'s provider can't do this.* exactly when that model has `support` `"no"` for that list's use in `models[]`. Nothing may be saved by loading the page |
 | K10 | Open `/agent/bindings`, then click through the sidebar: **Services** → **MCP** → **Servers**, then **Config**, then **Network**, then **System**, reading each page before clicking anything on it | `/mcp/servers` lists every server in `tools.mcp.servers` (from `GET /api/config`) and shows *No external servers configured.* only when there are none; `/mcp/config` shows `mcp_host.listen` in **Listen Address** and `mcp_host.enabled` on **Enabled**; `/system` shows `backup.dest` in the backup destination and `agents.defaults.max_tokens` in **Max tokens**. Reached this way the config query is answered from the browser cache, and the three pages used to keep their empty defaults, which the next edit then saved over the real configuration |
 
@@ -330,9 +335,9 @@ dev instance without stopping it; it is covered by unit tests only
 
 | ID | Process | Expected |
 |---|---|---|
-| P1 | In a fresh browser (no session), load `/agents` | Redirected to `/login?next=%2Fagents`. The card is headed **ClawEh** (the product name, not "Sign in"), shows the **Username** and **Password** fields and a **Sign in** button, and does **not** carry the line *Use the admin account created on the server*; no console errors. The frontend gate remembers where the visitor was going, so a bookmark still works after signing in. (With no admin account the same page instead reads **No admin account** and tells you to run `claw admin` on the server) |
+| P1 | In a fresh browser (no session), load `/agents` | Redirected to `/login?next=%2Fagents`. The card is headed by the product name (not "Sign in"), and the browser tab shows it as the title, shows the **Username** and **Password** fields and a **Sign in** button, and does **not** carry the line *Use the admin account created on the server*; no console errors. The frontend gate remembers where the visitor was going, so a bookmark still works after signing in. (With no admin account the same page instead reads **No admin account** and tells you to run `<binary_name> admin` on the server) |
 | P2 | On `/login`, enter the right username with a wrong password, **Sign in** | The form stays on `/login` and shows **Invalid username or password.** — one message for a bad username and a bad password alike, so the form never confirms which half was right. `GET /api/auth/status` from that browser still says `authenticated: false` |
-| P3 | **anonymous** `curl -i $BASE/api/config` | `401` with a JSON `error` (`authentication required`, or `no admin account` with a `claw admin` hint) and **no configuration in the body** |
+| P3 | **anonymous** `curl -i $BASE/api/config` | `401` with a JSON `error` (`authentication required`, or `no admin account` with a `<binary_name> admin` hint) and **no configuration in the body** |
 | P4 | `curl -b jar $BASE/api/auth/status` | `{"configured":true,"authenticated":true,"username":"<admin>"}` — the username is the one that signed in |
 | P5 | Sign in in a second browser, open `/agents`, click **Sign out** in the sidebar footer | The browser lands on `/login` with the form showing. From that browser `GET /api/auth/status` is `authenticated: false` and `GET /api/config` is `401`: the session ended on the server, not just in the browser |
 | P6 | Sign in in a second browser, open `/agents`, delete the session cookie (DevTools → Application → Cookies, or `context.clearCookies()`), then open the **Models** group in the sidebar and click **Models** | The browser lands on `/login?next=%2Fmodels` with the login form showing; no error state (`data-testid=route-error`) is rendered and the only console entry is the browser's own note about the refused (401) request. Signing in returns to `/models` |

@@ -495,7 +495,7 @@ describe("NetworkPage", () => {
       tlsStatus: () => ({ ...tls, restart_required: true }),
       restart: {
         status: 409,
-        body: { error: "not running as a service; restart ClawEh by hand" },
+        body: { error: "not running as a service; restart Alice by hand" },
       },
     })
     renderPage()
@@ -503,7 +503,7 @@ describe("NetworkPage", () => {
 
     const err = await screen.findByTestId("network-restart-error")
     expect(err.textContent).toBe(
-      "not running as a service; restart ClawEh by hand",
+      "not running as a service; restart Alice by hand",
     )
     expect(reloadPage).not.toHaveBeenCalled()
     expect(

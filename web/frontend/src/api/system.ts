@@ -1,4 +1,5 @@
 import { errorMessage } from "./error-message"
+import { type ProductNameFields, setProductNames } from "@/store/product"
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(path, options)
@@ -108,13 +109,19 @@ export async function reloadGateway(): Promise<void> {
   await request<unknown>("/api/gateway/reload", { method: "POST" })
 }
 
-// getVersion returns the running ClawEh build version (for the sidebar footer).
-export async function getVersion(): Promise<string> {
-  const res = await request<{ version: string }>("/api/system/version")
-  return res.version
+export interface VersionInfo extends ProductNameFields {
+  version: string
 }
 
-/** Runtime state of the running ClawEh process, for the Status page. */
+// getVersion returns the running build's version and the product's names (for
+// the sidebar footer); the names also update the shared store.
+export async function getVersion(): Promise<VersionInfo> {
+  const res = await request<VersionInfo>("/api/system/version")
+  setProductNames(res)
+  return res
+}
+
+/** Runtime state of the running process, for the Status page. */
 export interface SystemStatus {
   version: string
   build?: string

@@ -47,13 +47,13 @@ describe("wizardAgentList", () => {
 
   it("sets up the default agent in place without granting tools", () => {
     const list = wizardAgentList(
-      [{ id: "claw", name: "Claw", default: true }],
+      [{ id: "bob", name: "Bob", default: true }],
       "Alice",
       "GPT",
       false,
     )
     expect(list).toEqual([
-      { id: "claw", name: "Alice", default: true, models: ["GPT"] },
+      { id: "bob", name: "Alice", default: true, models: ["GPT"] },
     ])
   })
 })

@@ -63,7 +63,7 @@ describe("CLIAgentsSection", () => {
   })
 
   it("lists a CLI whose binary is missing, greyed and unswitchable", async () => {
-    // Hiding it would look like ClawEh does not support the CLI, when the truth
+    // Hiding it would look like the product does not support the CLI, when the truth
     // is that the host does not have it.
     renderSection([cli({ installed: false })])
     const row = await screen.findByTestId("cli-row-antigravity-cli")

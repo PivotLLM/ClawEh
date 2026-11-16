@@ -352,8 +352,7 @@ export function SecMsgForm({
         <div>
           <p className="text-sm font-medium">Accounts</p>
           <p className="text-muted-foreground text-xs">
-            claw discovers this daemon's linked accounts automatically — each
-            becomes its own channel. Link devices below.
+            {t("channels.form.desc.secmsgAccounts")}
           </p>
         </div>
 
