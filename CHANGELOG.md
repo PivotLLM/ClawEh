@@ -23,6 +23,13 @@
 
 ### Added
 
+- **`GET /api/system/version` and `GET /api/auth/status` return the product's
+  names.** Both now carry `name` (the product name), `short_name` (the name
+  used in sentences) and `binary_name` (the name the program was started as);
+  `/api/system/version` still returns `version`. The WebUI takes the page
+  title, footer, chat speaker label, login page and every sentence naming the
+  product from them instead of holding the name itself.
+
 - **The Memory page shows a domain's automatic and blocked keywords.**
   Beside **Keywords** (the agent's own), a domain shows **Keywords added
   automatically** and, when there are any, **Blocked keywords**, read-only.
@@ -284,6 +291,24 @@
   shows that it works.
 
 ### Changed
+
+- **Messages call the program "Claw" consistently.** Log lines, alerts,
+  errors, CLI help, Check Up and report texts, the WebUI and the agents'
+  system prompt used "ClawEh", "claw" and "Claw" interchangeably; prose now
+  says "Claw" ("Claw is shutting down so the service manager can restart
+  it", "Claw started"), while version lines, titles and headers keep
+  "ClawEh". Alert titles and event IDs are unchanged.
+- **Commands the program tells you to type use the name it was started
+  as.** `run: claw admin`, `` `sudo claw install` ``, `claw devices approve`
+  and the other hints name the binary as it was run, so they stay right when
+  it is started through the `openclaw` link or renamed.
+- **The system prompt header reads `# Claw (<version>)`** instead of
+  `# claw (<version>)`.
+- **The forum and classifier guides name the host as "Claw"**
+  (`forum_readme`, `classifier_readme`).
+- **A newly generated self-signed certificate with no host name or address
+  to put in it has the common name `claweh`** instead of `claw`. Existing
+  certificates are not regenerated for this.
 
 - **Memory domains load by keywords, not by word matches** (cogmem
   v0.0.11). A topic domain no longer loads because a word of the message
@@ -605,6 +630,10 @@
   `CLAW_AGENTS_DEFAULTS_VISION_MODEL` is removed.
 
 ### Fixed
+
+- **Upstream MCP servers are told the real client version.** The client
+  introduced itself as `claw` version `1.0.0`; it now sends `ClawEh` and the
+  release number (for example `0.6.4`).
 
 - **After `/model`, or on a fallback model, requests use that model's
   `max_tokens` and `context_window`.** Both were taken from the agent's first

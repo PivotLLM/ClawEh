@@ -166,7 +166,9 @@ ClawEh is an independent Go project forked from sipeed/picoclaw on 2026-03-20.
   against `CLAW_HOME`. There is no `agents/default` pseudo-agent. `internal/layout.Prepare`
   creates these directories at every start; it does not migrate an older layout.
 - Version/name/tagline/copyright: `app/app.go` (all unexported — read them through
-  `app.Version()` / `app.SemVer()` / `app.Name()` / `app.TagLine()` / `app.Copyright()`).
+  `app.Version()` / `app.SemVer()` / `app.Name()` / `app.ShortName()` /
+  `app.BinaryName()` / `app.TagLine()` / `app.Copyright()`; see "Product name" below).
+  The package follows the maintainer's standard `app/` template.
   The two release-signing public keys are `app/keys.go` (`app.ReleasePublicKeys()`).
 
 This is **not** a picoclaw fork for upstream PR purposes — it is an independent project.
@@ -191,6 +193,60 @@ started with an operator surprised by their own configuration.
   nothing; "Alice: the Claude CLI declined…" does.
 - **An ignored value is visible where it lives, not only in a log.** Logs are
   for after the fact; the WebUI is where the mistake is being made.
+
+## Product name — only in `app`
+
+The product will be renamed; a rename must be an edit to `app/app.go` only.
+No other file holds the product name as a string. Three accessors:
+
+- `app.Name()` ("ClawEh") identifies the product: page title, version line,
+  report and Check Up header, About text, User-Agent, copyright lines, the
+  Signal linked-device label, MCP client/server implementation name.
+- `app.ShortName()` ("Claw") in running prose: log lines, alert titles and
+  descriptions, errors and notices, CLI help sentences, WebUI sentences, and
+  model-facing text (system prompt header, guides). Written as the constant
+  gives it ("Claw is shutting down").
+- `app.BinaryName()` is the name the program was started as (base of
+  `os.Args[0]`), for anything telling someone what to type (`<binary> admin`,
+  hints in errors and help, the cobra root `Use`). Under `go test` it is the
+  test binary's name: a test asserting such text sets `os.Args[0]` with
+  `internal/testbinary.Set(t, "alice-claw")` (restored at cleanup; not for
+  parallel tests). There is no test hook in `app`.
+
+What stays fixed (not the product label; renaming would break installs or
+other programs): the module path and repository (`PivotLLM/ClawEh`), `CLAW_*`
+environment variables, the data directories (`.claw`, `/opt/claw`), file names
+(`claw.log`, `claw.pid`, `claw.lock`, `claw-backup-*`, temp prefixes), cookies
+and localStorage keys, the WebSocket subprotocol `claw-token`, the MCP realm
+`claw-mcp`, the `mcp__claw__` tool prefix, `claw-auth`, `openclaw`, ClawHub,
+`clawdbot-gateway`. Bare-word ones — installed binary file name, systemd
+service, launchd label, `/opt/claw`, log and lock file names, the release
+repository, the Maestro host model label `claw`, the folder-watch marker
+header — are defined once in `global/identifiers.go`.
+
+Templates and embedded guides name the product through placeholders filled at
+use: `{{SHORT_NAME}}` in `templates/` (seeding, `internal/workspace`), and
+`{{HOST}}` in the forum and classifier guides (those packages may not import
+ClawEh, so the gateway passes `Host.ProductName`, which defaults to "the
+host"). The WebUI reads `name`, `short_name` and `binary_name` from
+`GET /api/auth/status` (answered before login) and `GET /api/system/version`
+(`web/frontend/src/store/product.ts`), sets `document.title`, and makes them
+i18next defaults, so any locale string can say `{{name}}`, `{{shortName}}` or
+`{{binaryName}}`.
+
+Two guards enforce it, both part of `make test`:
+
+- `app/productname_guard_test.go` parses every non-test Go file outside `app/`
+  (and outside `web/frontend`, `manual` and dot-directories) and fails on a
+  string literal holding "ClawEh", "Claw" or "claw" as a word. Comments, struct
+  tags and import paths are not checked. `global/identifiers.go` is skipped.
+- `web/frontend/src/product-name-guard.test.ts` does the same for the
+  frontend's non-test sources, the locale JSON and `index.html`.
+
+To allow a new fixed identifier, add the narrowest pattern that matches only
+it, with a comment saying what it names, to `fixedIdentifiers` (Go) or the
+allow-list in the frontend guard. A bare word ("claw") is never allowed by
+pattern: define it as a constant in `global/identifiers.go`.
 
 ## Build & Install
 ```
@@ -1126,7 +1182,8 @@ exported; it exits 2 with a hint otherwise.
   Everything there is unexported: read it through `app.Version()` (display:
   `0.4.69+58d98993` — "+" is SemVer build metadata, ignored when comparing),
   `app.SemVer()` (protocol handshakes: `0.4.69`),
-  `app.Name()`, `app.TagLine()`, `app.Copyright()`. Build tooling greps the
+  `app.Name()`, `app.ShortName()`, `app.BinaryName()`, `app.TagLine()`,
+  `app.Copyright()`. Build tooling greps the
   `version = "..."` line.
 - Always compile after edits before declaring done: `go build ./...` for Go changes, and `cd web/frontend && pnpm run build:backend` for frontend/TypeScript changes. The frontend bundle lands in `web/backend/dist`, which is embedded by `web/backend/embed.go` into the merged claw binary.
 - When investigating a problem, report findings and wait for approval before implementing.
