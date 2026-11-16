@@ -6,7 +6,6 @@ package config
 import (
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/global"
@@ -65,7 +64,7 @@ func DefaultConfig() *Config {
 			},
 			List: []AgentConfig{
 				{
-					ID:      strings.ToLower(app.ShortName()),
+					ID:      global.DefaultAgentID,
 					Name:    app.ShortName(),
 					Default: true,
 					// Tools omitted: an agent has only the tools its list

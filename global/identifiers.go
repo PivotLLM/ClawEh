@@ -55,4 +55,17 @@ const (
 	// FolderWatchMarkerHeader is the first line of a folder-watch marker file.
 	// The watcher parses it; a different header discards existing markers.
 	FolderWatchMarkerHeader = "# claw seen files v1"
+
+	// InstallRCMarker is the comment `install` writes above the lines it adds
+	// to the user's shell rc file.
+	InstallRCMarker = "# Added by claw install"
+
+	// DefaultAgentID is the ID of the agent a new configuration is seeded
+	// with. An agent ID is a directory name and a routing key, so it does not
+	// follow the product's label; the agent's display name does.
+	DefaultAgentID = "claw"
+
+	// SelfSignedFallbackCN is the common name of a generated self-signed
+	// certificate that has no host name or address to carry.
+	SelfSignedFallbackCN = "claw"
 )

@@ -6,10 +6,12 @@
 package app
 
 import (
+	"bytes"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -40,8 +42,8 @@ var fixedIdentifiers = []*regexp.Regexp{
 	// The macOS launchd job label and its plist.
 	regexp.MustCompile(`com\.pivotllm\.claweh(\.plist)?`),
 	// The data directory (~/.claw, a relative .claw) and the hidden temp
-	// names made in it (.claw-backup-*, .claw-perm-test-*).
-	regexp.MustCompile(`\.claw(-[\w*%-]+)?`),
+	// names made beside files (.claw-backup-*, .claw-perm-test-%d).
+	regexp.MustCompile(`\.claw(-backup-|-perm-test-)?`),
 	// The system-wide data directory.
 	regexp.MustCompile(`/opt/claw\b`),
 	// File names: the log, pid and lock files and the systemd unit.
@@ -60,17 +62,30 @@ var fixedIdentifiers = []*regexp.Regexp{
 // (global/identifiers.go); every value in it is documented there.
 const guardSkipFile = "global/identifiers.go"
 
+// embedSkip lists embedded files and folders (paths from the repository root)
+// that are not checked, each with the reason. Every other file a //go:embed
+// directive outside app/ names is: guides, templates and other text the
+// binary serves to models and users name the product only through
+// placeholders ({{HOST}}, {{SHORT_NAME}}, {{PRODUCT_NAME}}) filled in at use.
+var embedSkip = map[string]string{
+	"channels/device/assets/bip39-english.txt": `the BIP39 word list; "claw" is one of its words`,
+	"web/backend/manual":                       "the user manual, documentation that names its own product",
+	"web/backend/dist":                         "the built frontend; web/frontend/src/product-name-guard.test.ts checks its sources",
+}
+
 // TestProductName_OnlyInApp enforces that the product name lives only in this
 // package: no non-test Go file elsewhere may hold "ClawEh", "Claw" or "claw"
-// as a word in a string literal. Use Name, ShortName or BinaryName instead; a
-// rename is then an edit to app.go only. Comments, struct tags and import
-// paths are not checked.
+// as a word in a string literal, and no text file it embeds may hold it on
+// any line. Use Name, ShortName or BinaryName instead; a rename is then an
+// edit to app.go only. Comments, struct tags and import paths are not
+// checked.
 func TestProductName_OnlyInApp(t *testing.T) {
 	root, err := filepath.Abs("..")
 	if err != nil {
 		t.Fatal(err)
 	}
 	var hits []string
+	embedded := map[string]bool{}
 	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -90,11 +105,23 @@ func TestProductName_OnlyInApp(t *testing.T) {
 		if !strings.HasSuffix(rel, ".go") || strings.HasSuffix(rel, "_test.go") || rel == guardSkipFile {
 			return nil
 		}
-		hits = append(hits, productNameLiterals(t, path, rel)...)
+		lits, embeds := productNameLiterals(t, path, rel)
+		hits = append(hits, lits...)
+		for _, e := range embeds {
+			for _, f := range embeddedFiles(t, root, filepath.Dir(path), e) {
+				embedded[f] = true
+			}
+		}
 		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(embedded) == 0 {
+		t.Fatal("no embedded files found; the //go:embed scan is broken")
+	}
+	for rel := range embedded {
+		hits = append(hits, productNameLines(t, root, rel)...)
 	}
 	for _, h := range hits {
 		t.Error(h)
@@ -107,11 +134,12 @@ func TestProductName_OnlyInApp(t *testing.T) {
 }
 
 // productNameLiterals returns "file:line: text" for each string literal in the
-// file that names the product outside the fixed identifiers.
-func productNameLiterals(t *testing.T, path, rel string) []string {
+// file that names the product outside the fixed identifiers, and the patterns
+// of the file's //go:embed directives.
+func productNameLiterals(t *testing.T, path, rel string) ([]string, []string) {
 	t.Helper()
 	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
+	f, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution|parser.ParseComments)
 	if err != nil {
 		t.Fatalf("parse %s: %v", rel, err)
 	}
@@ -139,6 +167,71 @@ func productNameLiterals(t *testing.T, path, rel string) []string {
 		}
 		return true
 	})
+	var embeds []string
+	for _, cg := range f.Comments {
+		for _, c := range cg.List {
+			if rest, ok := strings.CutPrefix(c.Text, "//go:embed "); ok {
+				embeds = append(embeds, strings.Fields(rest)...)
+			}
+		}
+	}
+	return out, embeds
+}
+
+// embeddedFiles resolves one //go:embed pattern of a file in dir to the files
+// it names, as paths from root, leaving out embedSkip.
+func embeddedFiles(t *testing.T, root, dir, pattern string) []string {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(dir, strings.TrimPrefix(pattern, "all:")))
+	if err != nil {
+		t.Fatalf("embed pattern %q in %s: %v", pattern, dir, err)
+	}
+	var out []string
+	for _, m := range matches {
+		err := filepath.WalkDir(m, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			rel, err := filepath.Rel(root, path)
+			if err != nil {
+				return err
+			}
+			rel = filepath.ToSlash(rel)
+			if _, skip := embedSkip[rel]; skip {
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if !d.IsDir() {
+				out = append(out, rel)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	return out
+}
+
+// productNameLines returns "file:line: text" for each line of an embedded
+// text file that names the product. Binary files are skipped.
+func productNameLines(t *testing.T, root, rel string) []string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.IndexByte(data, 0) >= 0 {
+		return nil
+	}
+	var out []string
+	for i, line := range strings.Split(string(data), "\n") {
+		if namesProduct(line) {
+			out = append(out, rel+":"+strconv.Itoa(i+1)+": "+strings.TrimSpace(line))
+		}
+	}
 	return out
 }
 

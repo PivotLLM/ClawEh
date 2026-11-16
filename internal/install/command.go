@@ -34,6 +34,12 @@ const (
 	openClawAlias = "openclaw"
 )
 
+// TargetBinaryPath is where `install` puts the binary in binDir. `upgrade`
+// replaces the file found there, by the same name (global.InstalledBinaryName).
+func TargetBinaryPath(binDir string) string {
+	return filepath.Join(binDir, global.InstalledBinaryName)
+}
+
 // TargetUser holds the account details under which ClawEh will execute.
 type TargetUser struct {
 	Username  string
@@ -305,7 +311,7 @@ func runInstall(host string, port int, allowedCIDRs, targetUser, customBinDir st
 	if binDir == optClawBinDir {
 		fixOwnership(binDir, tu)
 	}
-	targetBin := filepath.Join(binDir, serviceName)
+	targetBin := TargetBinaryPath(binDir)
 
 	// Determine service file path for summary
 	var modeName, serviceFilePath string
@@ -352,7 +358,7 @@ func runInstall(host string, port int, allowedCIDRs, targetUser, customBinDir st
 	fmt.Printf("  Home Directory:  %s\n", tu.HomeDir)
 	fmt.Printf("  Data Directory:  %s\n", clawHome)
 	fmt.Printf("  Target Binary:   %s\n", targetBin)
-	fmt.Printf("  Alias Symlink:   %s -> %s\n", filepath.Join(binDir, openClawAlias), serviceName)
+	fmt.Printf("  Alias Symlink:   %s -> %s\n", filepath.Join(binDir, openClawAlias), global.InstalledBinaryName)
 	fmt.Printf("  Service File:    %s\n", serviceFilePath)
 	fmt.Println()
 
@@ -370,13 +376,13 @@ func runInstall(host string, port int, allowedCIDRs, targetUser, customBinDir st
 	fmt.Printf("\nInstalled binary: %s\n", targetBin)
 
 	// 2b. Symlink openclaw -> claw (for Rabbit R1 ACP connection)
-	if err := linkOpenClawAlias(binDir, serviceName); err != nil {
+	if err := linkOpenClawAlias(binDir, global.InstalledBinaryName); err != nil {
 		fmt.Printf("Warning: could not create the openclaw alias (%v).\n"+
 			"  The Rabbit R1 spawns `openclaw acp`; without this link it cannot connect.\n", err)
 	} else {
 		fixOwnership(filepath.Join(binDir, openClawAlias), tu)
 		fmt.Printf("Installed alias:  %s -> %s (for the Rabbit R1's `openclaw acp`)\n",
-			filepath.Join(binDir, openClawAlias), serviceName)
+			filepath.Join(binDir, openClawAlias), global.InstalledBinaryName)
 	}
 	for _, old := range h.leftoverOptClawFiles(binDir) {
 		fmt.Printf("%s is no longer used and can be removed.\n", old)
@@ -406,7 +412,7 @@ func runInstall(host string, port int, allowedCIDRs, targetUser, customBinDir st
 					"  --allowed-cidrs private          all RFC1918 private ranges\n"+
 					"  --allowed-cidrs any              any address (the admin login is still required)\n"+
 					"Loopback is always allowed, so --host 127.0.0.1 needs none of this",
-				host, serviceName)
+				host, app.ShortName())
 		}
 	}
 	if allowedCIDRs != "" {
@@ -847,7 +853,7 @@ func ensureUserEnv(tu *TargetUser, binDir, clawHome string) string {
 		return ""
 	}
 
-	marker := "# Added by " + app.BinaryName() + " install"
+	marker := global.InstallRCMarker
 	var lines []string
 	var notes []string
 

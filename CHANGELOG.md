@@ -306,9 +306,6 @@
   `# claw (<version>)`.
 - **The forum and classifier guides name the host as "Claw"**
   (`forum_readme`, `classifier_readme`).
-- **A newly generated self-signed certificate with no host name or address
-  to put in it has the common name `claweh`** instead of `claw`. Existing
-  certificates are not regenerated for this.
 
 - **Memory domains load by keywords, not by word matches** (cogmem
   v0.0.11). A topic domain no longer loads because a word of the message
@@ -631,6 +628,11 @@
 
 ### Fixed
 
+- **`status` and the sessions commands see a gateway started under another
+  name.** A running gateway was recognised by its process name, so one
+  started through the `openclaw` link or from a renamed binary was reported
+  as not running (and `sessions` would not refuse to touch its files). It is
+  now recognised by its executable on Linux.
 - **Upstream MCP servers are told the real client version.** The client
   introduced itself as `claw` version `1.0.0`; it now sends `ClawEh` and the
   release number (for example `0.6.4`).

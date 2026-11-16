@@ -23,12 +23,14 @@ func TestWriteReadRoundTrip(t *testing.T) {
 		t.Errorf("file contains %q, want this process's pid", got)
 	}
 
-	// The test binary IS the running process, but it is not named "claw", so
-	// the comm check correctly refuses to call it a gateway. That the pid is
-	// still returned is what lets a caller report a mismatch if it wants to.
-	pid, _ := Read(dir)
+	// The pid is this test process, which runs its own executable, so it
+	// reads as running.
+	pid, running := Read(dir)
 	if pid != os.Getpid() {
 		t.Errorf("Read pid = %d, want %d", pid, os.Getpid())
+	}
+	if !running {
+		t.Error("Read: this process, running its own executable, is not running")
 	}
 }
 

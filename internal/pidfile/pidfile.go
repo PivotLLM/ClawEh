@@ -69,8 +69,8 @@ func Remove(dataDir string) {
 // is a LIVE ClawEh process.
 //
 // Both checks matter. A kill -9 leaves the file behind, and pids are recycled,
-// so a file alone proves nothing: the process must still exist AND still be
-// claw. Without the second check a status command would cheerfully report the
+// so a file alone proves nothing: the process must still exist AND still run
+// this program. Without the second check a status command would cheerfully report the
 // memory of whatever unrelated program inherited the number.
 func Read(dataDir string) (pid int, running bool) {
 	if dataDir == "" {
@@ -87,12 +87,11 @@ func Read(dataDir string) (pid int, running bool) {
 	return pid, isClaw(pid)
 }
 
-// isClaw reports whether pid is alive and is a claw process.
+// isClaw reports whether pid is alive and is a ClawEh process.
 //
 // Signal 0 tests for existence without delivering anything; it succeeds only
-// for a process this user may signal. The comm check then rejects a recycled
-// pid now belonging to something else. On a system without /proc, existence
-// alone has to do.
+// for a process this user may signal. isOurExecutable then rejects a recycled
+// pid now belonging to something else.
 func isClaw(pid int) bool {
 	proc, err := os.FindProcess(pid)
 	if err != nil {
@@ -101,11 +100,56 @@ func isClaw(pid int) bool {
 	if sigErr := proc.Signal(syscall.Signal(0)); sigErr != nil {
 		return false
 	}
-	comm, err := os.ReadFile(fmt.Sprintf("/proc/%d/comm", pid))
+	return isOurExecutable(pid)
+}
+
+// procRoot and selfExecutable are replaced in tests.
+var (
+	procRoot       = "/proc"
+	selfExecutable = os.Executable
+)
+
+// deletedSuffix is what Linux appends to /proc/<pid>/exe once the file has
+// been replaced, as `upgrade` does to a running binary.
+const deletedSuffix = " (deleted)"
+
+// isOurExecutable reports whether pid runs this program, judged by its
+// executable rather than the name it was started as, so a gateway started
+// through the openclaw link or under another name is still recognised.
+//
+// /proc/<pid>/exe is the executable with every link resolved. It matches when
+// it is the file this process runs, or a file with the installed binary's
+// name (another build of it, such as the installed one seen from a
+// development copy). Where exe cannot be read (another user's process), the
+// command name is compared instead. On a system without /proc (macOS),
+// existence is the best available answer.
+func isOurExecutable(pid int) bool {
+	dir := filepath.Join(procRoot, strconv.Itoa(pid))
+	self := ""
+	if p, err := selfExecutable(); err == nil {
+		self = strings.TrimSuffix(p, deletedSuffix)
+		if resolved, err := filepath.EvalSymlinks(self); err == nil {
+			self = resolved
+		}
+	}
+	if exe, err := os.Readlink(filepath.Join(dir, "exe")); err == nil {
+		exe = strings.TrimSuffix(exe, deletedSuffix)
+		return exe == self || filepath.Base(exe) == global.InstalledBinaryName
+	}
+	comm, err := os.ReadFile(filepath.Join(dir, "comm")) //nolint:gosec // a /proc entry named by a pid
 	if err != nil {
 		return true // no procfs: existence is the best available answer
 	}
-	return strings.TrimSpace(string(comm)) == global.InstalledBinaryName
+	name := strings.TrimSpace(string(comm))
+	return name == global.InstalledBinaryName || (self != "" && name == commName(filepath.Base(self)))
+}
+
+// commName is name as /proc/<pid>/comm shows it: at most 15 bytes.
+func commName(name string) string {
+	if len(name) > 15 {
+		return name[:15]
+	}
+	return name
 }
 
 // RSSBytes returns a process's resident set size — the physical RAM it

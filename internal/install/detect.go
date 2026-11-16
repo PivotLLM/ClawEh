@@ -101,7 +101,7 @@ func (h *host) ownerName(p string) string {
 // optClawBinary is the binary of an /opt/claw install: bin/claw, else the
 // older /opt/claw/claw, else "".
 func (h *host) optClawBinary() string {
-	for _, p := range []string{filepath.Join(optClawBinDir, serviceName), filepath.Join(optClawHome, serviceName)} {
+	for _, p := range []string{TargetBinaryPath(optClawBinDir), filepath.Join(optClawHome, global.InstalledBinaryName)} {
 		if h.fileExists(p) {
 			return p
 		}
@@ -117,7 +117,7 @@ func (h *host) leftoverOptClawFiles(binDir string) []string {
 		return nil
 	}
 	var out []string
-	for _, name := range []string{serviceName, openClawAlias} {
+	for _, name := range []string{global.InstalledBinaryName, openClawAlias} {
 		if p := filepath.Join(optClawHome, name); h.exists(p) {
 			out = append(out, p)
 		}
@@ -200,7 +200,7 @@ func (h *host) detectDarwinInstall(homeDir string) *ExistingInstall {
 func (h *host) detectFromBinary() *ExistingInstall {
 	candidates := []func() (string, error){
 		h.executable,
-		func() (string, error) { return h.lookPath(serviceName) },
+		func() (string, error) { return h.lookPath(global.InstalledBinaryName) },
 	}
 	for _, find := range candidates {
 		p, err := find()

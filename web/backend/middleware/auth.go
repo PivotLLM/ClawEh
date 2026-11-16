@@ -115,7 +115,7 @@ func authProtected(r *http.Request) bool {
 }
 
 // WriteUnauthorized writes the 401 the WebUI client understands: a JSON body
-// under /api/ (with the `claw admin` hint when no account exists), plain text
+// under /api/ (with the `<binary> admin` hint when no account exists), plain text
 // elsewhere.
 func WriteUnauthorized(w http.ResponseWriter, r *http.Request, configured bool) {
 	if !strings.HasPrefix(r.URL.Path, "/api/") {
@@ -126,14 +126,10 @@ func WriteUnauthorized(w http.ResponseWriter, r *http.Request, configured bool) 
 	if !configured {
 		payload = map[string]string{"error": "no admin account", "hint": "run: " + app.BinaryName() + " admin"}
 	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
-		return
-	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)
-	if _, err := w.Write(body); err != nil {
+	// Encoding a map of strings cannot fail; an error here is the write.
+	if err := json.NewEncoder(w).Encode(payload); err != nil {
 		logger.DebugCF("http", "response write failed", map[string]any{"error": err.Error()})
 	}
 }
