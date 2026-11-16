@@ -39,15 +39,15 @@ func NewACPCommand() *cobra.Command {
 	var noAutoPair bool
 	cmd := &cobra.Command{
 		Use:   "acp",
-		Short: "Serve the Agent Client Protocol (ACP) over stdio, bridging to the local " + app.Name(),
+		Short: "Serve the Agent Client Protocol (ACP) over stdio, bridging to the local " + app.ShortName(),
 		Long: "Serve the Agent Client Protocol over stdin/stdout for an ACP client (such as\n" +
 			"rabbit-agent for the Rabbit R1) and forward prompts to the already-running\n" +
-			"" + app.Name() + " over its localhost WebSocket. The client spawns this process and\n" +
+			"" + app.ShortName() + " over its localhost WebSocket. The client spawns this process and\n" +
 			"exchanges JSON-RPC 2.0 messages on the pipe; stdin EOF shuts it down.\n\n" +
-			"The bridge authenticates to " + app.Name() + " as a paired device (Ed25519 identity\n" +
+			"The bridge authenticates to " + app.ShortName() + " as a paired device (Ed25519 identity\n" +
 			"+ the configured device token). Because it is a local same-user process, it\n" +
 			"auto-approves its own pairing in the local store on first connect (disable\n" +
-			"with --no-auto-pair to require a manual `claw devices approve`).\n\n" +
+			"with --no-auto-pair to require a manual `" + app.BinaryName() + " devices approve`).\n\n" +
 			"stdout is the protocol wire, so all logging goes to the log file only.",
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
@@ -67,7 +67,7 @@ func acpCmd(debug bool, wsURL string, autoPair bool) error {
 	logger.DisableConsole()
 
 	baseDir := internal.GetClawHome()
-	logPath := filepath.Join(baseDir, "logs", "claw.log")
+	logPath := filepath.Join(baseDir, "logs", global.LogFileName)
 	logger.SetErrorLogLevel(logger.ParseLevel(global.ErrorLogLevel))
 	if err := logger.EnableFileLogging(logPath, false); err != nil {
 		fmt.Fprintf(os.Stderr, "acp: enable file logging: %v\n", err)
@@ -122,12 +122,12 @@ func acpCmd(debug bool, wsURL string, autoPair bool) error {
 	server := acplib.NewServer(br, os.Stdin, os.Stdout)
 	br.setNotifier(server)
 
-	logger.InfoC("acp", "ACP stdio server ready (bridged to claw)")
+	logger.InfoC("acp", "ACP stdio server ready (bridged to "+app.ShortName()+")")
 	srvInfo := ""
 	if hello := client.Hello(); hello != nil {
 		srvInfo = fmt.Sprintf(" (server %s, protocol %d)", hello.Server.Version, hello.Protocol)
 	}
-	fmt.Fprintf(os.Stderr, "claw acp: connected%s — ACP ready, reading JSON-RPC on stdin (Ctrl-D to exit)\n", srvInfo)
+	fmt.Fprintf(os.Stderr, "%s acp: connected%s — ACP ready, reading JSON-RPC on stdin (Ctrl-D to exit)\n", app.BinaryName(), srvInfo)
 
 	// Serve blocks until stdin closes (client disconnect), the gateway drops, or
 	// the context is cancelled.
@@ -141,7 +141,7 @@ func acpCmd(debug bool, wsURL string, autoPair bool) error {
 		}
 		logger.InfoC("acp", "ACP stdio client disconnected; shutting down")
 	case <-client.Done():
-		logger.WarnC("acp", "Connection to claw closed; shutting down")
+		logger.WarnC("acp", "Connection to "+app.ShortName()+" closed; shutting down")
 	}
 	return nil
 }
@@ -179,12 +179,12 @@ func connectBridge(ctx context.Context, dataDir, wsURL, authToken string, tlsCon
 	}
 	deviceToken := idStore.LoadDeviceToken()
 
-	logger.InfoCF("acp", "Starting ACP↔claw bridge", map[string]any{
+	logger.InfoCF("acp", "Starting ACP↔"+app.ShortName()+" bridge", map[string]any{
 		"app": app.Name(), "version": app.Version(), "url": wsURL, "deviceId": id.DeviceID,
 	})
 	// Human-facing progress goes to stderr — stdout is the ACP protocol wire, so it
 	// must stay clean. ACP clients (rabbit-agent) read stdout only and ignore this.
-	fmt.Fprintf(os.Stderr, "claw acp: connecting to %s (device %s)…\n", wsURL, id.DeviceID)
+	fmt.Fprintf(os.Stderr, "%s acp: connecting to %s (device %s)…\n", app.BinaryName(), wsURL, id.DeviceID)
 
 	// The client sends one token. A stored device token is tried on its own: the
 	// options apply in order, so adding the shared token as well would override
@@ -254,7 +254,7 @@ func connectBridge(ctx context.Context, dataDir, wsURL, authToken string, tlsCon
 		logger.WarnCF("acp", "Device not paired; auto-approving local bridge", map[string]any{"deviceId": id.DeviceID})
 		tok, perr := autoApproveLocalDevice(ctx, dataDir, id.DeviceID)
 		if perr != nil {
-			return nil, fmt.Errorf("acp: auto-pair failed for device %s (approve manually with `claw devices`): %w", id.DeviceID, perr)
+			return nil, fmt.Errorf("acp: auto-pair failed for device %s (approve manually with `%s devices`): %w", id.DeviceID, app.BinaryName(), perr)
 		}
 		if tok != "" {
 			deviceToken = tok
@@ -267,7 +267,7 @@ func connectBridge(ctx context.Context, dataDir, wsURL, authToken string, tlsCon
 	}
 	if connErr != nil {
 		if isPairingError(connErr) {
-			return nil, fmt.Errorf("this device (%s) is not paired yet — approve it once with `claw devices`, then re-run: %w", id.DeviceID, connErr)
+			return nil, fmt.Errorf("this device (%s) is not paired yet — approve it once with `%s devices`, then re-run: %w", id.DeviceID, app.BinaryName(), connErr)
 		}
 		return nil, fmt.Errorf("acp: connect to %s: %w", wsURL, connErr)
 	}

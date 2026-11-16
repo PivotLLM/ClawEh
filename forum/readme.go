@@ -31,13 +31,13 @@ var templates = []template{
 
 // guide returns the forum guide followed by the list of built-in templates
 // and, when any is set, the install's maximums.
-func guide(c Ceilings) string {
+func guide(c Ceilings, productName string) string {
 	data, err := readmeFS.ReadFile("readme/README.md")
 	if err != nil {
 		panic("forum: embedded guide missing: " + err.Error())
 	}
 	var b strings.Builder
-	b.Write(data)
+	b.WriteString(withHostName(string(data), productName))
 	b.WriteString("\n## Templates\n\n")
 	for _, t := range templates {
 		b.WriteString("- `" + t.name + "`: " + t.description + "\n")
@@ -70,6 +70,19 @@ func writeCeilings(b *strings.Builder, c Ceilings) {
 	for _, l := range lines {
 		b.WriteString(l)
 	}
+}
+
+// hostPlaceholder in the embedded guide is replaced with the host's
+// product name (Host.ProductName) when the guide is served.
+const hostPlaceholder = "{{HOST}}"
+
+// withHostName fills the guide's host placeholder with name, or "the host"
+// when the host gave none.
+func withHostName(text, name string) string {
+	if name == "" {
+		name = "the host"
+	}
+	return strings.ReplaceAll(text, hostPlaceholder, name)
 }
 
 // templateConfig returns the named template's configuration verbatim, and

@@ -27,6 +27,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/cmd/claw-auth/config"
 	"github.com/PivotLLM/ClawEh/cmd/claw-auth/debug"
 	"github.com/PivotLLM/ClawEh/cmd/claw-auth/mcp"
@@ -114,7 +115,7 @@ func parseFlags(flags *cliFlags) {
 	flag.Usage = func() {
 		_, _ = fmt.Fprintf(os.Stderr, "Usage: %s <auth-code-blob>\n", os.Args[0])
 		_, _ = fmt.Fprintf(os.Stderr, "   or: %s -service <name> -fusion <url> -token <token>\n\n", os.Args[0])
-		_, _ = fmt.Fprintf(os.Stderr, "claw-auth is a generic authentication helper for ClawEh.\n\n")
+		_, _ = fmt.Fprintf(os.Stderr, "claw-auth is a generic authentication helper for %s.\n\n", app.Name())
 		_, _ = fmt.Fprintf(os.Stderr, "Auth Code Mode (recommended):\n")
 		_, _ = fmt.Fprintf(os.Stderr, "  Generate an auth code on the server: mcpfusion -auth-code google -auth-url http://host:port\n")
 		_, _ = fmt.Fprintf(os.Stderr, "  Then run: %s <auth-code-blob>\n\n", os.Args[0])

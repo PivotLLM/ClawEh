@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/config"
 )
 
@@ -202,7 +203,7 @@ func collectSummary(ctx context.Context, cfg *config.Config, env Environment) Se
 	return Section{
 		Title: "Summary",
 		Notes: []string{
-			"ClawEh runs as user " + orValue(env.User, unknown) + ", group " + orValue(env.Group, unknown) +
+			app.ShortName() + " runs as user " + orValue(env.User, unknown) + ", group " + orValue(env.Group, unknown) +
 				" on " + orValue(env.Hostname, unknown) + ".",
 		},
 		Tables: []Table{{

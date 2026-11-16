@@ -12,6 +12,7 @@ import (
 	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/agent"
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/channels"
 	"github.com/PivotLLM/ClawEh/channels/webui"
@@ -22,7 +23,6 @@ import (
 	"github.com/PivotLLM/ClawEh/folderwatch"
 	"github.com/PivotLLM/ClawEh/forum"
 	"github.com/PivotLLM/ClawEh/health"
-	"github.com/PivotLLM/ClawEh/internal"
 	"github.com/PivotLLM/ClawEh/internal/admin"
 	"github.com/PivotLLM/ClawEh/internal/audit"
 	"github.com/PivotLLM/ClawEh/internal/perms"
@@ -577,7 +577,7 @@ func shutdownGateway(
 		logger.WarnCF("gateway", "audit log close failed", map[string]any{"error": err.Error()})
 	}
 
-	logger.Infof("✓ claw stopped in %.1fs", time.Since(begin).Seconds())
+	logger.Infof("✓ %s stopped in %.1fs", app.ShortName(), time.Since(begin).Seconds())
 	if fullShutdown {
 		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		if err := agentLoop.Alerter().Close(closeCtx); err != nil {
@@ -897,10 +897,10 @@ func logAllowlist(allowedCIDRs []string, host string) {
 	// IPv6 clients, which on a dual-stack host reads as the allowlist being
 	// broken. See middleware.AllowAnyAddress.
 	logger.WarnF("The WebUI/API is bound to a network address but the network allowlist is empty, so only loopback will be served. "+
-		"Run `"+internal.BinaryName+" network` to allow the private LAN ranges, "+
-		"`"+internal.BinaryName+" network <cidr>` for a specific subnet, or "+
-		"`"+internal.BinaryName+" network any` for any address (note 0.0.0.0/0 covers IPv4 only; use \"*\"). "+
-		"A running "+internal.BinaryName+" applies the change on its next config reload, about 15 seconds.",
+		"Run `"+app.BinaryName()+" network` to allow the private LAN ranges, "+
+		"`"+app.BinaryName()+" network <cidr>` for a specific subnet, or "+
+		"`"+app.BinaryName()+" network any` for any address (note 0.0.0.0/0 covers IPv4 only; use \"*\"). "+
+		"A running "+app.ShortName()+" applies the change on its next config reload, about 15 seconds.",
 		map[string]any{"host": host})
 }
 
@@ -950,6 +950,6 @@ func warnListenerConfigChanged(services *gatewayServices, gw config.GatewayConfi
 		return
 	}
 	if gw.Listeners() != services.bootListeners {
-		logger.WarnCF("gateway", "gateway.host, port, tls_port, tls.mode or the certificate files changed; the listeners are bound at start, so restart "+internal.BinaryName+" to apply", nil)
+		logger.WarnCF("gateway", "gateway.host, port, tls_port, tls.mode or the certificate files changed; the listeners are bound at start, so restart "+app.ShortName()+" to apply", nil)
 	}
 }

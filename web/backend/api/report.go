@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/user"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/PivotLLM/ClawEh/app"
@@ -49,7 +50,7 @@ func (h *Handler) handleReportPDF(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/pdf")
 	w.Header().Set("Content-Disposition",
-		fmt.Sprintf(`inline; filename="claweh-report-%s.pdf"`, now.Format("2006-01-02-1504")))
+		fmt.Sprintf(`inline; filename="%s-report-%s.pdf"`, strings.ToLower(app.Name()), now.Format("2006-01-02-1504")))
 	w.Header().Set("Cache-Control", "no-store")
 	if err := report.RenderPDF(rep, w); err != nil {
 		// Headers may already be out; all that is left is to record it.

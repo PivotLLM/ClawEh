@@ -314,7 +314,7 @@ func (c *DeviceChannel) AgentQuerier() AgentQuerier { return c.server.querier }
 // errNoCertificate is Start's refusal when channels.device.tls is on but the
 // gateway has no certificate manager to lend (HTTPS was off at start).
 var errNoCertificate = errors.New("device: channels.device.tls is on but there is no TLS certificate " +
-	"(gateway.tls.mode was \"off\" when ClawEh started); restart ClawEh after turning HTTPS on")
+	"(gateway.tls.mode was \"off\" when " + app.ShortName() + " started); restart " + app.ShortName() + " after turning HTTPS on")
 
 // SetTLSConfig hands the channel the gateway certificate manager's TLS
 // configuration (tlscert.Manager.TLSConfig), so the device listener serves

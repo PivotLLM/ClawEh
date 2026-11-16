@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	launchdLabel      = "com.pivotllm.claweh"
-	launchdPlistName  = "com.pivotllm.claweh.plist"
+	launchdLabel      = global.LaunchdLabel
+	launchdPlistName  = global.LaunchdLabel + ".plist"
 	systemLaunchdPath = "/Library/LaunchDaemons/" + launchdPlistName
 )
 

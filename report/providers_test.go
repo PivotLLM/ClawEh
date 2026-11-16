@@ -6,6 +6,8 @@ package report
 import (
 	"strings"
 	"testing"
+
+	"github.com/PivotLLM/ClawEh/app"
 )
 
 func TestCollectProviders_APIKeyNeverShown(t *testing.T) {
@@ -67,7 +69,7 @@ func TestCollectProviders_CLILaunchLine(t *testing.T) {
 	for _, sub := range s.Subsections {
 		if sub.Title == "CLI providers" {
 			cli = sub.Tables[0]
-			contains(t, sub.Notes[0], "ClawEh's file sandbox applies to ClawEh's tools", "CLI note")
+			contains(t, sub.Notes[0], app.ShortName()+"'s file sandbox applies to "+app.ShortName()+"'s tools", "CLI note")
 		}
 	}
 	_, claude := findRow(t, cli, "Claude CLI (Claude CLI)")

@@ -15,6 +15,7 @@ import (
 	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/alerts"
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/devices/events"
 	"github.com/PivotLLM/ClawEh/logger"
 )
@@ -122,7 +123,7 @@ func (m *USBMonitor) Start(ctx context.Context) (<-chan *events.DeviceEvent, err
 			logger.ErrorCF("devices", "udevadm scan error", map[string]any{"error": err.Error()})
 			alerts.Send(alerter.Alert{
 				Title:       "USB device monitor stopped",
-				Description: "udevadm monitor ended; USB device events are not delivered until claw is restarted",
+				Description: "udevadm monitor ended; USB device events are not delivered until " + app.ShortName() + " is restarted",
 				Details:     err.Error(),
 				EventID:     "devices:usb",
 			})

@@ -7,6 +7,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/skills"
 	"github.com/PivotLLM/ClawEh/voice"
@@ -102,8 +103,8 @@ func collectExternal(_ context.Context, cfg *config.Config, _ Environment) Secti
 	return Section{
 		Title: "External services",
 		Notes: []string{
-			"Programs and network services ClawEh starts or calls on the agents' behalf. Env and header values are " +
-				"never shown, only their names. Upgrades: `claw upgrade` downloads releases from api.github.com when " +
+			"Programs and network services " + app.ShortName() + " starts or calls on the agents' behalf. Env and header values are " +
+				"never shown, only their names. Upgrades: `" + app.BinaryName() + " upgrade` downloads releases from api.github.com when " +
 				"run by the operator; it has no configuration and no schedule.",
 		},
 		Tables: []Table{

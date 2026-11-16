@@ -2,11 +2,13 @@
 package workspace
 
 import (
+	"bytes"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/fileutil"
 	"github.com/PivotLLM/ClawEh/logger"
@@ -81,6 +83,7 @@ func Populate(workspace string, dirMode, fileMode os.FileMode, kinds []string, k
 		if err != nil {
 			return err
 		}
+		data = substituteNames(data)
 		if err := fileutil.MkdirAllExact(filepath.Dir(dest), dirMode); err != nil {
 			return err
 		}
@@ -92,6 +95,15 @@ func Populate(workspace string, dirMode, fileMode os.FileMode, kinds []string, k
 	}
 
 	seedChannelFiles(workspace, fileMode, kinds)
+}
+
+// shortNamePlaceholder in a template is replaced with app.ShortName() when the
+// file is seeded, so no template holds the product name.
+const shortNamePlaceholder = "{{SHORT_NAME}}"
+
+// substituteNames fills the product-name placeholders in a template.
+func substituteNames(data []byte) []byte {
+	return bytes.ReplaceAll(data, []byte(shortNamePlaceholder), []byte(app.ShortName()))
 }
 
 // channelTemplatesDir holds one prompt template per channel kind, named as the
@@ -116,7 +128,7 @@ func seedChannelFiles(workspace string, fileMode os.FileMode, kinds []string) {
 				map[string]any{"dir": workspace, "kind": kind, "error": err.Error()})
 			continue
 		}
-		if err := fileutil.WriteFileExact(dest, data, fileMode); err != nil {
+		if err := fileutil.WriteFileExact(dest, substituteNames(data), fileMode); err != nil {
 			logger.WarnCF("workspace", "Failed to write channel prompt file",
 				map[string]any{"dir": workspace, "file": name, "error": err.Error()})
 		}

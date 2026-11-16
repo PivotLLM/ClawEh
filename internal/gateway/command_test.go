@@ -5,6 +5,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/PivotLLM/ClawEh/app"
 )
 
 func TestNewGatewayCommand(t *testing.T) {
@@ -13,7 +15,7 @@ func TestNewGatewayCommand(t *testing.T) {
 	require.NotNil(t, cmd)
 
 	assert.Equal(t, "gateway", cmd.Use)
-	assert.Equal(t, "Start ClawEh", cmd.Short)
+	assert.Equal(t, "Start "+app.ShortName(), cmd.Short)
 
 	assert.Len(t, cmd.Aliases, 1)
 	assert.True(t, cmd.HasAlias("g"))

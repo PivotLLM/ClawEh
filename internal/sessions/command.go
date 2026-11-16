@@ -13,6 +13,7 @@ import (
 	"github.com/PivotLLM/ctxengine/session"
 	"github.com/spf13/cobra"
 
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/internal"
 	"github.com/PivotLLM/ClawEh/internal/pidfile"
 )
@@ -65,7 +66,7 @@ func runErase(cmd *cobra.Command, req EraseRequest) error {
 		return err
 	}
 	if pid, running := pidfile.Read(cfg.DataDir()); running {
-		return fmt.Errorf("%s is running (pid %d); stop the service before erasing sessions, or use DELETE /api/sessions", internal.BinaryName, pid)
+		return fmt.Errorf("%s is running (pid %d); stop the service before erasing sessions, or use DELETE /api/sessions", app.ShortName(), pid)
 	}
 	rep, err := Erase(cfg, req, nil)
 	if _, werr := fmt.Fprint(cmd.OutOrStdout(), FormatReport(rep, req)); werr != nil {
@@ -98,7 +99,7 @@ func runMigrate() error {
 		return err
 	}
 	if pid, running := pidfile.Read(cfg.DataDir()); running {
-		return fmt.Errorf("%s is running (pid %d); stop the service before migrating sessions", internal.BinaryName, pid)
+		return fmt.Errorf("%s is running (pid %d); stop the service before migrating sessions", app.ShortName(), pid)
 	}
 	return migrateDirs(os.Stdout, cfg.AgentSessionDirs())
 }

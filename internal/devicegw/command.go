@@ -15,6 +15,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/channels/device"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/global"
@@ -99,7 +100,7 @@ func pair() error {
 		fmt.Printf("  %s://%s:%d\n", payload.Protocol, host, payload.Port)
 	}
 	if changed {
-		fmt.Println("(generated a shared token and enabled the device listener; a running claw will pick this up within a few seconds)")
+		fmt.Printf("(generated a shared token and enabled the device listener; a running %s will pick this up within a few seconds)\n", app.ShortName())
 	}
 	host := dev.Host
 	if host == "" {
@@ -111,7 +112,7 @@ func pair() error {
 	if dev.ExternalURL == "" && len(payload.IPs) == 0 {
 		fmt.Println("WARNING: no routable LAN IPv4 address detected; set channels.device.external_url.")
 	}
-	fmt.Println("\nAfter the device connects, approve it with: claw devices approve <request-id>")
+	fmt.Printf("\nAfter the device connects, approve it with: %s devices approve <request-id>\n", app.BinaryName())
 	return nil
 }
 

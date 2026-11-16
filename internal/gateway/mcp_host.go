@@ -7,6 +7,7 @@ import (
 	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/agent"
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/logger"
@@ -177,7 +178,7 @@ func syncServiceTokensFromDisk(cfg *config.Config, agentLoop *agent.AgentLoop, s
 			map[string]any{"path": path, "error": err.Error()})
 		agentLoop.Alerter().Send(alerter.Alert{
 			Title:       "Service tokens not loaded",
-			Description: path + ": external MCP clients using `claw token` credentials are rejected (or keep the previously loaded set) until the file is fixed",
+			Description: path + ": external MCP clients using `" + app.BinaryName() + " token` credentials are rejected (or keep the previously loaded set) until the file is fixed",
 			Details:     err.Error(),
 			EventID:     "service-tokens",
 		})

@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+
+	"github.com/PivotLLM/ClawEh/global"
 )
 
 // GetClawHome returns the claw home directory.
@@ -40,9 +42,9 @@ func GetDefaultConfigPath() string {
 //  2. Same directory as the current executable
 //  3. Falls back to "claw" and relies on $PATH
 func FindClawBinary() string {
-	binaryName := "claw"
+	binaryName := global.InstalledBinaryName
 	if runtime.GOOS == "windows" {
-		binaryName = "claw.exe"
+		binaryName += ".exe"
 	}
 
 	if p := os.Getenv("CLAW_BINARY"); p != "" {
@@ -58,7 +60,7 @@ func FindClawBinary() string {
 		}
 	}
 
-	return "claw"
+	return global.InstalledBinaryName
 }
 
 // GetLocalIP returns the local IP address of the machine.

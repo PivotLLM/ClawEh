@@ -7,12 +7,10 @@ import (
 	"syscall"
 
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/internal/perms"
 	"github.com/PivotLLM/ClawEh/logger"
 )
-
-// BinaryName is set from main() to filepath.Base(os.Args[0]).
-var BinaryName = "claw"
 
 // GetClawHome returns the claw home directory.
 // Priority:
@@ -41,7 +39,7 @@ func GetClawHome() string {
 
 // installRoot is the system install location detectInstalledClawHome checks.
 // A variable only so tests can point it away from a real /opt/claw.
-var installRoot = "/opt/claw"
+var installRoot = global.SystemDataDir
 
 func detectInstalledClawHome() string {
 	// 1. Check if running executable is inside /opt/claw

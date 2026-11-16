@@ -11,6 +11,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/PivotLLM/ClawEh/internal/testbinary"
 )
 
 // fakeTerminal is a scripted terminal: lines for the username prompt and one
@@ -189,6 +191,7 @@ func TestEnsureAccount_ChownFailureRemovesFile(t *testing.T) {
 }
 
 func TestEnsureAccount_NoTerminal(t *testing.T) {
+	testbinary.Set(t, "alice-claw")
 	home := t.TempDir()
 	_, _, err := EnsureAccount(EnsureOptions{
 		Home:   home,
@@ -200,7 +203,7 @@ func TestEnsureAccount_NoTerminal(t *testing.T) {
 	if !errors.Is(err, ErrNoAccountNoTerminal) {
 		t.Fatalf("EnsureAccount = %v; want ErrNoAccountNoTerminal", err)
 	}
-	for _, want := range []string{"no admin account and no terminal to create one", "export CLAW_ADMIN_USER and CLAW_ADMIN_PASSWORD", "run `claw admin` on the server", "rerun the installer"} {
+	for _, want := range []string{"no admin account and no terminal to create one", "export CLAW_ADMIN_USER and CLAW_ADMIN_PASSWORD", "run `alice-claw admin` on the server", "rerun the installer"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q lacks %q", err, want)
 		}

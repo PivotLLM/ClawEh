@@ -9,12 +9,14 @@ import (
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/internal"
+	"github.com/PivotLLM/ClawEh/internal/testbinary"
 )
 
 // An existing service decides the mode: re-running the installer at the wrong
 // privilege level is refused instead of writing a second unit of the other
 // kind for the same install.
 func TestCheckExistingMode(t *testing.T) {
+	testbinary.Set(t, "alice-claw")
 	system := &ExistingInstall{ServiceType: "systemd-system", ServicePath: "/etc/systemd/system/claw.service", User: "ai"}
 	userSvc := &ExistingInstall{ServiceType: "systemd-user", ServicePath: "/home/ai/.config/systemd/user/claw.service", User: "ai"}
 	daemon := &ExistingInstall{ServiceType: "launchd-daemon", ServicePath: "/Library/LaunchDaemons/com.pivotllm.claweh.plist"}
@@ -27,11 +29,11 @@ func TestCheckExistingMode(t *testing.T) {
 		isRoot   bool
 		wantErr  string
 	}{
-		{"system service without sudo", system, false, "run `sudo claw install`"},
+		{"system service without sudo", system, false, "run `sudo alice-claw install`"},
 		{"system service with sudo", system, true, ""},
 		{"user service with sudo", userSvc, true, "as ai, without sudo"},
 		{"user service without sudo", userSvc, false, ""},
-		{"launchd daemon without sudo", daemon, false, "run `sudo claw install`"},
+		{"launchd daemon without sudo", daemon, false, "run `sudo alice-claw install`"},
 		{"launchd agent with sudo", agent, true, "without sudo"},
 		{"binary only, either way", binaryOnly, false, ""},
 		{"nothing installed", nil, true, ""},

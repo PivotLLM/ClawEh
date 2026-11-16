@@ -3,8 +3,10 @@ package workspace
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/templates"
 )
 
@@ -88,5 +90,23 @@ func TestPopulate_NoMemoryDir(t *testing.T) {
 	Populate(ws, 0o700, 0o600, nil, nil)
 	if exists(t, filepath.Join(ws, "memory")) {
 		t.Error("<workspace>/memory must not be created")
+	}
+}
+
+// TestPopulate_SubstitutesShortName pins that seeded files carry the product's
+// short name from app, not a placeholder or a name held in the template.
+func TestPopulate_SubstitutesShortName(t *testing.T) {
+	ws := t.TempDir()
+	Populate(ws, 0o700, 0o600, nil, nil)
+
+	got, err := os.ReadFile(filepath.Join(ws, "IDENTITY.md"))
+	if err != nil {
+		t.Fatalf("read seeded IDENTITY.md: %v", err)
+	}
+	if strings.Contains(string(got), shortNamePlaceholder) {
+		t.Errorf("seeded IDENTITY.md still holds the placeholder %s", shortNamePlaceholder)
+	}
+	if !strings.Contains(string(got), "- Name: "+app.ShortName()+"\n") {
+		t.Errorf("seeded IDENTITY.md does not name %q:\n%s", app.ShortName(), got)
 	}
 }

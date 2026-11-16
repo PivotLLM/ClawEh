@@ -19,9 +19,11 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/PivotLLM/ClawEh/agenttoken"
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/constants"
+	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/mcpserver/acl"
 	"github.com/PivotLLM/ClawEh/routing"
@@ -35,7 +37,7 @@ import (
 const invalidTokenMessage = "invalid or missing session_token; supply your assigned token (format: SST<64 hex>)"
 
 // subagentMessage is returned when the literal sub-agent sentinel is used.
-const subagentMessage = "sub-agents are not granted claw MCP access; use the harness filesystem tools against your assigned working directory."
+var subagentMessage = "sub-agents are not granted " + app.ShortName() + " MCP access; use the harness filesystem tools against your assigned working directory."
 
 // AgentResolver returns the per-agent tool registry for a given agent name,
 // or (nil, false) when the agent is unknown.
@@ -808,7 +810,7 @@ func injectSessionTokenParam(params map[string]any) map[string]any {
 	}
 	props[sessionTokenParam] = map[string]any{
 		"type":        "string",
-		"description": "Your session_token (format: 'SST<64 hex>'). Required on every mcp__claw__* call. Supplied verbatim from the agent's system prompt.",
+		"description": "Your session_token (format: 'SST<64 hex>'). Required on every " + global.HostMCPToolPrefix + "* call. Supplied verbatim from the agent's system prompt.",
 	}
 	clone["properties"] = props
 

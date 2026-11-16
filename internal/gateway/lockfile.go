@@ -12,7 +12,7 @@ import (
 	"github.com/PivotLLM/ClawEh/utils"
 )
 
-const lockFileName = "claw.lock"
+const lockFileName = global.LockFileName
 
 // acquireLock creates and exclusively locks a PID file in the base directory's internal/.
 // It returns the open file handle so the caller can defer releaseLock.

@@ -35,7 +35,7 @@ import (
 // the watched folder: two agents watching one folder each keep their own, and
 // a read-only folder needs no write. It is rewritten only on baseline and when
 // a new file fires, so the scan adds almost no churn.
-const markerHeader = "# claw seen files v1"
+const markerHeader = global.FolderWatchMarkerHeader
 
 // markerDir is the folder under an agent's workspace holding its markers.
 var markerDir = filepath.Join("state", "folderwatch")

@@ -1,9 +1,11 @@
 package middleware
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/internal/audit"
 	"github.com/PivotLLM/ClawEh/logger"
 )
@@ -120,13 +122,18 @@ func WriteUnauthorized(w http.ResponseWriter, r *http.Request, configured bool) 
 		http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 		return
 	}
-	body := `{"error":"authentication required"}`
+	payload := map[string]string{"error": "authentication required"}
 	if !configured {
-		body = `{"error":"no admin account","hint":"run: claw admin"}`
+		payload = map[string]string{"error": "no admin account", "hint": "run: " + app.BinaryName() + " admin"}
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
+		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)
-	if _, err := w.Write([]byte(body)); err != nil {
+	if _, err := w.Write(body); err != nil {
 		logger.DebugCF("http", "response write failed", map[string]any{"error": err.Error()})
 	}
 }

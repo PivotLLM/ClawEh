@@ -11,6 +11,7 @@ import (
 	"github.com/PivotLLM/ctxengine/session"
 
 	"github.com/PivotLLM/ClawEh/agentreg"
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/cogmemhost"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/fileutil"
@@ -599,7 +600,7 @@ func refuseUnmigratedSessions(dir string) error {
 	for _, entry := range entries {
 		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".meta.json") {
 			return fmt.Errorf("sessions directory %s still holds JSONL-layout sessions; "+
-				"stop the service and run \"claw sessions migrate\" first", dir)
+				"stop the service and run \"%s sessions migrate\" first", dir, app.BinaryName())
 		}
 	}
 	return nil

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/PivotLLM/ClawEh/agent"
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/forum"
 	"github.com/PivotLLM/ClawEh/logger"
 	toolsforum "github.com/PivotLLM/ClawEh/tools/forum"
@@ -24,14 +25,15 @@ const forumCloseTimeout = 10 * time.Second
 // loop's current configuration at every validation and launch.
 func newForumService(host *agent.ForumHost) *forum.Service {
 	svc := forum.New(forum.Host{
-		Messenger: host,
-		Agents:    host,
-		Notifier:  host,
-		Logger:    logger.NewLogger("forum"),
-		Cards:     host,
-		OnStuck:   host.OnStuck,
-		Cooldown:  host.Cooldown,
-		Modes:     host.Modes,
+		ProductName: app.ShortName(),
+		Messenger:   host,
+		Agents:      host,
+		Notifier:    host,
+		Logger:      logger.NewLogger("forum"),
+		Cards:       host,
+		OnStuck:     host.OnStuck,
+		Cooldown:    host.Cooldown,
+		Modes:       host.Modes,
 	}, forum.WithCeilings(host.Ceilings))
 	toolsforum.SetService(svc)
 	return svc

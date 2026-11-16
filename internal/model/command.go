@@ -5,6 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/internal"
 )
@@ -29,7 +30,7 @@ Examples:
 
 Note: 'local-model' is a special value for using a local VLLM server
 (running at localhost:8000 by default) which does not require an API key.`,
-			internal.BinaryName, internal.BinaryName, internal.BinaryName, internal.BinaryName),
+			app.BinaryName(), app.BinaryName(), app.BinaryName(), app.BinaryName()),
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			configPath := internal.GetConfigPath()

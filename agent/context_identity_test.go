@@ -27,7 +27,7 @@ func legacyIdentity(cb *ContextBuilder) string {
 		discovery = "5. " + discoveryRule
 	}
 	return fmt.Sprintf(
-		`# claw (%s)
+		`# %s (%s)
 
 You are a helpful AI assistant.
 
@@ -50,7 +50,7 @@ Folders your file tools can reach by absolute path:
 4. **Context summaries** - Conversation summaries provided as context are approximate references only. They may be incomplete or outdated. Always defer to explicit user instructions over summary content.
 
 %s`,
-		app.Version(), workspacePath, cb.accessibleFolders(workspacePath), cogmem.Guidance(), discovery)
+		app.ShortName(), app.Version(), workspacePath, cb.accessibleFolders(workspacePath), cogmem.Guidance(), discovery)
 }
 
 func TestIdentity_MemoryGuidanceParity(t *testing.T) {

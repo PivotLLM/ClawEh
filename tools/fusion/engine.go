@@ -11,7 +11,9 @@ import (
 	"github.com/tenebris-tech/alerter"
 
 	"github.com/PivotLLM/ClawEh/alerts"
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/logger"
 )
 
@@ -38,7 +40,7 @@ func sharedEngine(c *config.Config) *mcpfusion.Fusion {
 				map[string]any{"path": c.FusionTokensPath(), "error": err.Error()})
 			alerts.Send(alerter.Alert{
 				Title:       "Fusion token store unavailable",
-				Description: c.FusionTokensPath() + ": every Google and Microsoft tool is disabled until claw is restarted with a readable store",
+				Description: c.FusionTokensPath() + ": every Google and Microsoft tool is disabled until " + app.ShortName() + " is restarted with a readable store",
 				Details:     err.Error(),
 				EventID:     "fusion",
 			})
@@ -58,7 +60,7 @@ func sharedEngine(c *config.Config) *mcpfusion.Fusion {
 			// External URL + command name are advertised to the claw-auth OAuth
 			// utility so it can reach this gateway's mounted OAuth API.
 			mcpfusion.WithExternalURL(c.Gateway.EffectiveExternalURL()),
-			mcpfusion.WithAuthCommandName("claw-auth"),
+			mcpfusion.WithAuthCommandName(global.AuthHelperBinaryName),
 		)
 		if err != nil {
 			logger.ErrorCF("fusion", "failed to build fusion engine; fusion tools disabled",

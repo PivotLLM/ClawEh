@@ -18,6 +18,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/app"
+	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/utils"
 )
@@ -25,11 +27,11 @@ import (
 // LockFileName is the process's PID/lock file in CLAW_HOME/internal. claw holds
 // an exclusive flock on it while it runs (internal/gateway/lockfile.go); the
 // restore refuses to touch a home whose lock is held.
-const LockFileName = "claw.lock"
+const LockFileName = global.LockFileName
 
 // ErrGatewayRunning is returned when a restore is attempted while the gateway
 // holds the lock.
-var ErrGatewayRunning = errors.New("claw is running; stop it before restoring")
+var ErrGatewayRunning = errors.New(app.ShortName() + " is running; stop it before restoring")
 
 // dbSidecars are the SQLite companions moved aside with a replaced database.
 // A stale -wal left beside a restored file would be replayed into it.
@@ -275,7 +277,7 @@ func readArchive(archive string, fn func(hdr *tar.Header, r io.Reader, m *Manife
 		return nil, fmt.Errorf("restore: %s is not a tar archive: %w", archive, err)
 	}
 	if hdr.Name != ManifestName {
-		return nil, fmt.Errorf("restore: %s is not a ClawEh backup (first entry %q, want %s)", archive, hdr.Name, ManifestName)
+		return nil, fmt.Errorf("restore: %s is not a %s backup (first entry %q, want %s)", archive, app.ShortName(), hdr.Name, ManifestName)
 	}
 	var m Manifest
 	if decErr := json.NewDecoder(io.LimitReader(tr, hdr.Size)).Decode(&m); decErr != nil {

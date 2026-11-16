@@ -4,6 +4,8 @@
 package app
 
 import (
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -93,9 +95,48 @@ func TestSemVer_IsPlainSemver(t *testing.T) {
 // TestIdentityAccessors covers the remaining identity, which has no interesting
 // logic but must not return empty strings into a startup banner.
 func TestIdentityAccessors(t *testing.T) {
-	assert.Equal(t, "ClawEh", Name())
-	assert.NotEmpty(t, TagLine())
+	for label, got := range map[string]string{
+		"Name": Name(), "ShortName": ShortName(), "TagLine": TagLine(),
+		"Copyright": Copyright(), "BinaryName": BinaryName(),
+	} {
+		assert.NotEmpty(t, got, "%s() must not be empty", label)
+	}
 	assert.Contains(t, Copyright(), "Tenebris Technologies")
+}
+
+func TestBinaryName(t *testing.T) {
+	orig := os.Args
+	t.Cleanup(func() { os.Args = orig })
+
+	dir := filepath.Join(string(filepath.Separator)+"opt", "example", "bin")
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"bare name", []string{"example"}, "example"},
+		{"full path", []string{filepath.Join(dir, "example"), "serve"}, "example"},
+		{"relative path", []string{filepath.Join(".", "example")}, "example"},
+		{"renamed binary", []string{filepath.Join(dir, "other-name")}, "other-name"},
+		{"no arguments", nil, strings.ToLower(name)},
+		{"empty name", []string{""}, strings.ToLower(name)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			os.Args = tt.args
+			assert.Equal(t, tt.want, BinaryName())
+		})
+	}
+}
+
+func TestBinaryName_WindowsSuffix(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("the .exe suffix is only stripped on Windows")
+	}
+	orig := os.Args
+	t.Cleanup(func() { os.Args = orig })
+	os.Args = []string{`C:\Program Files\Example\example.EXE`}
+	assert.Equal(t, "example", BinaryName())
 }
 
 func TestBuildInfo_UsesStampedValues(t *testing.T) {

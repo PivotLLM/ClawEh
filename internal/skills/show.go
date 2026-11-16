@@ -3,7 +3,7 @@ package skills
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/PivotLLM/ClawEh/internal"
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/skills"
 )
 
@@ -12,7 +12,7 @@ func newShowCommand(loaderFn func() (*skills.SkillsLoader, error)) *cobra.Comman
 		Use:     "show",
 		Short:   "Show skill details",
 		Args:    cobra.ExactArgs(1),
-		Example: internal.BinaryName + " skills show weather",
+		Example: app.BinaryName() + " skills show weather",
 		RunE: func(_ *cobra.Command, args []string) error {
 			loader, err := loaderFn()
 			if err != nil {

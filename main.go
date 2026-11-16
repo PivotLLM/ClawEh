@@ -7,12 +7,10 @@ package main
 
 import (
 	"os"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
 
 	"github.com/PivotLLM/ClawEh/app"
-	"github.com/PivotLLM/ClawEh/internal"
 	"github.com/PivotLLM/ClawEh/internal/admincmd"
 	"github.com/PivotLLM/ClawEh/internal/agent"
 	"github.com/PivotLLM/ClawEh/internal/backup"
@@ -33,14 +31,14 @@ import (
 	"github.com/PivotLLM/ClawEh/internal/version"
 )
 
-func NewClawCommand(binaryName string) *cobra.Command {
+func NewClawCommand() *cobra.Command {
 	// Default subcommand: run the merged gateway + WebUI + session API on the
 	// single port from cfg.Gateway. `claw` with no arguments is the supported
 	// way to launch the server; the `claw gateway` alias is preserved for
 	// existing systemd units and muscle memory during the transition.
 	defaultCmd := gateway.NewGatewayCommand()
 	cmd := &cobra.Command{
-		Use:          binaryName,
+		Use:          app.BinaryName(),
 		Short:        app.TagLine(),
 		Args:         defaultCmd.Args,
 		SilenceUsage: true,
@@ -77,9 +75,7 @@ func NewClawCommand(binaryName string) *cobra.Command {
 }
 
 func main() {
-	binaryName := filepath.Base(os.Args[0])
-	internal.BinaryName = binaryName
-	cmd := NewClawCommand(binaryName)
+	cmd := NewClawCommand()
 	if err := cmd.Execute(); err != nil {
 		os.Exit(1)
 	}

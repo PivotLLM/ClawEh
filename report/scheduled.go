@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/cron"
 )
@@ -136,7 +137,7 @@ func collectScheduled(_ context.Context, cfg *config.Config, env Environment) Se
 	return Section{
 		Title: "Scheduled activity",
 		Notes: []string{"What runs without a user message: cron jobs (from " + cronPath +
-			"), Maestro task runs, and ClawEh's own background work."},
+			"), Maestro task runs, and " + app.ShortName() + "'s own background work."},
 		Tables: []Table{jobs, maestro, background},
 	}
 }

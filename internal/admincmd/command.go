@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/internal/admin"
 	"github.com/PivotLLM/ClawEh/internal/install"
 )
@@ -26,7 +27,7 @@ func NewAdminCommand() *cobra.Command {
 		Long: "Create the operator account for the WebUI and its API, or replace it. There is one\n" +
 			"account; running the command again overwrites it. The password is asked for twice\n" +
 			"without echo and must be at least " + strconv.Itoa(admin.MinPasswordLength) + " characters. The result is written to\n" +
-			"<CLAW_HOME>/credentials.json (mode 0600); a running claw picks it up within a\n" +
+			"<CLAW_HOME>/credentials.json (mode 0600); a running " + app.ShortName() + " picks it up within a\n" +
 			"minute and signs everyone out. When stdin is not a terminal (a piped installer) the\n" +
 			"prompts use /dev/tty; the password is never read from a pipe.",
 		Args: cobra.MaximumNArgs(1),
@@ -47,7 +48,7 @@ func run(out io.Writer, username string) (err error) {
 	t, err := openTerminal(out)
 	if err != nil {
 		if errors.Is(err, admin.ErrNoTerminal) {
-			return fmt.Errorf("claw admin needs an interactive terminal to read the password (%w)", err)
+			return fmt.Errorf("%s admin needs an interactive terminal to read the password (%w)", app.BinaryName(), err)
 		}
 		return err
 	}

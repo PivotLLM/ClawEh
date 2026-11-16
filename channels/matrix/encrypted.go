@@ -10,6 +10,7 @@ import (
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
 
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/logger"
 )
 
@@ -88,7 +89,7 @@ func (c *MatrixChannel) handleEncryptedEvent(ctx context.Context, evt *event.Eve
 	if name != "" {
 		encryptedRooms.setName(evt.RoomID, name)
 	}
-	logger.WarnCF("matrix", "Matrix room "+roomLabel(evt.RoomID, name)+" is encrypted; ClawEh can't read its messages",
+	logger.WarnCF("matrix", "Matrix room "+roomLabel(evt.RoomID, name)+" is encrypted; "+app.ShortName()+" can't read its messages",
 		map[string]any{"channel": c.Name(), "room_id": evt.RoomID.String()})
 }
 

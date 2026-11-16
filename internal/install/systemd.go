@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	systemUnitPath = "/etc/systemd/system/claw.service"
-	unitFileName   = "claw.service"
+	systemUnitPath = "/etc/systemd/system/" + global.SystemdUnitFile
+	unitFileName   = global.SystemdUnitFile
 )
 
 // buildSystemUnit renders the systemd system unit for running at machine boot.

@@ -216,7 +216,7 @@ func (t *toolSuite) readme(call *toolspec.ToolCall) (*toolspec.Result, error) {
 		return t.fail(err, "", "readme")
 	}
 	if !present {
-		return &toolspec.Result{ForLLM: guide(t.svc.Ceilings())}, nil
+		return &toolspec.Result{ForLLM: guide(t.svc.Ceilings(), t.svc.host.ProductName)}, nil
 	}
 	config, ok := templateConfig(name)
 	if !ok {

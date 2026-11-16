@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/mcp"
 )
 
@@ -72,7 +73,7 @@ func (h *Handler) handleMCPStatus(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleMCPReconnect(w http.ResponseWriter, r *http.Request) {
 	loop := h.mcpStatusLoopRef()
 	if loop == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "claw is not running"})
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": app.ShortName() + " is not running"})
 		return
 	}
 	name := r.PathValue("name")

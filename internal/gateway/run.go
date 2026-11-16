@@ -112,7 +112,7 @@ func gatewayCmd(debug bool) error {
 	// still cleans up if startup fails below. Non-fatal: a gateway that cannot
 	// write the file should still serve.
 	if werr := pidfile.Write(cfg.DataDir()); werr != nil {
-		logger.WarnCF("gateway", "could not write the pid file; `claw status` will not see this instance",
+		logger.WarnCF("gateway", "could not write the pid file; `"+app.BinaryName()+" status` will not see this instance",
 			map[string]any{"error": werr.Error()})
 	}
 	defer pidfile.Remove(cfg.DataDir())
@@ -127,7 +127,7 @@ func gatewayCmd(debug bool) error {
 	classifierOwned = false
 	wireGatewayAPI(services, agentLoop, fatal, alertsPath)
 
-	logger.InfoF("claw started", map[string]any{"http": services.HTTPHost.HTTPAddrs(), "https": services.HTTPHost.HTTPSAddrs()})
+	logger.InfoF(app.ShortName()+" started", map[string]any{"http": services.HTTPHost.HTTPAddrs(), "https": services.HTTPHost.HTTPSAddrs()})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -228,7 +228,7 @@ func startGatewayRun(
 // format and level are applied once the config is loaded
 // (applyLoggingConfig).
 func startFileLogging(baseDir string) string {
-	logPath := filepath.Join(baseDir, "logs", "claw.log")
+	logPath := filepath.Join(baseDir, "logs", global.LogFileName)
 	logger.SetErrorLogLevel(logger.ParseLevel(global.ErrorLogLevel))
 	if err := logger.EnableFileLogging(logPath, false); err != nil {
 		logger.WarnCF("gateway", "Failed to enable file logging", map[string]any{"path": logPath, "error": err.Error()})
@@ -349,7 +349,7 @@ func setReloadTrigger(services *gatewayServices) chan chan error {
 		case forceReload <- done:
 			return <-done
 		case <-time.After(5 * time.Second):
-			return errors.New("claw is busy; reload not accepted")
+			return errors.New(app.ShortName() + " is busy; reload not accepted")
 		}
 	})
 	return forceReload
@@ -425,7 +425,7 @@ func (r *gatewayRun) reload(ctx context.Context, newCfg *config.Config) {
 	logger.Errorf("Config reload failed: %v", err)
 	r.agentLoop.Alerter().Send(alerter.Alert{
 		Title:       "Config reload failed",
-		Description: "the reload was aborted part way; check the claw log, services may not all be running",
+		Description: "the reload was aborted part way; check the " + app.ShortName() + " log, services may not all be running",
 		Details:     err.Error(),
 		EventID:     "config",
 	})

@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/internal/admin"
 	"github.com/PivotLLM/ClawEh/logger"
 )
@@ -171,7 +172,7 @@ func (s *AuthStore) Reload() {
 			})
 		}
 	case errors.Is(err, admin.ErrNotConfigured):
-		logger.WarnCF("auth", "No admin account: the WebUI and API are locked until `claw admin` is run", map[string]any{
+		logger.WarnCF("auth", "No admin account: the WebUI and API are locked until `"+app.BinaryName()+" admin` is run", map[string]any{
 			"path": s.path,
 		})
 	case errors.As(err, &perr):

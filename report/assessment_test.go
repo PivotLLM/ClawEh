@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/internal/perms"
 )
@@ -26,7 +27,7 @@ func TestAssessment_BypassCLIRestrictions(t *testing.T) {
 		t.Errorf("mark = %q, want blank: awareness, not an action", r[0])
 	}
 	contains(t, r[2], "Allow CLI to bypass restrictions is on for Claude CLI", "row status")
-	contains(t, r[2], "outside ClawEh's workspace and shell controls", "row status")
+	contains(t, r[2], "outside "+app.ShortName()+"'s workspace and shell controls", "row status")
 	// A CLI with bypass off gets its own awareness row: its tool calls depend
 	// on the CLI's permission settings.
 	off := assessmentRow(t, s, "CLI bypass not allowed (Codex CLI)")
@@ -448,7 +449,7 @@ func TestAssessment_AuditLog(t *testing.T) {
 	if r[0] != "*" {
 		t.Errorf("missing audit mark = %q, want *", r[0])
 	}
-	if r[2] != "Audit log not initialised: "+auditPath+" is missing; ClawEh creates it at start." {
+	if r[2] != "Audit log not initialised: "+auditPath+" is missing; "+app.ShortName()+" creates it at start." {
 		t.Errorf("missing audit status = %q", r[2])
 	}
 
@@ -762,7 +763,7 @@ func TestAssessment_EncryptedMatrixRooms(t *testing.T) {
 
 	env.EncryptedMatrixRooms = []string{`"Alice's room" (!alice:example.org)`, "!bob:example.org"}
 	r := assessmentRow(t, collectAssessment(t.Context(), cfg, env), itemEncryptedMatrix)
-	if r[0] != "*" || r[2] != `ClawEh can't read these encrypted rooms: "Alice's room" (!alice:example.org), !bob:example.org.` {
+	if r[0] != "*" || r[2] != app.ShortName()+` can't read these encrypted rooms: "Alice's room" (!alice:example.org), !bob:example.org.` {
 		t.Errorf("row = %v", r)
 	}
 	var link string

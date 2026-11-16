@@ -19,6 +19,7 @@ import (
 	smclient "github.com/tenebris-tech/secmsg/client"
 	"github.com/tenebris-tech/secmsg/schema"
 
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/bus"
 	"github.com/PivotLLM/ClawEh/channels"
 	"github.com/PivotLLM/ClawEh/config"
@@ -423,7 +424,7 @@ func decodeGroupChatID(chatID string) (string, bool) {
 }
 
 // linkDeviceName is the label shown on the phone for the linked device.
-const linkDeviceName = "ClawEh"
+var linkDeviceName = app.Name()
 
 // RequestLink starts device linking and returns the pairing reply, whose URI is
 // the QR payload to render. It dials a short-lived client so linking works even

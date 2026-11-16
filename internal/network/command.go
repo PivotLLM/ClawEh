@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/internal"
 )
@@ -38,14 +39,14 @@ func NewNetworkCommand() *cobra.Command {
 			"  --http localhost|network     plain HTTP (gateway.host)\n" +
 			"  --https all|localhost|off    HTTPS (gateway.tls.mode)\n" +
 			"  --device localhost|network   the device listener (channels.device.host)\n\n" +
-			"This edits the config and exits, so it is safe to run while " + internal.BinaryName + " is running.\n" +
-			"A running " + internal.BinaryName + " applies a new allowlist on its next config reload (about 15\n" +
+			"This edits the config and exits, so it is safe to run while " + app.ShortName() + " is running.\n" +
+			"A running " + app.ShortName() + " applies a new allowlist on its next config reload (about 15\n" +
 			"seconds) with no restart; the listener flags take effect after a restart.\n\n" +
 			"Examples:\n" +
-			"  " + internal.BinaryName + " network --show\n" +
-			"  " + internal.BinaryName + " network                          # allow the private LAN ranges\n" +
-			"  " + internal.BinaryName + " network 192.168.1.0/24 --http network\n" +
-			"  " + internal.BinaryName + " network none --http localhost --https localhost",
+			"  " + app.BinaryName() + " network --show\n" +
+			"  " + app.BinaryName() + " network                          # allow the private LAN ranges\n" +
+			"  " + app.BinaryName() + " network 192.168.1.0/24 --http network\n" +
+			"  " + app.BinaryName() + " network none --http localhost --https localhost",
 		Args:         cobra.MaximumNArgs(1),
 		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, args []string) error {
@@ -116,7 +117,7 @@ func runSet(spec string) error {
 	if len(cidrs) == 1 && cidrs[0] == config.AllowAnyAddress {
 		fmt.Println("WARNING: any address may now reach the login page.")
 	}
-	fmt.Printf("A running %s applies this on its next config reload (about 15s); no restart needed.\n", internal.BinaryName)
+	fmt.Printf("A running %s applies this on its next config reload (about 15s); no restart needed.\n", app.ShortName())
 	return nil
 }
 
@@ -136,6 +137,6 @@ func runListeners(l Listeners) error {
 		set = append(set, "device listener "+l.Device)
 	}
 	fmt.Printf("Listeners set: %s. Written to %s\n", strings.Join(set, ", "), path)
-	fmt.Printf("Listeners are bound at start: restart %s for this to take effect.\n", internal.BinaryName)
+	fmt.Printf("Listeners are bound at start: restart %s for this to take effect.\n", app.ShortName())
 	return nil
 }

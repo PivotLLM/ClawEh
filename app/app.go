@@ -3,8 +3,10 @@
 //
 // Copyright (c) 2026 Tenebris Technologies Inc.
 
-// Package app holds the application's identity — its name, tagline, copyright
-// and version — and is the only place any of them is defined.
+// Package app holds the application's identity — its name, short name, tagline,
+// copyright and version — and is the only place any of them is defined. No
+// other package holds the product name as a string (guarded by
+// productname_guard_test.go): a rename is an edit to this file only.
 //
 // Everything here is unexported and reached through an accessor. That is a
 // deliberate reversal of the usual "export the constant" habit: the identity is
@@ -19,10 +21,16 @@
 // a binary that disagrees with its own source.
 package app
 
-import "runtime"
+import (
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+)
 
 const (
 	name      = "ClawEh"
+	shortName = "Claw"
 	tagLine   = "Personal AI Assistant"
 	copyright = "Copyright (c) 2026 Tenebris Technologies Inc."
 
@@ -50,8 +58,31 @@ var (
 	buildNumber string
 )
 
-// Name returns the product name.
+// Name returns the product name, for identifying the product: titles, version
+// lines, report headers, User-Agent strings.
 func Name() string { return name }
+
+// ShortName returns the informal product name, for running prose: log lines,
+// alerts, messages and prompts ("Claw is shutting down").
+func ShortName() string { return shortName }
+
+// BinaryName returns the name this program was started as: the last element
+// of os.Args[0], without its directory and without a Windows ".exe" suffix.
+// Use it wherever text tells someone what to type, so the instruction stays
+// right when the binary is renamed or run through a link. It falls back to
+// the lower-cased product name when the operating system gives no name.
+func BinaryName() string {
+	if len(os.Args) > 0 {
+		b := filepath.Base(os.Args[0])
+		if runtime.GOOS == "windows" && strings.EqualFold(filepath.Ext(b), ".exe") {
+			b = b[:len(b)-len(".exe")]
+		}
+		if b != "" && b != "." && b != string(filepath.Separator) {
+			return b
+		}
+	}
+	return strings.ToLower(name)
+}
 
 // TagLine returns the one-line product description.
 func TagLine() string { return tagLine }

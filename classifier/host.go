@@ -177,8 +177,11 @@ func (systemClock) After(d time.Duration) <-chan time.Time { return time.After(d
 // Host bundles what the service needs from ClawEh. Tools, Model and Logger
 // are required; the others may be nil.
 type Host struct {
-	Tools ToolRunner
-	Model ModelCaller
+	// ProductName is the host's name as the guide calls it in running prose
+	// ("Claw runs for you"). Empty: "the host".
+	ProductName string
+	Tools       ToolRunner
+	Model       ModelCaller
 	// Instructions reads classify.instructions_file and instructions_dir.
 	// nil: a classifier naming either fails its runs.
 	Instructions InstructionsReader

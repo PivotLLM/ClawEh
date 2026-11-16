@@ -9,6 +9,7 @@ import (
 
 	"github.com/tenebris-tech/alerter"
 
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/logger"
 )
 
@@ -55,7 +56,7 @@ func rollLogs(a alerter.Alerter) {
 		logger.WarnCF("gateway", "log rotation failed", map[string]any{"error": err.Error()})
 		a.Send(alerter.Alert{
 			Title:       "Log rotation failed",
-			Description: "file logging may be stopped until claw is restarted",
+			Description: "file logging may be stopped until " + app.ShortName() + " is restarted",
 			Details:     err.Error(),
 			EventID:     "logging",
 		})

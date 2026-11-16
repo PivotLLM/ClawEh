@@ -322,7 +322,7 @@ func (cb *ContextBuilder) getIdentity() string {
 		identity = "You are the character described below."
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, `# claw (%s)
+	fmt.Fprintf(&b, `# %s (%s)
 
 %s
 
@@ -334,7 +334,7 @@ Folders your file tools can reach by absolute path:
 
 ## Important Rules
 
-`, version, identity, workspacePath, cb.accessibleFolders(workspacePath))
+`, app.ShortName(), version, identity, workspacePath, cb.accessibleFolders(workspacePath))
 	for i, r := range rules {
 		if i > 0 {
 			b.WriteString("\n\n")
@@ -810,7 +810,7 @@ func sessionTokenLayer(token string) ctxengine.Layer {
 	}
 	l.Text = fmt.Sprintf(
 		"# Session Token\n\nThe following token is confidential — never echo it to users or write it to files. "+
-			"ALL `mcp__claw__*` tool calls MUST include "+
+			"ALL `"+global.HostMCPToolPrefix+"*` tool calls MUST include "+
 			"the literal string below as the `session_token` parameter.\n\nsession_token: %s",
 		token)
 	return l

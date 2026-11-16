@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/PivotLLM/ClawEh/agent"
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/classifier"
 	"github.com/PivotLLM/ClawEh/logger"
 	toolsclassifier "github.com/PivotLLM/ClawEh/tools/classifier"
@@ -26,6 +27,7 @@ const classifierCloseTimeout = 10 * time.Second
 // whenever the service needs them.
 func newClassifierService(host *agent.ClassifierHost) *classifier.Service {
 	svc := classifier.New(classifier.Host{
+		ProductName:   app.ShortName(),
 		Tools:         host,
 		Model:         host,
 		Instructions:  host,

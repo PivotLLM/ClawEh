@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/logger"
 )
 
@@ -250,8 +251,8 @@ func (c *ModelConfig) Validate() error {
 	for k := range c.ExtraBody {
 		if _, reserved := reservedRequestBodyKeys[k]; reserved {
 			return fmt.Errorf(
-				"model %q: extra_body key %q collides with claw-managed request field",
-				c.ModelName, k,
+				"model %q: extra_body key %q collides with a request field %s manages",
+				c.ModelName, k, app.ShortName(),
 			)
 		}
 	}

@@ -111,7 +111,7 @@ for you; a definition does not name one.
   chat (see below); `false` only logs it.
 - `activity_hours`: how long the activity log is kept (72 by default).
 
-ClawEh writes `owner`, `created_at` and `updated_at`.
+`owner`, `created_at` and `updated_at` are written by {{HOST}}.
 
 ## Rules in Markdown
 

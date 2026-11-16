@@ -10,12 +10,14 @@ import (
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/internal/testbinary"
 )
 
 // A sessions directory that still holds a JSONL-layout session must stop the
 // store from opening, or the first turn would mint a fresh window and the
 // migration would later skip the session with its history stranded.
 func TestInitSessionStore_RefusesUnmigratedSessions(t *testing.T) {
+	testbinary.Set(t, "alice-claw")
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "x.meta.json"), []byte(`{"key":"x"}`), 0o644); err != nil {
 		t.Fatal(err)
@@ -26,7 +28,7 @@ func TestInitSessionStore_RefusesUnmigratedSessions(t *testing.T) {
 		closeT(t, store)
 		t.Fatal("expected an error for an unmigrated sessions directory")
 	}
-	if !strings.Contains(err.Error(), "claw sessions migrate") {
+	if !strings.Contains(err.Error(), "\"alice-claw sessions migrate\"") {
 		t.Fatalf("error should tell the operator what to run, got: %v", err)
 	}
 }

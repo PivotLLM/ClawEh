@@ -264,10 +264,13 @@ func (systemClock) After(d time.Duration) <-chan time.Time { return time.After(d
 // Host bundles the host-provided dependencies the service needs. Cards,
 // OnStuck, Cooldown and Clock may be nil; the others are required.
 type Host struct {
-	Messenger Messenger
-	Agents    Agents
-	Notifier  Notifier
-	Logger    Logger
+	// ProductName is the host's name as the guide calls it in running prose
+	// ("Claw runs for you"). Empty: "the host".
+	ProductName string
+	Messenger   Messenger
+	Agents      Agents
+	Notifier    Notifier
+	Logger      Logger
 	// Cards, when set, renders the character cards participants name. A
 	// configuration naming a card on a host without it fails preflight.
 	Cards Cards

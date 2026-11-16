@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/ccv3"
 	"github.com/PivotLLM/ClawEh/classifier/classifierfs"
 	"github.com/PivotLLM/ClawEh/cogmemhost"
@@ -153,9 +154,9 @@ func agentFolderAccess(cfg *config.Config, env Environment, a *config.AgentConfi
 		fa.add(cfg.ResolveCommonDir(), true, true, "shared common directory (common_* tools)")
 	}
 	if a.CognitiveMemoryEnabled() {
-		fa.add(cogmemhost.Dir(ws), false, true, "cognitive memory store (written by ClawEh, not via file tools)")
+		fa.add(cogmemhost.Dir(ws), false, true, "cognitive memory store (written by "+app.ShortName()+", not via file tools)")
 	}
-	fa.add(filepath.Join(ws, "sessions"), false, true, "session archive (written by ClawEh, not via file tools)")
+	fa.add(filepath.Join(ws, "sessions"), false, true, "session archive (written by "+app.ShortName()+", not via file tools)")
 
 	t := Table{Caption: "Folder access", Columns: []string{"Path", "Access", "Notes"}}
 	if fa.special != nil {
@@ -352,7 +353,7 @@ func collectAgents(ctx context.Context, cfg *config.Config, env Environment) Sec
 		Notes: []string{
 			"One subsection per configured agent. Internal tools marked sensitive run programs, change files, " +
 				"send messages, install code or start other agents. Folder access lists every path the agent's " +
-				"file tools can reach, resolved as the filesystem sees it, plus the directories ClawEh writes for the agent.",
+				"file tools can reach, resolved as the filesystem sees it, plus the directories " + app.ShortName() + " writes for the agent.",
 		},
 		Tables: []Table{defaults},
 	}

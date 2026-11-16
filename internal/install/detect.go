@@ -13,6 +13,7 @@ import (
 	"syscall"
 
 	"github.com/PivotLLM/ClawEh/config"
+	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/utils"
 )
 
@@ -28,7 +29,7 @@ type ExistingInstall struct {
 
 // optClawHome is the data directory of the standard system install. Its
 // binary and the openclaw alias live in its bin area, optClawBinDir.
-const optClawHome = "/opt/claw"
+const optClawHome = global.SystemDataDir
 
 // optClawBinDir is where an /opt/claw install keeps the binary and the alias.
 var optClawBinDir = filepath.Join(optClawHome, config.BinDirName)
@@ -272,11 +273,11 @@ func (h *host) parseSystemdUnit(path, serviceType string) *ExistingInstall {
 	// Fallback inference for ClawHome
 	if inst.ClawHome == "" {
 		if inOptClaw(inst.BinaryPath) {
-			inst.ClawHome = "/opt/claw"
+			inst.ClawHome = optClawHome
 		} else if workingDir != "" && workingDir != "/" && !strings.HasPrefix(workingDir, "/home") {
 			inst.ClawHome = workingDir
 		} else if pathHasOptClaw(pathEnv) {
-			inst.ClawHome = "/opt/claw"
+			inst.ClawHome = optClawHome
 		} else if h.dirExists(optClawHome) {
 			inst.ClawHome = optClawHome
 		}
@@ -347,7 +348,7 @@ func (h *host) parseLaunchdPlist(path, serviceType string) *ExistingInstall {
 	// Fallback inference for ClawHome
 	if inst.ClawHome == "" {
 		if inOptClaw(inst.BinaryPath) {
-			inst.ClawHome = "/opt/claw"
+			inst.ClawHome = optClawHome
 		} else if h.dirExists(optClawHome) {
 			inst.ClawHome = optClawHome
 		}

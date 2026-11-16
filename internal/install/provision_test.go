@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/internal/admin"
+	"github.com/PivotLLM/ClawEh/internal/testbinary"
 )
 
 // stubInstallSeams replaces the service registration with a recorder and the
@@ -33,6 +34,7 @@ func noTerminal(io.Writer) (*admin.Terminal, error) {
 }
 
 func TestProvisionAndRegister_NoAccountNoTerminalStopsBeforeService(t *testing.T) {
+	testbinary.Set(t, "alice-claw")
 	t.Setenv(admin.EnvUser, "")
 	t.Setenv(admin.EnvPassword, "")
 	calls := stubInstallSeams(t, noTerminal)
@@ -43,7 +45,7 @@ func TestProvisionAndRegister_NoAccountNoTerminalStopsBeforeService(t *testing.T
 	if !errors.Is(err, admin.ErrNoAccountNoTerminal) {
 		t.Fatalf("provisionAndRegister = %v; want ErrNoAccountNoTerminal", err)
 	}
-	for _, want := range []string{"export CLAW_ADMIN_USER and CLAW_ADMIN_PASSWORD", "`claw admin`", "was not registered or started"} {
+	for _, want := range []string{"export CLAW_ADMIN_USER and CLAW_ADMIN_PASSWORD", "`alice-claw admin`", "was not registered or started"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error lacks %q:\n%v", want, err)
 		}

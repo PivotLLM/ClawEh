@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"slices"
 	"testing"
 
@@ -11,11 +12,15 @@ import (
 )
 
 func TestNewClawCommand(t *testing.T) {
-	cmd := NewClawCommand("claw")
+	orig := os.Args
+	t.Cleanup(func() { os.Args = orig })
+	os.Args = []string{"/usr/local/bin/alice-claw"}
+
+	cmd := NewClawCommand()
 
 	require.NotNil(t, cmd)
 
-	assert.Equal(t, "claw", cmd.Use)
+	assert.Equal(t, "alice-claw", cmd.Use, "the root command is named after the binary as started")
 	assert.Equal(t, app.TagLine(), cmd.Short)
 
 	assert.True(t, cmd.HasSubCommands())
@@ -68,7 +73,7 @@ func TestNewClawCommand(t *testing.T) {
 }
 
 func TestUpdateAlias(t *testing.T) {
-	cmd := NewClawCommand("claw")
+	cmd := NewClawCommand()
 	subcmd, _, err := cmd.Find([]string{"update"})
 	require.NoError(t, err)
 	require.NotNil(t, subcmd)

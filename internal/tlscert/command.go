@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/internal"
 )
 
@@ -24,7 +25,7 @@ func NewTLSCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "tls",
 		Short: "Show the HTTPS listener's certificate (source, names, expiry, fingerprint)",
-		Long: internal.BinaryName + " serves plain HTTP on gateway.host:gateway.port (loopback by default) and\n" +
+		Long: app.ShortName() + " serves plain HTTP on gateway.host:gateway.port (loopback by default) and\n" +
 			"HTTPS on gateway.tls_port (default 18443) where gateway.tls.mode says: \"all\" interfaces\n" +
 			"(the default), \"localhost\" only, or \"off\". HTTPS presents either the operator's\n" +
 			"certificate (gateway.tls.cert_file and key_file) or a self-signed one it generates\n" +
@@ -32,7 +33,7 @@ func NewTLSCommand() *cobra.Command {
 			"This prints that certificate. Compare the SHA-256 fingerprint with the one your\n" +
 			"browser shows before accepting a self-signed certificate.\n\n" +
 			"--regenerate replaces the self-signed certificate now, for example after adding\n" +
-			"gateway.tls.extra_names. A running " + internal.BinaryName + " picks the new pair up within a minute;\n" +
+			"gateway.tls.extra_names. A running " + app.ShortName() + " picks the new pair up within a minute;\n" +
 			"browsers that accepted the old certificate will ask again.",
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,

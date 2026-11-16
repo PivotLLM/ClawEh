@@ -14,6 +14,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/internal/admin"
 	"github.com/PivotLLM/ClawEh/internal/testalerts"
+	"github.com/PivotLLM/ClawEh/internal/testbinary"
 	"github.com/PivotLLM/ClawEh/web/backend/middleware"
 )
 
@@ -83,13 +84,14 @@ func (e *authEnv) status(cookie *http.Cookie) map[string]any {
 }
 
 func TestAuthStatus_NoAdminAccount(t *testing.T) {
+	testbinary.Set(t, "alice-claw")
 	env := newAuthEnv(t, false)
 	st := env.status(nil)
 	if st["configured"] != false || st["authenticated"] != false {
 		t.Fatalf("status = %v", st)
 	}
 	rec := env.login(authTestUser, authTestPass, "127.0.0.1")
-	if rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Body.String(), "run: claw admin") {
+	if rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Body.String(), "run: alice-claw admin") {
 		t.Fatalf("login with no account: %d %s", rec.Code, rec.Body.String())
 	}
 }

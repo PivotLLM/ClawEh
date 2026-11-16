@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/config"
 )
 
@@ -165,8 +166,8 @@ func collectProviders(_ context.Context, cfg *config.Config, _ Environment) Sect
 			{
 				Title: "CLI providers",
 				Notes: []string{"A CLI provider runs as its own program with its own configuration on this host; " +
-					"ClawEh's file sandbox applies to ClawEh's tools, not to what the CLI does on its own behalf. " +
-					"\"process working directory\" is where the ClawEh service was started, not the agent's workspace. " +
+					app.ShortName() + "'s file sandbox applies to " + app.ShortName() + "'s tools, not to what the CLI does on its own behalf. " +
+					"\"process working directory\" is where the " + app.ShortName() + " service was started, not the agent's workspace. " +
 					"\"Allow CLI to bypass restrictions\" on means the CLI's skip-permissions / sandbox-bypass flag is passed, " +
 					"so it runs commands and edits files without asking."},
 				Tables: []Table{cli},

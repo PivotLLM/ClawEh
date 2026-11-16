@@ -6,12 +6,14 @@ package report
 import (
 	"strings"
 	"testing"
+
+	"github.com/PivotLLM/ClawEh/app"
 )
 
 func TestCollectSummary_Confined(t *testing.T) {
 	cfg, env := fixtureConfig(t)
 	s := collectSummary(t.Context(), cfg, env)
-	if s.Notes[0] != "ClawEh runs as user admin, group staff on testbox." {
+	if s.Notes[0] != app.ShortName()+" runs as user admin, group staff on testbox." {
 		t.Errorf("headline = %q", s.Notes[0])
 	}
 	tb := s.Tables[0]

@@ -14,6 +14,8 @@ import (
 	"unicode/utf8"
 
 	"golang.org/x/term"
+
+	"github.com/PivotLLM/ClawEh/app"
 )
 
 // Environment variables that create the account without a prompt, for an
@@ -32,10 +34,9 @@ const maxAttempts = 3
 // cannot be read without echo.
 var ErrNoTerminal = errors.New("no terminal to read the password from")
 
-// ErrNoAccountNoTerminal is what EnsureAccount returns when there is no
-// account and no way to create one; the text says how to proceed.
-var ErrNoAccountNoTerminal = errors.New("no admin account and no terminal to create one: " +
-	"export " + EnvUser + " and " + EnvPassword + ", or run `claw admin` on the server, then rerun the installer")
+// ErrNoAccountNoTerminal is what EnsureAccount wraps when there is no
+// account and no way to create one; the wrapping text says how to proceed.
+var ErrNoAccountNoTerminal = errors.New("no admin account and no terminal to create one")
 
 // Terminal is where the account prompts are read and written.
 type Terminal struct {
@@ -239,7 +240,7 @@ func EnsureAccount(opts EnsureOptions) (username string, created bool, err error
 	case err == nil:
 		return creds.Username, false, nil
 	case !errors.Is(err, ErrNotConfigured):
-		return "", false, fmt.Errorf("existing admin account unusable: %w (fix it, or replace it with `claw admin`)", err)
+		return "", false, fmt.Errorf("existing admin account unusable: %w (fix it, or replace it with `%s admin`)", err, app.BinaryName())
 	}
 
 	envUser, envPass := getenv(EnvUser), getenv(EnvPassword)
@@ -282,7 +283,8 @@ func promptOnTerminal(open func(io.Writer) (*Terminal, error), out io.Writer, pa
 	t, err := open(out)
 	if err != nil {
 		if errors.Is(err, ErrNoTerminal) {
-			return "", "", ErrNoAccountNoTerminal
+			return "", "", fmt.Errorf("%w: export %s and %s, or run `%s admin` on the server, then rerun the installer",
+				ErrNoAccountNoTerminal, EnvUser, EnvPassword, app.BinaryName())
 		}
 		return "", "", err
 	}

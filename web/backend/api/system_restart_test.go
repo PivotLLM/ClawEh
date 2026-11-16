@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/internal/audit"
 )
 
@@ -80,7 +81,7 @@ func TestSystemRestart_NotAService(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if body["error"] != "not running as a service; restart ClawEh by hand" {
+	if body["error"] != "not running as a service; restart "+app.ShortName()+" by hand" {
 		t.Errorf("error = %q", body["error"])
 	}
 	if *calls != 0 {

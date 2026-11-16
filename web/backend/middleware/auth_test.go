@@ -12,6 +12,7 @@ import (
 
 	"github.com/PivotLLM/ClawEh/internal/admin"
 	"github.com/PivotLLM/ClawEh/internal/audit"
+	"github.com/PivotLLM/ClawEh/internal/testbinary"
 	"github.com/PivotLLM/ClawEh/logger"
 )
 
@@ -64,6 +65,7 @@ func serve(h http.Handler, method, path string, cookie *http.Cookie) *httptest.R
 }
 
 func TestAuthStore_NoFileIsUnconfigured(t *testing.T) {
+	testbinary.Set(t, "alice-claw")
 	s := NewAuthStore(admin.Path(t.TempDir()))
 	if s.Configured() {
 		t.Fatal("Configured() = true with no credentials file")
@@ -76,7 +78,7 @@ func TestAuthStore_NoFileIsUnconfigured(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", rec.Code)
 	}
-	if body := rec.Body.String(); !strings.Contains(body, `"no admin account"`) || !strings.Contains(body, `"run: claw admin"`) {
+	if body := rec.Body.String(); !strings.Contains(body, `"no admin account"`) || !strings.Contains(body, `"run: alice-claw admin"`) {
 		t.Fatalf("body = %s", body)
 	}
 	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
@@ -345,8 +347,8 @@ func TestAuth_SessionCookieAdmitsEitherName(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("forged cookie: status = %d, want 401", rec.Code)
 	}
-	if body := rec.Body.String(); !strings.Contains(body, "authentication required") || strings.Contains(body, "claw admin") {
-		t.Fatalf("configured install must not hint at claw admin: %s", body)
+	if body := rec.Body.String(); !strings.Contains(body, "authentication required") || strings.Contains(body, `"hint"`) {
+		t.Fatalf("configured install must not carry the admin hint: %s", body)
 	}
 }
 

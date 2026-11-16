@@ -105,7 +105,7 @@ func isClaw(pid int) bool {
 	if err != nil {
 		return true // no procfs: existence is the best available answer
 	}
-	return strings.TrimSpace(string(comm)) == "claw"
+	return strings.TrimSpace(string(comm)) == global.InstalledBinaryName
 }
 
 // RSSBytes returns a process's resident set size — the physical RAM it

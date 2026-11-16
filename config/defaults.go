@@ -6,7 +6,9 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/global"
 	"github.com/PivotLLM/ClawEh/logger"
 )
@@ -63,8 +65,8 @@ func DefaultConfig() *Config {
 			},
 			List: []AgentConfig{
 				{
-					ID:      "claw",
-					Name:    "Claw",
+					ID:      strings.ToLower(app.ShortName()),
+					Name:    app.ShortName(),
 					Default: true,
 					// Tools omitted: an agent has only the tools its list
 					// names, so the seeded agent starts with none.

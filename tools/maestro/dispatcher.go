@@ -25,8 +25,9 @@ import (
 )
 
 // hostProviderModel is the model label recorded when the sub-agent run did not
-// report which model served it.
-const hostProviderModel = "claw"
+// report which model served it. Maestro stores it with task results and hands
+// it back as a task's llm_model_id, so it is a fixed identifier.
+const hostProviderModel = global.MaestroHostModel
 
 // dispatcher implements maestro/llm.Dispatcher by running each Maestro task as a
 // ClawEh sub-agent (a copy of the agent with full tools, MCP, fresh context). The

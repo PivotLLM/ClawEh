@@ -3,7 +3,7 @@ package cron
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/PivotLLM/ClawEh/internal"
+	"github.com/PivotLLM/ClawEh/app"
 )
 
 func newRemoveCommand(storePath func() string) *cobra.Command {
@@ -11,7 +11,7 @@ func newRemoveCommand(storePath func() string) *cobra.Command {
 		Use:     "remove",
 		Short:   "Remove a job by ID",
 		Args:    cobra.ExactArgs(1),
-		Example: internal.BinaryName + " cron remove 1",
+		Example: app.BinaryName() + " cron remove 1",
 		RunE: func(_ *cobra.Command, args []string) error {
 			cronRemoveCmd(storePath(), args[0])
 			return nil

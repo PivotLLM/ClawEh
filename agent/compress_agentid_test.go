@@ -12,6 +12,7 @@ import (
 
 	"github.com/PivotLLM/ctxengine"
 
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/providers"
 )
 
@@ -171,7 +172,7 @@ func TestRunAgentLoop_PropagatesAgentIDForCompression(t *testing.T) {
 	if !stub.layers[2].AfterSummary || stub.layers[2].Text != "" {
 		t.Errorf("token layer = %+v; want AfterSummary with no text (no issuer wired)", stub.layers[2])
 	}
-	if !strings.Contains(stub.layers[0].Text, "# claw") || !strings.Contains(stub.layers[1].Text, "Channel: cli") {
+	if !strings.Contains(stub.layers[0].Text, "# "+app.ShortName()) || !strings.Contains(stub.layers[1].Text, "Channel: cli") {
 		t.Errorf("layers carry the wrong prompt: static=%.40q dynamic=%.60q", stub.layers[0].Text, stub.layers[1].Text)
 	}
 

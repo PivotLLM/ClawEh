@@ -5,6 +5,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/PivotLLM/ClawEh/app"
 )
 
 func TestNewStatusCommand(t *testing.T) {
@@ -17,7 +19,7 @@ func TestNewStatusCommand(t *testing.T) {
 	assert.Len(t, cmd.Aliases, 1)
 	assert.True(t, cmd.HasAlias("s"))
 
-	assert.Equal(t, "Show ClawEh status", cmd.Short)
+	assert.Equal(t, "Show "+app.ShortName()+" status", cmd.Short)
 
 	assert.False(t, cmd.HasSubCommands())
 

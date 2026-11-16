@@ -144,7 +144,7 @@ func (br *acpBridge) Prompt(ctx context.Context, req acplib.PromptRequest) (*acp
 		br.mu.Unlock()
 	}()
 
-	logger.InfoCF("acp", "prompt → claw", map[string]any{"sessionId": sessionID, "runId": runID, "chars": len(text)})
+	logger.InfoCF("acp", "prompt → "+app.ShortName(), map[string]any{"sessionId": sessionID, "runId": runID, "chars": len(text)})
 
 	// sessionKey "main" is what the R1 sends: the gateway resolves it to the
 	// device's assigned (else the default) agent's main conversation, so all ACP

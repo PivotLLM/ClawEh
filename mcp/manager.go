@@ -21,6 +21,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/tenebris-tech/alerter"
 
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/internal/childenv"
 	"github.com/PivotLLM/ClawEh/logger"
@@ -479,7 +480,7 @@ func (m *Manager) connectServer(
 	}
 
 	initReq := mcp.InitializeRequest{}
-	initReq.Params.ClientInfo = mcp.Implementation{Name: "claw", Version: "1.0.0"}
+	initReq.Params.ClientInfo = clientInfo()
 	initReq.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
 	initReq.Params.Capabilities = mcp.ClientCapabilities{}
 
@@ -947,4 +948,10 @@ func (m *Manager) SetAlerter(a alerter.Alerter) {
 	m.mu.Lock()
 	m.alerter = a
 	m.mu.Unlock()
+}
+
+// clientInfo is how this host introduces itself to an MCP server: the product
+// name and its release number, the parseable form a server may compare.
+func clientInfo() mcp.Implementation {
+	return mcp.Implementation{Name: app.Name(), Version: app.SemVer()}
 }

@@ -17,9 +17,9 @@ import (
 var readme string
 
 // guide returns the classifier guide followed by the install's limits.
-func guide(c Ceilings) string {
+func guide(c Ceilings, productName string) string {
 	var b strings.Builder
-	b.WriteString(readme)
+	b.WriteString(withHostName(readme, productName))
 	lines := make([]string, 0, 8)
 	for _, f := range []struct {
 		name  string
@@ -44,4 +44,17 @@ func guide(c Ceilings) string {
 		}
 	}
 	return b.String()
+}
+
+// hostPlaceholder in the embedded guide is replaced with the host's
+// product name (Host.ProductName) when the guide is served.
+const hostPlaceholder = "{{HOST}}"
+
+// withHostName fills the guide's host placeholder with name, or "the host"
+// when the host gave none.
+func withHostName(text, name string) string {
+	if name == "" {
+		name = "the host"
+	}
+	return strings.ReplaceAll(text, hostPlaceholder, name)
 }

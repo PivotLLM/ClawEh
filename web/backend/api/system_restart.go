@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/internal/audit"
 )
 
@@ -59,7 +60,7 @@ func (h *Handler) handleSystemRestart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !h.serviceManaged() {
-		writeJSONError(w, http.StatusConflict, "not running as a service; restart ClawEh by hand")
+		writeJSONError(w, http.StatusConflict, "not running as a service; restart "+app.ShortName()+" by hand")
 		return
 	}
 	audit.Default().Record(audit.Event{

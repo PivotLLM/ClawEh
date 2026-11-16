@@ -270,7 +270,7 @@ func (t *toolSuite) readme(call *toolspec.ToolCall) (*toolspec.Result, error) {
 	if _, err := t.host.Scope(call); err != nil {
 		return nil, err
 	}
-	return &toolspec.Result{ForLLM: guide(t.svc.host.ceilings())}, nil
+	return &toolspec.Result{ForLLM: guide(t.svc.host.ceilings(), t.svc.host.ProductName)}, nil
 }
 
 func (t *toolSuite) list(call *toolspec.ToolCall) (*toolspec.Result, error) {

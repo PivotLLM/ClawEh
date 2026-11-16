@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/utils"
@@ -208,7 +209,7 @@ func generateSelfSigned(names certNames, now time.Time) (certPEM, keyPEM []byte,
 	if err != nil {
 		return nil, nil, err
 	}
-	cn := "claw"
+	cn := strings.ToLower(app.Name())
 	if len(names.dns) > 0 {
 		cn = names.dns[0]
 	} else if len(names.ips) > 0 {

@@ -12,6 +12,7 @@ import (
 	"github.com/PivotLLM/ctxengine"
 	"github.com/PivotLLM/ctxengine/session"
 
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/providers"
 )
 
@@ -137,7 +138,7 @@ func TestSingleSystemMessage(t *testing.T) {
 			// per-minute value here sits ahead of the whole conversation and
 			// breaks prefix caching for the entire history behind it.
 			sys := msgs[0].Content
-			if !strings.Contains(sys, "claw") {
+			if !strings.Contains(sys, "# "+app.ShortName()) {
 				t.Error("system message missing identity")
 			}
 			if !strings.Contains(sys, "Today is ") {
@@ -607,7 +608,7 @@ func TestConcurrentBuildSystemPromptWithCache(t *testing.T) {
 					errs <- "empty prompt returned"
 					return
 				}
-				if !strings.Contains(result, "claw") {
+				if !strings.Contains(result, "# "+app.ShortName()) {
 					errs <- "prompt missing identity"
 					return
 				}

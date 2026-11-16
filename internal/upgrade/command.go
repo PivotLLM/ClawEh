@@ -27,7 +27,6 @@ import (
 
 	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/global"
-	"github.com/PivotLLM/ClawEh/internal"
 	"github.com/PivotLLM/ClawEh/internal/install"
 	"github.com/PivotLLM/ClawEh/logger"
 	"github.com/PivotLLM/ClawEh/utils"
@@ -35,7 +34,7 @@ import (
 
 const (
 	repoOwner   = "PivotLLM"
-	repoName    = "ClawEh"
+	repoName    = global.ReleaseRepoName
 	apiBaseURL  = "https://api.github.com/repos/" + repoOwner + "/" + repoName
 	httpTimeout = 60 * time.Second
 
@@ -106,22 +105,22 @@ func runUpgrade(checkOnly, force bool, targetVersion string, autoYes bool) error
 
 	if checkOnly {
 		if cmp < 0 {
-			fmt.Printf("A newer version of %s is available: v%s -> v%s\n", app.Name(), currentVer, latestVer)
-			fmt.Printf("Run `%s upgrade` to install it.\n", internal.BinaryName)
+			fmt.Printf("A newer version of %s is available: v%s -> v%s\n", app.ShortName(), currentVer, latestVer)
+			fmt.Printf("Run `%s upgrade` to install it.\n", app.BinaryName())
 		} else if cmp > 0 {
-			fmt.Printf("%s is running a newer version than latest release (v%s vs release v%s).\n", app.Name(), currentVer, latestVer)
+			fmt.Printf("%s is running a newer version than latest release (v%s vs release v%s).\n", app.ShortName(), currentVer, latestVer)
 		} else {
-			fmt.Printf("%s is already up to date (v%s).\n", app.Name(), currentVer)
+			fmt.Printf("%s is already up to date (v%s).\n", app.ShortName(), currentVer)
 		}
 		return nil
 	}
 
 	if cmp >= 0 && !force && targetVersion == "" {
-		fmt.Printf("%s is already up to date (v%s).\nUse `%s upgrade --force` to reinstall.\n", app.Name(), currentVer, internal.BinaryName)
+		fmt.Printf("%s is already up to date (v%s).\nUse `%s upgrade --force` to reinstall.\n", app.ShortName(), currentVer, app.BinaryName())
 		return nil
 	}
 
-	archiveName := fmt.Sprintf("claw-%s-%s.tar.gz", runtime.GOOS, runtime.GOARCH)
+	archiveName := fmt.Sprintf("%s-%s-%s.tar.gz", global.InstalledBinaryName, runtime.GOOS, runtime.GOARCH)
 	assets, err := findReleaseAssets(release, archiveName)
 	if err != nil {
 		return err
@@ -143,7 +142,7 @@ func runUpgrade(checkOnly, force bool, targetVersion string, autoYes bool) error
 	}
 	existing := install.DetectExistingInstall(homeDir)
 	if existing != nil && existing.BinaryPath != "" && (isBuildOrTempDir(exePath) || !fileExists(exePath)) {
-		fmt.Printf("Detected installed %s at: %s\n", app.Name(), existing.BinaryPath)
+		fmt.Printf("Detected installed %s at: %s\n", app.ShortName(), existing.BinaryPath)
 		exePath = existing.BinaryPath
 	}
 
@@ -152,8 +151,8 @@ func runUpgrade(checkOnly, force bool, targetVersion string, autoYes bool) error
 		if envErr := setClawHome(existing.ClawHome); envErr != nil {
 			return envErr
 		}
-	} else if strings.HasPrefix(exePath, "/opt/claw") {
-		if envErr := setClawHome("/opt/claw"); envErr != nil {
+	} else if strings.HasPrefix(exePath, global.SystemDataDir) {
+		if envErr := setClawHome(global.SystemDataDir); envErr != nil {
 			return envErr
 		}
 	}
@@ -161,7 +160,7 @@ func runUpgrade(checkOnly, force bool, targetVersion string, autoYes bool) error
 	// Verify write permission on target executable directory
 	binDir := filepath.Dir(exePath)
 	if wErr := checkDirWritable(binDir); wErr != nil {
-		return fmt.Errorf("permission denied writing to %s.\nPlease run with sudo: sudo %s upgrade", binDir, internal.BinaryName)
+		return fmt.Errorf("permission denied writing to %s.\nPlease run with sudo: sudo %s upgrade", binDir, app.BinaryName())
 	}
 
 	// Summary & confirmation
@@ -172,8 +171,8 @@ func runUpgrade(checkOnly, force bool, targetVersion string, autoYes bool) error
 	fmt.Printf("  Target Binary:   %s\n", exePath)
 	if existing != nil && existing.ClawHome != "" {
 		fmt.Printf("  Data Directory:  %s\n", existing.ClawHome)
-	} else if strings.HasPrefix(exePath, "/opt/claw") {
-		fmt.Printf("  Data Directory:  %s\n", "/opt/claw")
+	} else if strings.HasPrefix(exePath, global.SystemDataDir) {
+		fmt.Printf("  Data Directory:  %s\n", global.SystemDataDir)
 	}
 	if existing != nil && existing.ServicePath != "" {
 		activeStr := "inactive"
@@ -243,7 +242,7 @@ func runUpgrade(checkOnly, force bool, targetVersion string, autoYes bool) error
 	}
 
 	// If claw-auth was in the archive and exists alongside claw, update it too
-	authDest := filepath.Join(binDir, "claw-auth")
+	authDest := filepath.Join(binDir, global.AuthHelperBinaryName)
 	if hasAuth && fileExists(authDest) {
 		if err := atomicReplace(extractedAuthPath, authDest); err == nil {
 			fmt.Printf("Updated companion tool: %s\n", authDest)
@@ -307,7 +306,7 @@ func fetchRelease(version string) (*GitHubRelease, error) {
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
-	req.Header.Set("User-Agent", fmt.Sprintf("ClawEh/%s (%s; %s)", app.SemVer(), runtime.GOOS, runtime.GOARCH))
+	req.Header.Set("User-Agent", fmt.Sprintf("%s/%s (%s; %s)", app.Name(), app.SemVer(), runtime.GOOS, runtime.GOARCH))
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -352,7 +351,7 @@ func downloadFile(url, dstPath string) error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("User-Agent", "ClawEh/"+app.SemVer())
+	req.Header.Set("User-Agent", app.Name()+"/"+app.SemVer())
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -384,7 +383,7 @@ func downloadBytes(url string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "ClawEh/"+app.SemVer())
+	req.Header.Set("User-Agent", app.Name()+"/"+app.SemVer())
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -438,7 +437,7 @@ func extractBinariesFromTarGz(archivePath, clawDst, clawAuthDst string) (hasAuth
 		}
 
 		cleanName := filepath.Base(hdr.Name)
-		if cleanName == "claw" && (hdr.Typeflag == tar.TypeReg) {
+		if cleanName == global.InstalledBinaryName && (hdr.Typeflag == tar.TypeReg) {
 			out, err := os.OpenFile(clawDst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755) //nolint:gosec // installed binary must be executable
 			if err != nil {
 				return false, err
@@ -451,7 +450,7 @@ func extractBinariesFromTarGz(archivePath, clawDst, clawAuthDst string) (hasAuth
 				return false, closeErr
 			}
 			foundClaw = true
-		} else if cleanName == "claw-auth" && (hdr.Typeflag == tar.TypeReg) {
+		} else if cleanName == global.AuthHelperBinaryName && (hdr.Typeflag == tar.TypeReg) {
 			out, err := os.OpenFile(clawAuthDst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755) //nolint:gosec // installed binary must be executable
 			if err != nil {
 				return false, err
@@ -468,7 +467,7 @@ func extractBinariesFromTarGz(archivePath, clawDst, clawAuthDst string) (hasAuth
 	}
 
 	if !foundClaw {
-		return false, fmt.Errorf("`claw` binary was not found inside archive %s", archivePath)
+		return false, fmt.Errorf("`%s` binary was not found inside archive %s", global.InstalledBinaryName, archivePath)
 	}
 	return hasAuth, nil
 }
@@ -585,31 +584,35 @@ func compareSemVer(v1, v2 string) int {
 	return 0
 }
 
+// upgradeServiceName is the systemd unit `install` registers; a constant, so
+// the systemctl arguments are fixed.
+const upgradeServiceName = global.ServiceName
+
 func restartActiveService() {
 	switch runtime.GOOS {
 	case "linux":
 		// Check user service
-		if err := exec.Command("systemctl", "--user", "is-active", "--quiet", "claw").Run(); err == nil {
-			fmt.Println("Restarting systemd user service claw...")
-			if rErr := exec.Command("systemctl", "--user", "restart", "claw").Run(); rErr == nil {
+		if err := exec.Command("systemctl", "--user", "is-active", "--quiet", upgradeServiceName).Run(); err == nil {
+			fmt.Printf("Restarting systemd user service %s...\n", upgradeServiceName)
+			if rErr := exec.Command("systemctl", "--user", "restart", upgradeServiceName).Run(); rErr == nil {
 				fmt.Println("User service restarted successfully.")
 				return
 			}
 		}
 		// Check system service
-		if err := exec.Command("systemctl", "is-active", "--quiet", "claw").Run(); err == nil {
+		if err := exec.Command("systemctl", "is-active", "--quiet", upgradeServiceName).Run(); err == nil {
 			if os.Geteuid() == 0 {
-				fmt.Println("Restarting systemd system service claw...")
-				if rErr := exec.Command("systemctl", "restart", "claw").Run(); rErr == nil {
+				fmt.Printf("Restarting systemd system service %s...\n", upgradeServiceName)
+				if rErr := exec.Command("systemctl", "restart", upgradeServiceName).Run(); rErr == nil {
 					fmt.Println("System service restarted successfully.")
 					return
 				}
 			} else {
-				fmt.Println("Note: System service claw is active. Run `sudo systemctl restart claw` to apply the update.")
+				fmt.Printf("Note: System service %s is active. Run `sudo systemctl restart %s` to apply the update.\n", upgradeServiceName, upgradeServiceName)
 			}
 		}
 	case "darwin":
-		label := "com.pivotllm.claweh"
+		const label = global.LaunchdLabel
 		out, err := exec.Command("launchctl", "list").Output()
 		if err == nil && strings.Contains(string(out), label) {
 			fmt.Printf("Restarting launchd service %s...\n", label)

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PivotLLM/ClawEh/app"
 	"github.com/PivotLLM/ClawEh/config"
 	"github.com/PivotLLM/ClawEh/internal/audit"
 	"github.com/PivotLLM/ClawEh/internal/perms"
@@ -209,7 +210,7 @@ func collectAssessment(ctx context.Context, cfg *config.Config, env Environment)
 		add(true, itemUntrustedProxy, untrustedProxyStatus(env))
 	}
 	if cfg.Channels.Matrix.Enabled && len(env.EncryptedMatrixRooms) > 0 {
-		add(true, itemEncryptedMatrix, "ClawEh can't read these encrypted rooms: "+strings.Join(env.EncryptedMatrixRooms, ", ")+".")
+		add(true, itemEncryptedMatrix, app.ShortName()+" can't read these encrypted rooms: "+strings.Join(env.EncryptedMatrixRooms, ", ")+".")
 	}
 	dd := dataDir(cfg, env)
 
@@ -304,7 +305,7 @@ func collectAssessment(ctx context.Context, cfg *config.Config, env Environment)
 		if p.BypassRestrictions {
 			add(false, "Allow CLI to bypass restrictions ("+p.Name+")",
 				"Allow CLI to bypass restrictions is on for "+p.Name+": it can run commands and modify files anywhere the service user can, "+
-					"outside ClawEh's workspace and shell controls.")
+					"outside "+app.ShortName()+"'s workspace and shell controls.")
 			continue
 		}
 		add(false, "CLI bypass not allowed ("+p.Name+")",
@@ -375,7 +376,7 @@ func collectAssessment(ctx context.Context, cfg *config.Config, env Environment)
 	_, auditErr := os.Stat(auditPath)
 	add(auditErr != nil, "Audit log",
 		ifStr(auditErr == nil, "Audit log at "+auditPath+" ("+itoa(audit.RetentionDays)+"-day retention).",
-			"Audit log not initialised: "+auditPath+" is missing; ClawEh creates it at start."))
+			"Audit log not initialised: "+auditPath+" is missing; "+app.ShortName()+" creates it at start."))
 
 	var stdio []string
 	for _, name := range sortedKeys(cfg.Tools.MCP.Servers) {
@@ -443,7 +444,7 @@ func permsStatus(findings []perms.Finding, err error, summary string) string {
 		if len(findings) == 1 {
 			noun = "path under CLAW_HOME is"
 		}
-		s = fmt.Sprintf("%d %s more open than the configured modes (first: %s %04o, configured %04o); ClawEh sets them at start.",
+		s = fmt.Sprintf("%d %s more open than the configured modes (first: %s %04o, configured %04o); "+app.ShortName()+" sets them at start.",
 			len(findings), noun, f.Path, f.Mode, f.Want)
 	}
 	if errors.Is(err, perms.ErrTruncated) {

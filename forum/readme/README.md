@@ -1,8 +1,8 @@
 # Forums
 
-A forum is a structured discussion that you set up and ClawEh runs for you.
+A forum is a structured discussion that you set up and {{HOST}} runs for you.
 You choose the participants, write a brief and the material they work from,
-and lay the discussion out in ordered layers. ClawEh sends every turn itself,
+and lay the discussion out in ordered layers; {{HOST}} sends every turn itself,
 keeps everything on disk under `forums/<id>/` in your workspace (each run in
 `forums/<id>/runs/<n>/`), and tells you when a run ends.
 
