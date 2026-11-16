@@ -157,6 +157,15 @@
       "apikey": "API Key",
       "oauth": "OAuth",
       "local": "Local"
+    },
+    "summaryPanel": {
+      "title": "Context Summary",
+      "goals": "Goals",
+      "progress": "Progress",
+      "pending": "Pending",
+      "constraints": "Constraints",
+      "keyMoments": "Key Moments",
+      "messageIndex": "Retrievable History"
     }
   },
   "common": {
@@ -290,7 +299,6 @@
     "field": {
       "secmsgName": "Channel Name",
       "secmsgAddress": "Daemon Address",
-      "secmsgAccounts": "{{shortName}} discovers this daemon's linked accounts automatically — each becomes its own channel. Link devices below.",
       "secmsgAccount": "Account",
       "token": "Bot Token",
       "tokenPlaceholder": "Enter bot token",
@@ -331,6 +339,7 @@
       "desc": {
         "secmsgName": "Unique name for this connection, used for routing. Recommended: the service name, e.g. \"signal\".",
         "secmsgAddress": "Host:port of the secure-messaging daemon (e.g. 127.0.0.1:9600).",
+        "secmsgAccounts": "{{shortName}} discovers this daemon's linked accounts automatically — each becomes its own channel. Link devices below.",
         "secmsgAccount": "Account on the daemon to bind. Leave blank to auto-select the sole linked account.",
         "token": "Bot access token used to connect to the platform API.",
         "botToken": "Bot token used to send and receive messages.",
@@ -368,7 +377,8 @@
         "readTimeout": "Read timeout in seconds.",
         "writeTimeout": "Write timeout in seconds.",
         "maxConnections": "Maximum number of concurrent connections.",
-        "genericField": "Used to configure {{field}}."
+        "genericField": "Used to configure {{field}}.",
+        "tls": "Serve the device listener over TLS (wss://) with the WebUI's certificate. Needs HTTPS on."
       }
     },
     "validation": {
@@ -661,7 +671,8 @@
       "classifiers_max_parallel": "Max items at once",
       "classifiers_max_activity_hours": "Max activity history (hours)",
       "classifiers_min_every_seconds": "Shortest run interval (seconds)",
-      "classifiers_default": "Default {{value}}."
+      "classifiers_default": "Default {{value}}.",
+      "default_model_models_hint": "Models tried in order; index 0 first."
     },
     "logs": {
       "empty": "Waiting for logs...",
@@ -1032,14 +1043,15 @@
   "auth": {
     "login": {
       "checking": "Checking the server...",
-      "unreachable": "The server could not be reached. Is it running?",
+      "unreachable": "The server could not be reached. Is {{shortName}} running?",
       "username": "Username",
       "password": "Password",
       "submit": "Sign in",
       "submitting": "Signing in...",
       "invalid": "Invalid username or password.",
       "locked": "Too many failed sign-ins. Try again in {{seconds}} seconds.",
-      "failed": "Sign-in failed: {{message}}"
+      "failed": "Sign-in failed: {{message}}",
+      "heading": "Sign in"
     },
     "noAdmin": {
       "title": "No admin account",
@@ -1077,5 +1089,13 @@
     "invalidTitle": "Files that are not valid cards",
     "invalidFile": "{{file}}: {{reason}}",
     "loadError": "Failed to load character cards."
+  },
+  "errors": {
+    "boundary": {
+      "title": "This page could not be shown.",
+      "show": "Show details",
+      "hide": "Hide details",
+      "retry": "Try again"
+    }
   }
 }

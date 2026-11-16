@@ -8,7 +8,14 @@
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/site.webmanifest" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title></title>
+    <!-- The server fills in the product names when it serves this page
+         (web/backend/embed.go); the frontend reads them from the meta tags
+         (src/store/product.ts). Under the Vite dev server they stay as
+         placeholders and the names come from /api/auth/status. -->
+    <meta name="product-name" content="{{PRODUCT_NAME}}" />
+    <meta name="product-short-name" content="{{PRODUCT_SHORT_NAME}}" />
+    <meta name="product-binary-name" content="{{PRODUCT_BINARY_NAME}}" />
+    <title>{{PRODUCT_NAME}}</title>
   </head>
 
   <body>

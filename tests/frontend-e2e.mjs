@@ -345,7 +345,7 @@ if (useGroup("P", "Authentication")) {
     const title = await page.title()
     await close()
     assert(problems.length === 0, `console: ${problems[0]}`)
-    // The tab title comes from /api/auth/status too; index.html holds none.
+    // The server fills the title into index.html as it serves it.
     assert(title === PRODUCT.name, `tab title reads ${JSON.stringify(title)}, want ${PRODUCT.name}`)
     // The frontend gate sends the visitor to /login and remembers where they
     // were going, so a bookmark still works after signing in.

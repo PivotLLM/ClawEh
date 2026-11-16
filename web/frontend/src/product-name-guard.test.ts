@@ -12,7 +12,7 @@ import { describe, expect, it } from "vitest"
 // file, a locale string or index.html names the product.
 //
 // It scans every non-test .ts/.tsx file under src/ (comments removed), every
-// locale JSON file, and index.html, for "ClawEh" or "claw" as a word, in any
+// locale JSON file, index.html and the text files in public/, for "ClawEh" or "claw" as a word, in any
 // case. Before matching, the identifiers below are removed: they are names of
 // real things (files, keys, hosts, a repository) that do not change with the
 // product's name. To allow another, add its pattern here with a comment saying
@@ -57,7 +57,7 @@ function offenders(file: string, text: string): string[] {
 }
 
 describe("product name guard", () => {
-  it("no source, locale string or index.html names the product", () => {
+  it("no source, locale string, index.html or public file names the product", () => {
     const sources = walk(join(root, "src")).filter(
       (f) =>
         /\.(ts|tsx)$/.test(f) &&
@@ -67,7 +67,12 @@ describe("product name guard", () => {
     const locales = walk(join(root, "src", "i18n", "locales")).filter((f) =>
       f.endsWith(".json"),
     )
+    // Text files served as they are (public/); images are skipped.
+    const publicFiles = walk(join(root, "public")).filter((f) =>
+      /\.(webmanifest|json|svg|html|txt|xml)$/.test(f),
+    )
     const found = [
+      ...publicFiles.flatMap((f) => offenders(f, readFileSync(f, "utf8"))),
       ...sources.flatMap((f) =>
         offenders(f, stripComments(readFileSync(f, "utf8"))),
       ),

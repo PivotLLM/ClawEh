@@ -76,7 +76,9 @@ export function LoginPage({ next }: LoginPageProps) {
       <div className="border-border/60 bg-card w-full max-w-sm rounded-xl border p-8 shadow-sm">
         <div className="mb-6 flex items-center gap-3">
           <img className="h-10 w-auto" src="/logo.png" alt="" />
-          <h1 className="text-lg font-semibold">{name}</h1>
+          <h1 className="text-lg font-semibold">
+            {name || t("auth.login.heading")}
+          </h1>
         </div>
 
         {statusQuery.isPending && (

@@ -222,17 +222,28 @@ and localStorage keys, the WebSocket subprotocol `claw-token`, the MCP realm
 `clawdbot-gateway`. Bare-word ones — installed binary file name, systemd
 service, launchd label, `/opt/claw`, log and lock file names, the release
 repository, the Maestro host model label `claw`, the folder-watch marker
-header — are defined once in `global/identifiers.go`.
+header, the shell-rc marker `install` writes, the default agent ID `claw`
+(a directory name and routing key; its display name is the short name), the
+self-signed certificate's fallback CN — are defined once in
+`global/identifiers.go`. Anything written to disk or matched later uses one
+of these, never `ShortName()` or `BinaryName()`.
 
 Templates and embedded guides name the product through placeholders filled at
 use: `{{SHORT_NAME}}` in `templates/` (seeding, `internal/workspace`), and
 `{{HOST}}` in the forum and classifier guides (those packages may not import
 ClawEh, so the gateway passes `Host.ProductName`, which defaults to "the
-host"). The WebUI reads `name`, `short_name` and `binary_name` from
-`GET /api/auth/status` (answered before login) and `GET /api/system/version`
-(`web/frontend/src/store/product.ts`), sets `document.title`, and makes them
-i18next defaults, so any locale string can say `{{name}}`, `{{shortName}}` or
-`{{binaryName}}`.
+host"). The WebUI gets the names from the page itself: `web/backend/embed.go`
+fills `{{PRODUCT_NAME}}`, `{{PRODUCT_SHORT_NAME}}` and `{{PRODUCT_BINARY_NAME}}`
+in `index.html` (the `<title>` and three `<meta name="product-…">` tags) and
+`site.webmanifest` when serving them (HTML- or JSON-escaped, `no-cache`), and
+`web/frontend/src/store/product.ts` reads the meta tags at load. So the names
+are there before any request and when the server cannot be reached.
+`GET /api/auth/status` and `GET /api/system/version` carry them too and may
+refresh them, never blank them. Under the Vite dev server the placeholders
+stay unfilled: the store ignores them and takes the names (and the tab title)
+from the first `/api/auth/status` answer. The store makes the names i18next
+defaults, so any locale string can say `{{name}}`, `{{shortName}}` or
+`{{binaryName}}`, and a change to them re-renders translated components.
 
 Two guards enforce it, both part of `make test`:
 
@@ -240,8 +251,15 @@ Two guards enforce it, both part of `make test`:
   (and outside `web/frontend`, `manual` and dot-directories) and fails on a
   string literal holding "ClawEh", "Claw" or "claw" as a word. Comments, struct
   tags and import paths are not checked. `global/identifiers.go` is skipped.
+  It also checks, line by line, every file those Go files `//go:embed`
+  (guides, templates, their JSON), except the entries in `embedSkip`, each
+  with its reason (the BIP39 word list, the built manual and frontend).
 - `web/frontend/src/product-name-guard.test.ts` does the same for the
-  frontend's non-test sources, the locale JSON and `index.html`.
+  frontend's non-test sources, the locale JSON, `index.html` and the text
+  files in `public/`.
+
+`web/frontend/src/i18n/keys.test.ts` fails when a literal `t("…")` key in the
+frontend is missing from `en.json` (a missing key renders as the raw key).
 
 To allow a new fixed identifier, add the narrowest pattern that matches only
 it, with a comment saying what it names, to `fixedIdentifiers` (Go) or the

@@ -6,7 +6,8 @@ also automated in `tests/frontend-e2e.mjs`, which prints the same IDs. There are
 178 checks in all; the runner prints the same tally at the end.
 
 The WebUI holds no product name of its own: it shows the names the server
-returns (`name`, `short_name`, `binary_name` on `GET /api/auth/status` and
+fills into the page it serves (title and `product-*` meta tags) and returns
+(`name`, `short_name`, `binary_name` on `GET /api/auth/status` and
 `GET /api/system/version`). Below, *the product name* means `name` from either
 response; the runner reads it once at start and compares against it.
 
