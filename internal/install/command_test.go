@@ -3,6 +3,7 @@ package install
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -17,10 +18,10 @@ import (
 // kind for the same install.
 func TestCheckExistingMode(t *testing.T) {
 	testbinary.Set(t, "alice-claw")
-	system := &ExistingInstall{ServiceType: "systemd-system", ServicePath: "/etc/systemd/system/claw.service", User: "ai"}
-	userSvc := &ExistingInstall{ServiceType: "systemd-user", ServicePath: "/home/ai/.config/systemd/user/claw.service", User: "ai"}
+	system := &ExistingInstall{ServiceType: "systemd-system", ServicePath: "/etc/systemd/system/claw.service", User: "alice"}
+	userSvc := &ExistingInstall{ServiceType: "systemd-user", ServicePath: "/home/alice/.config/systemd/user/claw.service", User: "alice"}
 	daemon := &ExistingInstall{ServiceType: "launchd-daemon", ServicePath: "/Library/LaunchDaemons/com.pivotllm.claweh.plist"}
-	agent := &ExistingInstall{ServiceType: "launchd-agent", ServicePath: "/Users/ai/Library/LaunchAgents/com.pivotllm.claweh.plist", User: "ai"}
+	agent := &ExistingInstall{ServiceType: "launchd-agent", ServicePath: "/Users/alice/Library/LaunchAgents/com.pivotllm.claweh.plist", User: "alice"}
 	binaryOnly := &ExistingInstall{BinaryPath: "/opt/claw/claw"}
 
 	cases := []struct {
@@ -31,7 +32,7 @@ func TestCheckExistingMode(t *testing.T) {
 	}{
 		{"system service without sudo", system, false, "run `sudo alice-claw install`"},
 		{"system service with sudo", system, true, ""},
-		{"user service with sudo", userSvc, true, "as ai, without sudo"},
+		{"user service with sudo", userSvc, true, "as alice, without sudo"},
 		{"user service without sudo", userSvc, false, ""},
 		{"launchd daemon without sudo", daemon, false, "run `sudo alice-claw install`"},
 		{"launchd agent with sudo", agent, true, "without sudo"},
@@ -441,5 +442,40 @@ func TestResolveClawHome(t *testing.T) {
 	got = fakeHost(t).resolveClawHome(tu, "/opt/claw/bin", nil)
 	if got != "/opt/claw" {
 		t.Errorf("resolveClawHome with binDir = /opt/claw/bin = %q, want /opt/claw", got)
+	}
+}
+
+// The uninstaller names the system-wide data directory only for root or the
+// account that owns it, never because of an account's name.
+func TestUninstallDataDir(t *testing.T) {
+	t.Setenv(global.EnvVarHome, "")
+	systemDir := t.TempDir()
+	me := strconv.Itoa(os.Getuid())
+	home := t.TempDir()
+	own := filepath.Join(home, global.DefaultDataDir)
+
+	cases := []struct {
+		name      string
+		tu        TargetUser
+		existing  *ExistingInstall
+		systemDir string
+		want      string
+	}{
+		{
+			"detected install wins",
+			TargetUser{Username: "alice", UID: me, HomeDir: home},
+			&ExistingInstall{ClawHome: "/srv/detected"}, systemDir, "/srv/detected",
+		},
+		{"owner of the system directory", TargetUser{Username: "alice", UID: me, HomeDir: home}, nil, systemDir, systemDir},
+		{"root", TargetUser{Username: "root", UID: "0", HomeDir: home, IsRoot: true}, nil, systemDir, systemDir},
+		{"another account", TargetUser{Username: "bob", UID: "4294967294", HomeDir: home}, nil, systemDir, own},
+		{"no system directory", TargetUser{Username: "alice", UID: me, HomeDir: home}, nil, filepath.Join(systemDir, "missing"), own},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := uninstallDataDir(&tc.tu, tc.existing, tc.systemDir); got != tc.want {
+				t.Errorf("uninstallDataDir = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

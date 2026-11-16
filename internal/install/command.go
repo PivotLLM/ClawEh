@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -552,12 +553,7 @@ func runUninstall(targetUser string, autoYes bool) error {
 		}
 	}
 
-	dataDirectory := dataDir(tu.HomeDir)
-	if existing != nil && existing.ClawHome != "" {
-		dataDirectory = existing.ClawHome
-	} else if dirExists(global.SystemDataDir) && (tu.IsRoot || tu.Username == "ai") {
-		dataDirectory = global.SystemDataDir
-	}
+	dataDirectory := uninstallDataDir(tu, existing, global.SystemDataDir)
 
 	var serviceDesc string
 	if runtime.GOOS == "linux" {
@@ -934,6 +930,31 @@ func copyBinary(src, dst string) error {
 		return err
 	}
 	return fileutil.WriteFileAtomic(dst, data, 0o755)
+}
+
+// uninstallDataDir is the data directory the uninstaller names in its
+// messages: the detected install's, else the system-wide directory when it
+// exists and the uninstall runs as root or for the account that owns it,
+// else the target user's own.
+func uninstallDataDir(tu *TargetUser, existing *ExistingInstall, systemDir string) string {
+	if existing != nil && existing.ClawHome != "" {
+		return existing.ClawHome
+	}
+	if dirExists(systemDir) && (tu.IsRoot || ownedByUID(systemDir, tu.UID)) {
+		return systemDir
+	}
+	return dataDir(tu.HomeDir)
+}
+
+// ownedByUID reports whether path is owned by the account with the given
+// numeric user ID.
+func ownedByUID(path, uid string) bool {
+	fi, err := os.Stat(path) // #nosec G703 -- install path chosen by the operator on the CLI
+	if err != nil {
+		return false
+	}
+	stat, ok := fi.Sys().(*syscall.Stat_t)
+	return ok && strconv.FormatUint(uint64(stat.Uid), 10) == uid
 }
 
 func dirExists(path string) bool {

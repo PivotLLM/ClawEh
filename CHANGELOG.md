@@ -628,6 +628,12 @@
 
 ### Fixed
 
+- **`uninstall` names the system-wide data folder for the account that owns
+  it.** With no service detected, it said the data in `/opt/claw` was kept
+  only for root or one particular account name; any other account was told
+  `~/.claw`. It now names `/opt/claw` when the uninstall runs as root or for
+  the account that owns that folder.
+
 - **`status` and the sessions commands see a gateway started under another
   name.** A running gateway was recognised by its process name, so one
   started through the `openclaw` link or from a renamed binary was reported
