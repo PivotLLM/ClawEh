@@ -178,6 +178,8 @@ The WebUI (`web/frontend`) and the user manual (`manual/`, VitePress) are built 
 | `make check-webui` | The browser regression suite against a running dev instance |
 | `make clean` | Remove build artifacts |
 
+`make test` needs `govulncheck` on the PATH (`go install golang.org/x/vuln/cmd/govulncheck@latest`). `b9.yaml` describes releases for a private release management system and is not needed to build or test.
+
 See [docs/test.md](docs/test.md) for how the suite is organised. Developer notes on protocols and internals are in [`docs/`](docs/).
 
 ### Shared modules
