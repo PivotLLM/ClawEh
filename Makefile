@@ -80,8 +80,8 @@ GOLANGCI_LINT?=$(shell command -v golangci-lint 2>/dev/null || echo "$$(go env G
 # (CYCLONEDX_GOMOD=) to use another copy.
 TOOLS_BIN=$(CURDIR)/bin
 # vulncheck runs the govulncheck on the PATH and honours govulncheck.ignore in
-# b9.yaml.
-VULNCHECK=go.bison9.com/vulncheck/cmd/vulncheck@v0.1.1
+# b9.yaml. It is our own module, so it runs at its latest release, unpinned.
+VULNCHECK=go.bison9.com/vulncheck/cmd/vulncheck@latest
 CYCLONEDX_GOMOD_VERSION=v1.12.0
 CYCLONEDX_GOMOD?=$(TOOLS_BIN)/cyclonedx-gomod
 # minisign (https://jedisct1.github.io/minisign/; `brew install minisign` /
