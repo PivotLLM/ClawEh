@@ -382,10 +382,14 @@ vet: generate
 test: manual-check generate fmt-check vet lint govulncheck
 	@./test.sh
 
-## govulncheck: Fail on a known vulnerability reachable from the code (golang.org/x/vuln, pinned; needs network for the vulnerability database).
-govulncheck: require-govulncheck
+## govulncheck: Fail on a known vulnerability the code calls (needs network for the vulnerability database). With b9 installed, b9 runs the scan and honours the ignore list in b9.yaml, as a release does; without it the pinned govulncheck runs and nothing is ignored.
+govulncheck:
 	@echo "Scanning for known vulnerabilities (govulncheck)..."
-	@$(GOVULNCHECK) ./...
+	@if command -v b9 >/dev/null 2>&1; then \
+	  b9 vulncheck .; \
+	else \
+	  $(MAKE) --no-print-directory require-govulncheck && $(GOVULNCHECK) ./...; \
+	fi
 
 ## require-govulncheck: install the pinned govulncheck into bin/ when the configured binary is missing.
 require-govulncheck:

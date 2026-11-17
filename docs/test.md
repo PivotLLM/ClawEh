@@ -16,9 +16,13 @@ produces a binary. It runs, in order:
 - `gofmt`/`gofumpt` formatting check (`make fmt-check`)
 - `go vet ./...`
 - `golangci-lint` (`make lint`)
-- `govulncheck ./...` (`make govulncheck`; installs a pinned binary into
-  `bin/` when missing, needs network access to the vulnerability database, and
-  fails the gate on a vulnerability reachable from the code)
+- the vulnerability scan (`make govulncheck`; needs network access to the
+  vulnerability database, and fails the gate on a vulnerability the code
+  calls). With `b9` on the PATH it runs `b9 vulncheck .`, which honours the
+  `govulncheck.ignore` list in `b9.yaml` (an advisory, a reason and an optional
+  end date), exactly as a release does. Without `b9` it runs
+  `govulncheck ./...` from a pinned binary installed into `bin/`, and nothing
+  is ignored.
 - `./test.sh`, the suite proper (below)
 
 The exit code is 0 only when every stage passes.

@@ -1,21 +1,16 @@
-#
-# B9 build and release description
-#
+# Release description for a private release management system.
+# It is not needed to build this product.
 
 name:   ClawEh
 module: github.com/PivotLLM/ClawEh
 github: PivotLLM/ClawEh
 
-# The version is a const in the source, never derived from git describe: it is a
-# property of the source, not of the machine that built it.
 version:
   file:    app/app.go
   pattern: 'version\s*=\s*"([^"]+)"'
   format:  '{1}'
 
 go_min:      "1.26"
-# Every vulnerability the code calls stops the release, except those listed
-# here, each until its date. Remove an entry once a fixed release is in go.mod.
 govulncheck:
   enabled: true
   ignore:
@@ -32,10 +27,7 @@ licenses:
 build:
   clean_once: true
   command: 'make build PLATFORM={os} ARCH={arch}'
-  # No Windows. ClawEh does not support it, and it could not be built anyway:
-  # github.com/PivotLLM/Maestro's llm/client.go uses syscall.Setpgid and
-  # syscall.Kill without build tags, so the dependency does not compile for
-  # GOOS=windows. Nothing Windows has ever been released.
+  # No Windows: a dependency does not compile for it.
   targets:
     - darwin/amd64
     - darwin/arm64
@@ -43,10 +35,7 @@ build:
     - linux/amd64
     - linux/arm64
 
-# checksums.txt (SHA-256 of every archive) and checksums.txt.minisig are
-# published with the archives. `claw upgrade` verifies the signature against the
-# keys in app/keys.go and refuses a release without it; this is the key the
-# release host signs with (the secret half is ~/.minisign/minisign.key there).
+# Must be one of the keys in app/keys.go.
 signing:
   minisign:
     enabled:    true
@@ -66,12 +55,9 @@ package:
     - {from: '{staging}/OPEN-SOURCE-LICENSES.txt', as: OPEN-SOURCE-LICENSES.txt}
   per_platform:
     enabled: true
-    # CONTRACT: version-free, so /releases/latest/download resolves. claweh.sh
-    # fetches exactly these names.
-    # Binaries are renamed to their bare `name` inside the archive.
+    # CONTRACT: the install script fetches exactly these names.
     asset: 'claw-{os}-{arch}.tar.gz'
   bundle:
-    # Dropped: the installer prefers the per-platform archives.
     enabled: false
 
 release:
