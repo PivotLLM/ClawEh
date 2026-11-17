@@ -272,10 +272,10 @@ make build       # build the binary (embeds the frontend bundle and the manual)
 make manual      # build only the user manual (VitePress)
 make test        # the full gate: builds the manual, then generate, format
                  # check, vet, golangci-lint,
-                 # govulncheck (needs network; with b9 on the PATH it is
-                 # `b9 vulncheck .`, which honours govulncheck.ignore in
-                 # b9.yaml as a release does; without b9 the pinned binary
-                 # in bin/ runs and nothing is ignored),
+                 # govulncheck (go.bison9.com/vulncheck: the govulncheck
+                 # on the PATH, failing on any called vulnerability not
+                 # listed under govulncheck.ignore in b9.yaml; needs
+                 # network),
                  # then test.sh: the Go suite with -race and a coverage floor,
                  # the frontend typecheck/lint/unit tests and the MCP server
                  # integration checks. Rewrites nothing and exits non-zero on
