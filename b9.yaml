@@ -14,7 +14,14 @@ version:
   format:  '{1}'
 
 go_min:      "1.26"
-govulncheck: true
+# Every vulnerability the code calls stops the release, except those listed
+# here, each until its date. Remove an entry once a fixed release is in go.mod.
+govulncheck:
+  enabled: true
+  ignore:
+    - id: GO-2026-6911
+      reason: github.com/mark3labs/mcp-go has no fixed release yet
+      until: 20261231
 
 licenses:
   enabled:  true
