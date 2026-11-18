@@ -276,7 +276,7 @@ func TestPreflightRequiresHost(t *testing.T) {
 // whose ReadAllowed admits exactly the workspace.
 func cfgtFileEnv(t *testing.T) (preflightEnv, string, string) {
 	t.Helper()
-	root := t.TempDir()
+	root := realTempDir(t)
 	ws := filepath.Join(root, "workspace")
 	outside := filepath.Join(root, "outside")
 	for _, dir := range []string{filepath.Join(ws, "docs", "sub"), outside} {

@@ -92,6 +92,17 @@ func newMaestroHarnessWith(t *testing.T, mc *config.MaestroConfig) *maestroHarne
 	if len(built) == 0 {
 		t.Fatal("no maestro tools built")
 	}
+	// A run goes on in the background after its tasks are done (it writes the
+	// report), so wait for it before the workspace is removed. Registered after
+	// the TempDir calls above, this runs before their cleanup.
+	t.Cleanup(func() {
+		runners.mu.Lock()
+		e := runners.byAgent["alice"]
+		runners.mu.Unlock()
+		if e != nil {
+			waitIdle(t, e.runner)
+		}
+	})
 	h := &maestroHarness{t: t, tools: map[string]tools.Tool{}, runner: runner, ws: ws, mount: mount}
 	for _, tl := range built {
 		h.tools[tl.Name()] = tl

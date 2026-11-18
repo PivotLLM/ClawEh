@@ -628,6 +628,13 @@
 
 ### Fixed
 
+- **On macOS, a `claw` binary in the system temporary folder is not taken
+  for an existing install.** `install`, `uninstall` and `upgrade` ignore a
+  binary in a build or temporary location when they look for an install, but
+  recognised a temporary location only by a `tmp` or `temp` folder name, which
+  the macOS temporary folder does not have. They now also ignore anything
+  inside the system temporary folder.
+
 - **`uninstall` names the system-wide data folder for the account that owns
   it.** With no service detected, it said the data in `/opt/claw` was kept
   only for root or one particular account name; any other account was told

@@ -366,6 +366,22 @@ func isBuildOrTempPath(p string) bool {
 			return true
 		}
 	}
+	return underTempDir(clean)
+}
+
+// underTempDir reports whether p is inside the system temporary directory.
+// On macOS that directory has no "tmp" component (/var/folders/...), and it
+// is reached through a symlink, so both its spellings are checked.
+func underTempDir(p string) bool {
+	roots := []string{filepath.Clean(os.TempDir())}
+	if resolved, err := filepath.EvalSymlinks(roots[0]); err == nil {
+		roots = append(roots, resolved)
+	}
+	for _, root := range roots {
+		if strings.HasPrefix(p, root+string(filepath.Separator)) {
+			return true
+		}
+	}
 	return false
 }
 

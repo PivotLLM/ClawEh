@@ -588,11 +588,23 @@ func (s *svcStuck) list() []string {
 	return slices.Clone(s.calls)
 }
 
+// realTempDir is t.TempDir() with symlinks resolved. The code under test
+// resolves the paths it is given, and on macOS the temp root is a symlink
+// (/var -> /private/var), so a raw t.TempDir() would not match what it finds.
+func realTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("resolve temp dir: %v", err)
+	}
+	return dir
+}
+
 // svcSetup builds a service over fakes with the fake controller. The
 // workspace holds doc.md for svcConfigJSON's file source.
 func svcSetup(t *testing.T) *svcEnv {
 	t.Helper()
-	ws := t.TempDir()
+	ws := realTempDir(t)
 	if err := os.WriteFile(filepath.Join(ws, "doc.md"), []byte("# Doc\n\nBody.\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}

@@ -97,13 +97,25 @@ func fixtureEnv(dataDir string) Environment {
 	}
 }
 
+// realTempDir is t.TempDir() with symlinks resolved. The code under test
+// resolves the paths it is given, and on macOS the temp root is a symlink
+// (/var -> /private/var), so a raw t.TempDir() would not match what it finds.
+func realTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("resolve temp dir: %v", err)
+	}
+	return dir
+}
+
 // fixtureConfig builds a small realistic config under a fresh CLAW_HOME:
 // one API provider with a key, two CLI providers, two agents (one with a
 // symlinked workspace, one with explicit tools and an allowed folder), MCP servers of
 // both transports, and every channel type with a fake credential.
 func fixtureConfig(t *testing.T) (*config.Config, Environment) {
 	t.Helper()
-	home := t.TempDir()
+	home := realTempDir(t)
 	t.Setenv("CLAW_HOME", home)
 	cfg := config.DefaultConfig()
 

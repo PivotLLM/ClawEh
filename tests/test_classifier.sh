@@ -128,7 +128,8 @@ mcp() {
 }
 
 # mode_of <path>: the octal permission bits.
-mode_of() { stat -c '%a' "$1" 2>/dev/null; }
+# GNU stat first, then the BSD form (macOS).
+mode_of() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null; }
 
 # wait_for <seconds> <command...>: until the command succeeds.
 wait_for() {

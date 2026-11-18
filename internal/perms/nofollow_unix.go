@@ -52,7 +52,7 @@ func chmodSafe(path string, want fs.FileMode, walked fs.FileInfo) error {
 // the platform does not say.
 func linkCount(fi fs.FileInfo) uint64 {
 	if st, ok := fi.Sys().(*syscall.Stat_t); ok {
-		return uint64(st.Nlink) //nolint:unconvert // Nlink is uint16 on darwin, uint64 on linux
+		return uint64(st.Nlink) //nolint:unconvert,nolintlint // Nlink is uint16 on darwin, uint64 on linux
 	}
 	return 1
 }

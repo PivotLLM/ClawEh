@@ -107,7 +107,8 @@ mcp() {
         -headers "Authorization:Bearer $1" -call "$2" -params "$3" 2>&1
 }
 
-mode_of() { stat -c '%a' "$1" 2>/dev/null; }
+# GNU stat first, then the BSD form (macOS).
+mode_of() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null; }
 
 wait_for() {
     local limit=$(($1 * 4))
@@ -287,7 +288,7 @@ PNGS=0
 named_outputs "image (chat)" "$OUT"
 for p in $PATHS; do
     check_output "$p" "image (chat)"
-    case "$p" in *.png) if head -c 8 "$WS/$p" | od -An -tx1 | grep -q '89 50 4e 47'; then PNGS=$((PNGS + 1)); fi ;; esac
+    case "$p" in *.png) if head -c 8 "$WS/$p" | od -An -tx1 | tr -s ' ' | grep -q '89 50 4e 47'; then PNGS=$((PNGS + 1)); fi ;; esac
 done
 if [ "$PNGS" = 1 ]; then pass "image (chat): one PNG saved"; else fail "image (chat): $PNGS PNGs saved"; fi
 if echo "$OUT" | grep -q 'base64'; then fail "image (chat): the result carries image data"; else pass "image (chat): the result carries only paths"; fi
@@ -370,7 +371,7 @@ if echo "$ROWS" | grep -q '^alice|text|error|.*"model":"txt-down"'; then pass "a
 for kind in text image tts stt; do
     if echo "$ROWS" | grep -q "^alice|$kind|ok|files/generated/$TODAY/"; then pass "audit: a $kind call is an ok row naming its file"; else fail "audit: no ok $kind row: $ROWS"; fi
 done
-if [ "$(audit_rows "agent='bob' AND tool='image'" | wc -l)" = 0 ]; then pass "audit: the refused call made no row"; else fail "audit: a row for Bob's refused call"; fi
+if [ "$(audit_rows "agent='bob' AND tool='image'" | wc -l | tr -d ' ')" = 0 ]; then pass "audit: the refused call made no row"; else fail "audit: a row for Bob's refused call"; fi
 
 # ---- 8. Nothing outside the workspaces. ----
 STRAY="$(find "$HOME_DIR" "$TMP" -type f \( -name 'text-*' -o -name 'image-*' -o -name 'speech-*' -o -name 'transcript-*' \) \
