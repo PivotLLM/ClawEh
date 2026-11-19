@@ -52,10 +52,17 @@ var fieldDocs = map[string]fieldDoc{
 
 	"Trigger.every_seconds": {desc: "Run every this many seconds", min: 1},
 
-	"Source.tool":  {desc: "Tool that lists the items; one of your tools"},
-	"Source.args":  {desc: "The tool's arguments; no placeholders"},
-	"Source.items": {desc: "Dot-path to the list in the tool's result; \"\" when the result is the list"},
-	"Source.id":    {desc: "Dot-path, inside one list element, to the item's stable ID"},
+	"Source.tool":   {desc: "Tool that lists the items; one of your tools"},
+	"Source.args":   {desc: "The tool's arguments; no placeholders"},
+	"Source.items":  {desc: "Dot-path to the list in the tool's result; \"\" when the result is the list"},
+	"Source.id":     {desc: "Dot-path, inside one list element, to the item's stable ID"},
+	"Source.paging": {desc: "How the tool is asked for the pages after the first. Without it the tool is called once per run, and items it does not return on that call are never seen; set it for any tool that returns its list in pages"},
+
+	"Paging.mode":       {desc: "offset: the tool takes the number of items to skip; cursor: the tool's result names the next page", enum: pagingModes},
+	"Paging.offset_arg": {desc: "offset mode: the tool argument that takes the number of items to skip, such as \"$skip\" or \"offset\"; it starts at its value in source.args (0 when left out) and the list ends at a page with no items"},
+	"Paging.cursor_arg": {desc: "cursor mode: the tool argument that takes the next page's cursor, such as \"pageToken\"; leave it out of source.args"},
+	"Paging.next":       {desc: "cursor mode: dot-path, in the tool's result, to the next page's cursor; the list ends at a result without one"},
+	"Paging.max_pages":  {desc: "Pages one run lists at most; the install's maximum when omitted. A run that reaches it with pages left fails, since the rest were not seen", min: 1},
 
 	"Fetch.tool":      {desc: "Tool that reads one item; one of your tools"},
 	"Fetch.args":      {desc: "The tool's arguments; a value may be exactly {{item.<path>}}"},
@@ -75,9 +82,10 @@ var fieldDocs = map[string]fieldDoc{
 	"Action.tool": {desc: "Tool run for items of the category; one of your tools"},
 	"Action.args": {desc: "The tool's arguments; a value may be exactly {{item.<path>}}, {{fetched.<name>}} or {{category}}"},
 
-	"Limits.items_per_run":       {desc: "Items handled per run at most; the rest are taken next run; the install's maximum when omitted", min: 1},
+	"Limits.items_per_run":       {desc: "Items handled per run at most; the rest are taken next run; the install's maximum when omitted. A paged source is listed only until this many are found", min: 1},
 	"Limits.parallel":            {desc: "Items handled at the same time; 1 when omitted", min: 1},
 	"Limits.stop_after_failures": {desc: "Consecutive failed items that stop a run; 5 when omitted", min: 1},
+	"Limits.max_attempts":        {desc: "Times a failing item is tried before it is left alone; 5 when omitted. Any classifier_update tries such items again", min: 1},
 
 	"Report.summary": {desc: "on_problems (default): only when items failed or were unclassified, or the run failed; always: after every run that handled items or failed; never", enum: summaryValues},
 	"Report.errors":  {desc: "true (default): a failed run is reported to you and your chat, the second in a row muting further reports for 24 hours; false: failed runs are only logged. Setting it, or any other change, lifts the mute"},

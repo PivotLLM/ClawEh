@@ -266,9 +266,9 @@ describe("SystemPage forum maximums", () => {
       "call_timeout_seconds",
       "max_parallel_calls",
     ]) {
-      expect(
-        (screen.getByTestId(`forum-${key}`) as HTMLInputElement).min,
-      ).toBe("0")
+      expect((screen.getByTestId(`forum-${key}`) as HTMLInputElement).min).toBe(
+        "0",
+      )
     }
     fireEvent.change(screen.getByTestId("forum-max_parallel_calls"), {
       target: { value: "0" },
@@ -342,6 +342,7 @@ describe("SystemPage classifier settings", () => {
           max_items_per_run: null,
           max_parallel: null,
           max_activity_hours: null,
+          max_source_pages: null,
           min_every_seconds: 60,
         },
       })
@@ -360,6 +361,7 @@ describe("SystemPage classifier settings", () => {
       max_items_per_run: "15",
       max_parallel: "16",
       max_activity_hours: "17",
+      max_source_pages: "19",
       min_every_seconds: "18",
     }
     await screen.findByTestId("classifiers-max_rules")
@@ -379,6 +381,7 @@ describe("SystemPage classifier settings", () => {
             max_items_per_run: 15,
             max_parallel: 16,
             max_activity_hours: 17,
+            max_source_pages: 19,
             min_every_seconds: 18,
           },
         }),
@@ -434,6 +437,7 @@ describe("SystemPage classifier settings", () => {
       "max_items_per_run",
       "max_parallel",
       "max_activity_hours",
+      "max_source_pages",
       "min_every_seconds",
     ]) {
       expect(

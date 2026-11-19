@@ -19,7 +19,7 @@ import (
 func TestHandlePatchConfig_ClassifiersRoundTrip(t *testing.T) {
 	configPath := setupTestEnv(t)
 
-	rec := patchMaestroConfig(t, configPath, `{"classifiers":{"processed_days":10,"limits":{"max_rules":50,"max_prompt_chars":1000,"max_item_chars":2000,"max_items_per_run":20,"max_parallel":2,"max_activity_hours":48,"min_every_seconds":60}}}`)
+	rec := patchMaestroConfig(t, configPath, `{"classifiers":{"processed_days":10,"limits":{"max_rules":50,"max_prompt_chars":1000,"max_item_chars":2000,"max_items_per_run":20,"max_parallel":2,"max_activity_hours":48,"max_source_pages":9,"min_every_seconds":60}}}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
 	}
@@ -29,7 +29,7 @@ func TestHandlePatchConfig_ClassifiersRoundTrip(t *testing.T) {
 	}
 	want := config.ClassifiersConfig{ProcessedDays: 10, Limits: config.ClassifierLimitsConfig{
 		MaxRules: 50, MaxPromptChars: 1000, MaxItemChars: 2000, MaxItemsPerRun: 20,
-		MaxParallel: 2, MaxActivityHours: 48, MinEverySeconds: 60,
+		MaxParallel: 2, MaxActivityHours: 48, MaxSourcePages: 9, MinEverySeconds: 60,
 	}}
 	if cfg.Classifiers != want {
 		t.Fatalf("persisted classifiers = %+v, want %+v", cfg.Classifiers, want)

@@ -109,6 +109,7 @@ func ValidateStatic(def *Definition, c Ceilings) error {
 		add("source.items %q is not a dot-path.", def.Source.Items)
 	}
 	issues = append(issues, checkPlaceholders(def.Source.Args, "source.args", nil, nil)...)
+	issues = append(issues, checkPaging(def.Source, c)...)
 
 	// Fetch.
 	var fields map[string]string
@@ -204,6 +205,7 @@ func ValidateStatic(def *Definition, c Ceilings) error {
 		over("limits.parallel", def.Limits.Parallel, c.MaxParallel, "")
 	}
 	nonNegative("limits.stop_after_failures", def.Limits.StopAfterFailures)
+	nonNegative("limits.max_attempts", def.Limits.MaxAttempts)
 	if nonNegative("activity_hours", def.ActivityHours) {
 		over("activity_hours", def.ActivityHours, c.MaxActivityHours, " hours")
 	}
@@ -316,19 +318,26 @@ type listedItem struct {
 	value any
 }
 
-// listItems calls the source tool as agentID and returns its elements with
-// their ids, in source order. It fails when the result is not JSON, when
-// source.items is not a list, or when an element's source.id resolves to
-// nothing (naming the element's index).
-func listItems(ctx context.Context, def *Definition, agentID string, tools ToolRunner) ([]listedItem, error) {
+// sourcePage is one call of the source tool: its decoded result and its
+// elements with their ids, in source order.
+type sourcePage struct {
+	result any
+	items  []listedItem
+}
+
+// callSource calls the source tool as agentID with args and returns the
+// page. It fails when the result is not JSON, when source.items is not a
+// list, or when an element's source.id resolves to nothing (naming the
+// element's index).
+func callSource(ctx context.Context, def *Definition, agentID string, tools ToolRunner, args map[string]any) (sourcePage, error) {
 	ctx = withClassifier(ctx, NormalizeID(def.ID))
-	result, err := tools.Call(ctx, agentID, def.Source.Tool, plainArgs(def.Source.Args))
+	result, err := tools.Call(ctx, agentID, def.Source.Tool, args)
 	if err != nil {
-		return nil, &toolError{role: roleSource, tool: def.Source.Tool, err: err}
+		return sourcePage{}, &toolError{role: roleSource, tool: def.Source.Tool, err: err}
 	}
 	decoded, err := decodeJSON(result)
 	if err != nil {
-		return nil, &notJSONError{role: roleSource, tool: def.Source.Tool, parseErr: err, result: result}
+		return sourcePage{}, &notJSONError{role: roleSource, tool: def.Source.Tool, parseErr: err, result: result}
 	}
 	list, ok := dotpath.Get(decoded, def.Source.Items).([]any)
 	if !ok {
@@ -336,17 +345,17 @@ func listItems(ctx context.Context, def *Definition, agentID string, tools ToolR
 		if def.Source.Items != "" {
 			where = "source.items " + strconv.Quote(def.Source.Items)
 		}
-		return nil, fmt.Errorf("source %s returned no list at %s", def.Source.Tool, where)
+		return sourcePage{}, fmt.Errorf("source %s returned no list at %s", def.Source.Tool, where)
 	}
 	items := make([]listedItem, 0, len(list))
 	for i, el := range list {
 		id, ok := itemID(dotpath.Get(el, def.Source.ID))
 		if !ok {
-			return nil, fmt.Errorf("source.id %q resolves to nothing in element %d of the source's list", def.Source.ID, i)
+			return sourcePage{}, fmt.Errorf("source.id %q resolves to nothing in element %d of the source's list", def.Source.ID, i)
 		}
 		items = append(items, listedItem{index: i, id: id, value: el})
 	}
-	return items, nil
+	return sourcePage{result: decoded, items: items}, nil
 }
 
 // itemID turns a selected id into its string: a non-empty string or a

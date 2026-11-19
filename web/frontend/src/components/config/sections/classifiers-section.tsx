@@ -56,6 +56,11 @@ const CLASSIFIER_FIELDS = [
     def: "max_activity_hours",
   },
   {
+    key: "classifierMaxSourcePages",
+    label: "classifiers_max_source_pages",
+    def: "max_source_pages",
+  },
+  {
     key: "classifierMinEverySeconds",
     label: "classifiers_min_every_seconds",
     def: "min_every_seconds",

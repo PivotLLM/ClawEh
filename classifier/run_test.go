@@ -144,7 +144,8 @@ func TestRunReplaysActionWithFirstCategory(t *testing.T) {
 		t.Fatalf("failing run = %+v", rec)
 	}
 	rows := e.processed("inbox-priority")
-	if rows["m1"].status != StatusFailed || rows["m1"].category != "urgent" || rows["m1"].attempts != 1 {
+	if rows["m1"].status != StatusFailed || rows["m1"].category != "urgent" || rows["m1"].attempts != 0 {
+		// No attempt is counted: nothing worked in the run, so the failure is not m1's own.
 		t.Errorf("m1 after a failed action = %+v", rows["m1"])
 	}
 

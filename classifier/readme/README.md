@@ -91,6 +91,9 @@ for you; a definition does not name one.
 - `source`: the tool that lists the items. `items` is the dot-path to the
   list in its result (`""` when the result is the list); `id` is the path,
   inside one element, to the item's stable ID.
+  Most list tools return a page at a time: set `source.paging` (see
+  "Sources that return pages"), or items past the first page are never
+  seen.
 - `fetch` (optional): the tool that reads one item. `fields` is what the
   model sees, by name; everything else is dropped. `html` names the fields
   whose HTML is reduced to text. The fields are cut to `max_chars` together,
@@ -101,9 +104,10 @@ for you; a definition does not name one.
   add Markdown from `files/` (see below); `instructions` may then be empty.
 - `actions`: the tool run for each category. A category with no action is
   only recorded.
-- `limits`: items per run (the rest are taken next run), items handled at
-  the same time (1 by default), and consecutive failures that stop a run (5
-  by default).
+- `limits`: items per run (`items_per_run`; the rest are taken next run),
+  items handled at the same time (`parallel`, 1 by default), consecutive
+  failures that stop a run (`stop_after_failures`, 5 by default), and how
+  often a failing item is tried (`max_attempts`, 5 by default).
 - `report.summary`: `on_problems` (default) posts a summary to your chat
   when items failed or were unclassified, or the run failed, `always` after
   every run that handled items or failed, `never` not at all.
@@ -112,6 +116,73 @@ for you; a definition does not name one.
 - `activity_hours`: how long the activity log is kept (72 by default).
 
 `owner`, `created_at` and `updated_at` are written by {{HOST}}.
+
+## Sources that return pages
+
+A source without `paging` is called once per run, and what that one call
+returns is all the classifier ever sees. If the tool returns its list a page
+at a time (most mail, ticket and file services do, often 50 or 100 items),
+items past the first page are invisible, and once that page is full of
+items that stay in the source (ones you leave in place, unclassified or
+failed ones, and in a dry run every item) nothing new is ever handled, with
+no error. Set `source.paging` for any such tool. Two modes:
+
+- `offset`, for a tool that takes the number of items to skip:
+
+  ```json
+  "source": {
+    "tool": "mail_list_messages",
+    "args": { "folder": "Inbox", "top": 100, "orderby": "receivedDateTime asc" },
+    "items": "messages",
+    "id": "id",
+    "paging": { "mode": "offset", "offset_arg": "skip" }
+  }
+  ```
+
+  `offset_arg` names that argument. It starts at its value in `source.args`
+  (0 when left out) and grows by the number of items each page returned; the
+  list ends at a page with no items. Keep the page size the tool is asked
+  for (`top` here) within what the tool can return in one result.
+- `cursor`, for a tool whose result names the next page:
+
+  ```json
+  "paging": { "mode": "cursor", "cursor_arg": "pageToken", "next": "nextPageToken" }
+  ```
+
+  `next` is the dot-path, in the tool's result, to the next page's cursor (a
+  text or a number); it is passed back in `cursor_arg`, which `source.args`
+  must leave out. The list ends at a result without one.
+
+How a run lists:
+
+- All pages are listed before any item is handled, so an action that moves
+  an item out of the source cannot shift the pages.
+- It stops asking for pages once it has found `items_per_run` items to
+  handle. The run's `listing` is then `items_per_run` and `more_items` is
+  true: the rest are taken by the next runs. `complete` means the source was
+  listed to its end.
+- `paging.max_pages` bounds the pages of one run (the install's
+  `max_source_pages` when omitted). A run that reaches it with pages left
+  handles what it listed and then fails (`listing` is `max_pages`): the
+  items after it were not seen. Make `source.args` list fewer items (a
+  shorter time window, a filter) or raise `max_pages`.
+- A tool that ignores the paging argument returns the same page again; the
+  run fails saying so. Check the argument's name with the tool's
+  description.
+- `classifier_create`, `classifier_update` and `classifier_validate` call
+  only the first page. `classifier_test` and `classifier_rerun` with an
+  `item_id` list page after page until they find it.
+
+Ask the tool for oldest first when it can sort (as `orderby` above): new
+items then arrive at the end, a backlog is handled in date order, and pages
+do not shift while they are listed.
+
+To work through a large backlog (months of mail, say), widen what
+`source.args` lists and leave the rest alone: each run takes
+`items_per_run` items, and `classifier_status` shows `more_items` until the
+backlog is done. Every item costs one model call, so tell the user the
+size first; a dry run of the same backlog costs the same again when it goes
+live.
 
 ## Rules in Markdown
 
@@ -290,9 +361,22 @@ resolves to nothing fails that item; nothing empty is passed to a tool.
 
 ## Runs and state
 
-- An item is done once its action succeeds. A failed item is tried again on
-  the next run; if the model had already answered, its first answer is
-  reused. An unclassified item is not tried again.
+- An item is handled once, by its `source.id`: it is done once its action
+  succeeds and is never sent to the model again, however long it stays in
+  the source. An unclassified item is not tried again either. The id must
+  not change while the item is in the source; if the service gives an item a
+  new id when it is moved, an item moved back is a new item.
+- A failed item is tried again on later runs; if the model had already
+  answered, its first answer is reused. A run takes items whose action is
+  pending first, then new items in source order, then failed ones, so items
+  that keep failing never hold up new ones.
+- After `limits.max_attempts` attempts (5 by default) a failing item is
+  left alone: `classifier_status` counts these as `gave_up`
+  (`dry_run_gave_up` for a dry run), and `classifier_activity` with
+  `"outcome": "failed"` shows their errors. An attempt counts only in a run
+  where at least one other item was handled without failing, so an outage
+  of a tool or the model uses up no attempts. Any `classifier_update` tries
+  them all again; `classifier_rerun` tries one.
 - Changing the rules (in the definition or in its Markdown files),
   categories or actions does not reprocess items already handled. Use `classifier_rerun` to reclassify one item on purpose.
 - `dry_run` records decisions without running actions, kept apart from the
@@ -309,7 +393,8 @@ resolves to nothing fails that item; nothing empty is passed to a tool.
 - When the model cannot be used (none set, or in cooldown), the run stops and
   its items are tried again on the next run.
 - When a run fails (your Markdown files can't be read or are too long, the
-  source tool fails, no usable model, `stop_after_failures` items failed in a
+  source tool fails, its listing reached `max_pages` with pages left, no
+  usable model, `stop_after_failures` items failed in a
   row, or someone edited the definition file by hand and it is no longer
   valid), it is logged and you get a message in your conversation:
   `[System: classifier] Classifier inbox: the run failed (<cause>). <advice>`
@@ -359,7 +444,7 @@ resolves to nothing fails that item; nothing empty is passed to a tool.
 - `classifier_create`, `classifier_update` (a JSON merge patch: objects
   merge, null deletes a key, arrays are replaced whole), `classifier_delete`.
   A create or update is checked against your tools and calls the source
-  tool once.
+  tool once (its first page).
 - `classifier_validate`: the same checks without saving.
 - `classifier_list`, `classifier_get`, `classifier_status`.
 - `classifier_test`: classify one item (or the first listed) without acting

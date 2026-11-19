@@ -19,7 +19,7 @@ func TestClassifiersEffective(t *testing.T) {
 		ProcessedDays: 30,
 		Limits: ClassifierLimitsConfig{
 			MaxRules: 100, MaxPromptChars: 20000, MaxItemChars: 50000,
-			MaxItemsPerRun: 500, MaxParallel: 8, MaxActivityHours: 720, MinEverySeconds: 15,
+			MaxItemsPerRun: 500, MaxParallel: 8, MaxActivityHours: 720, MaxSourcePages: 100, MinEverySeconds: 15,
 		},
 	}
 	if got := (ClassifiersConfig{}).Effective(); got != defaults {

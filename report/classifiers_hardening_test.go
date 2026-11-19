@@ -20,16 +20,19 @@ import (
 )
 
 // reportTools lists one item per source tool: a_list "fail-item", b_list
-// "ok-item".
+// "ok-item" (on its first page: nothing from "skip" 1 on).
 type reportTools struct{}
 
 func (reportTools) Has(string, string) error { return nil }
 
-func (reportTools) Call(_ context.Context, _, tool string, _ map[string]any) (string, error) {
+func (reportTools) Call(_ context.Context, _, tool string, args map[string]any) (string, error) {
 	switch tool {
 	case "a_list":
 		return `[{"id":"fail-item"}]`, nil
 	case "b_list":
+		if skip, ok := args["skip"].(float64); ok && skip > 0 {
+			return `[]`, nil
+		}
 		return `[{"id":"ok-item"}]`, nil
 	}
 	return "", fmt.Errorf("no tool %s", tool)
@@ -66,7 +69,10 @@ func TestCollectAgents_ClassifiersLastRun(t *testing.T) {
 	failing["dry_run"] = false
 	failing["source"] = map[string]any{"tool": "a_list", "items": "", "id": "id"}
 	working := classifierDef("working", "bob")
-	working["source"] = map[string]any{"tool": "b_list", "items": "", "id": "id"}
+	working["source"] = map[string]any{
+		"tool": "b_list", "items": "", "id": "id",
+		"paging": map[string]any{"mode": "offset", "offset_arg": "skip"},
+	}
 	writeClassifier(t, cfg, "bob", "failing", failing)
 	writeClassifier(t, cfg, "bob", "working", working)
 
@@ -110,7 +116,7 @@ func TestCollectAgents_ClassifiersLastRun(t *testing.T) {
 		t.Errorf("failing error = %q (%d runes), want cut to %d plus the mark", f[6], len([]rune(f[6])), maxClassifierErrorChars)
 	}
 	w := rows["working"]
-	if w == nil || !strings.HasSuffix(w[4], ", ok (dry run)") || w[5] != "new 1, acted 0, unclassified 0, failed 0" || w[6] != "" || marked["working"] {
+	if w == nil || !strings.HasSuffix(w[4], ", ok (dry run)") || w[5] != "new 1, acted 0, unclassified 0, failed 0; listed 1 on 2 page(s)" || w[6] != "" || marked["working"] {
 		t.Errorf("working row = %v marked=%v", w, marked["working"])
 	}
 }

@@ -14,6 +14,7 @@ describe("buildFormFromConfig classifiers", () => {
           max_items_per_run: 5,
           max_parallel: 6,
           max_activity_hours: 7,
+          max_source_pages: 9,
           min_every_seconds: 8,
         },
       },
@@ -26,6 +27,7 @@ describe("buildFormFromConfig classifiers", () => {
       classifierMaxItemsPerRun: form.classifierMaxItemsPerRun,
       classifierMaxParallel: form.classifierMaxParallel,
       classifierMaxActivityHours: form.classifierMaxActivityHours,
+      classifierMaxSourcePages: form.classifierMaxSourcePages,
       classifierMinEverySeconds: form.classifierMinEverySeconds,
     }).toEqual({
       classifierProcessedDays: "1",
@@ -35,6 +37,7 @@ describe("buildFormFromConfig classifiers", () => {
       classifierMaxItemsPerRun: "5",
       classifierMaxParallel: "6",
       classifierMaxActivityHours: "7",
+      classifierMaxSourcePages: "9",
       classifierMinEverySeconds: "8",
     })
   })
@@ -59,6 +62,7 @@ describe("buildFormFromConfig classifiers", () => {
       "classifierMaxItemsPerRun",
       "classifierMaxParallel",
       "classifierMaxActivityHours",
+      "classifierMaxSourcePages",
       "classifierMinEverySeconds",
     ] as const
     const pick = (f: typeof form) =>

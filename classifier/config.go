@@ -34,13 +34,44 @@ type Trigger struct {
 
 // Source is the tool that lists the items. Items is the dot-path to the list
 // in its result ("" = the whole result); ID the path, inside one element, to
-// the item's stable id.
+// the item's stable id. Paging, when set, says how the tool is asked for
+// the pages after the first (paging.go); without it the tool is called once
+// and what that call returns is all the classifier ever sees.
 type Source struct {
-	Tool  string         `json:"tool"`
-	Args  map[string]any `json:"args,omitempty"`
-	Items string         `json:"items"`
-	ID    string         `json:"id"`
+	Tool   string         `json:"tool"`
+	Args   map[string]any `json:"args,omitempty"`
+	Items  string         `json:"items"`
+	ID     string         `json:"id"`
+	Paging *Paging        `json:"paging,omitempty"`
 }
+
+// Paging says how a source tool is asked for more than its first page.
+//
+// PagingOffset: the argument OffsetArg is the number of items to skip. It
+// starts at the value source.args gives it (0 when absent) and grows by the
+// number of items each page returned; the list ends at a page with no items.
+//
+// PagingCursor: the tool's result names the next page at the dot-path Next
+// (a text or a number); it is passed back in the argument CursorArg. The
+// list ends at a result without one.
+//
+// MaxPages bounds the pages one run lists (0 = the install's
+// max_source_pages).
+type Paging struct {
+	Mode      string `json:"mode"`
+	OffsetArg string `json:"offset_arg,omitempty"`
+	CursorArg string `json:"cursor_arg,omitempty"`
+	Next      string `json:"next,omitempty"`
+	MaxPages  int    `json:"max_pages,omitempty"`
+}
+
+// The values of source.paging.mode.
+const (
+	PagingOffset = "offset"
+	PagingCursor = "cursor"
+)
+
+var pagingModes = []string{PagingOffset, PagingCursor}
 
 // Fetch is the optional tool that reads one item. Fields names what is sent
 // to the model (name -> dot-path in the result); HTML names the fields whose
@@ -80,11 +111,14 @@ type Action struct {
 }
 
 // Limits bounds one run. 0 uses the default: ItemsPerRun the install's
-// max_items_per_run, Parallel 1, StopAfterFailures DefaultStopAfterFailures.
+// max_items_per_run, Parallel 1, StopAfterFailures DefaultStopAfterFailures,
+// MaxAttempts DefaultMaxAttempts. MaxAttempts is how often a failing item is
+// tried before it is left alone (attempts.go).
 type Limits struct {
 	ItemsPerRun       int `json:"items_per_run,omitempty"`
 	Parallel          int `json:"parallel,omitempty"`
 	StopAfterFailures int `json:"stop_after_failures,omitempty"`
+	MaxAttempts       int `json:"max_attempts,omitempty"`
 }
 
 // Report says when a run's summary is posted to the owning agent's chat,
@@ -113,6 +147,11 @@ const (
 	DefaultActivityHours     = 72
 	DefaultParallel          = 1
 	DefaultStopAfterFailures = 5
+	DefaultMaxAttempts       = 5
+	// DefaultMaxSourcePages bounds the pages one run lists when neither the
+	// definition nor the install sets a maximum: a paged source is never
+	// listed without a bound.
+	DefaultMaxSourcePages = 100
 )
 
 // ActivityValueMax caps each field value stored in the activity log, in
@@ -133,6 +172,7 @@ type Ceilings struct {
 	MaxItemsPerRun   int
 	MaxParallel      int
 	MaxActivityHours int
+	MaxSourcePages   int
 	MinEverySeconds  int
 	ProcessedDays    int
 }
@@ -171,6 +211,25 @@ func (d *Definition) stopAfterFailures() int {
 		return d.Limits.StopAfterFailures
 	}
 	return DefaultStopAfterFailures
+}
+
+// maxAttempts is how often a failing item is tried.
+func (d *Definition) maxAttempts() int {
+	if d.Limits.MaxAttempts > 0 {
+		return d.Limits.MaxAttempts
+	}
+	return DefaultMaxAttempts
+}
+
+// maxPages is the number of pages one run lists of a paged source under c.
+func (d *Definition) maxPages(c Ceilings) int {
+	if p := d.Source.Paging; p != nil && p.MaxPages > 0 {
+		return p.MaxPages
+	}
+	if c.MaxSourcePages > 0 {
+		return c.MaxSourcePages
+	}
+	return DefaultMaxSourcePages
 }
 
 // itemBudget is the characters the fields of one item may take together.

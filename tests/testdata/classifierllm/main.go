@@ -30,7 +30,8 @@
 //
 // It is also an external MCP server (streamable HTTP at /mcp) with a
 // mailbox: "list" returns {"items":[{"id":"x1"}]} and "read" the message
-// with that id, whose body says INVOICE. ClawEh marks such results as
+// with that id, whose body says INVOICE; "pages" lists five messages p1..p5
+// two at a time from its "skip" argument on. ClawEh marks such results as
 // untrusted content for the model; a classifier must read them as JSON.
 //
 // With -admin-credentials <CLAW_HOME> it instead writes the WebUI admin
@@ -65,6 +66,17 @@ func mailServer() *server.MCPServer {
 		func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			log.Printf("mcp: list")
 			return mcp.NewToolResultText(`{"items":[{"id":"x1"}]}`), nil
+		})
+	s.AddTool(mcp.NewTool("pages", mcp.WithDescription("List the messages, two at a time"), mcp.WithNumber("skip")),
+		func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			const total, size = 5, 2
+			skip := min(max(req.GetInt("skip", 0), 0), total)
+			log.Printf("mcp: pages skip=%d", skip)
+			items := []string{}
+			for i := skip; i < min(skip+size, total); i++ {
+				items = append(items, fmt.Sprintf(`{"id":"p%d"}`, i+1))
+			}
+			return mcp.NewToolResultText(`{"items":[` + strings.Join(items, ",") + `]}`), nil
 		})
 	s.AddTool(mcp.NewTool("read", mcp.WithDescription("Read one message"), mcp.WithString("id", mcp.Required())),
 		func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

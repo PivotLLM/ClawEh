@@ -109,10 +109,11 @@ func TestFailedItemsHaveACause(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			items, err := listItems(context.Background(), d, "alice", e.tools)
+			listed, err := listSource(context.Background(), d, "alice", e.tools, Ceilings{}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
+			items := listed.items
 			st, err := e.svc.state(context.Background(), e.scope.BaseDirectory)
 			if err != nil {
 				t.Fatal(err)

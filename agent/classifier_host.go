@@ -113,6 +113,7 @@ func (h *ClassifierHost) Ceilings() classifier.Ceilings {
 		MaxItemsPerRun:   c.Limits.MaxItemsPerRun,
 		MaxParallel:      c.Limits.MaxParallel,
 		MaxActivityHours: c.Limits.MaxActivityHours,
+		MaxSourcePages:   c.Limits.MaxSourcePages,
 		MinEverySeconds:  c.Limits.MinEverySeconds,
 		ProcessedDays:    c.ProcessedDays,
 	}

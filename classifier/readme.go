@@ -31,6 +31,7 @@ func guide(c Ceilings, productName string) string {
 		{"max_items_per_run", c.MaxItemsPerRun},
 		{"max_parallel", c.MaxParallel},
 		{"max_activity_hours", c.MaxActivityHours},
+		{"max_source_pages", c.MaxSourcePages},
 		{"min_every_seconds", c.MinEverySeconds},
 	} {
 		if f.value > 0 {

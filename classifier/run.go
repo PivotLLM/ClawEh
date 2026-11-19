@@ -259,17 +259,20 @@ func (s *Service) handleItem(ctx context.Context, scope Scope, def *Definition, 
 		}
 		return d
 	case dry:
-		if d.Outcome == OutcomeFailed {
-			break // not recorded: the next dry run tries it again
-		}
 		category := d.Category
-		if d.Outcome == OutcomeUnclassified {
+		switch d.Outcome {
+		case OutcomeFailed:
+		case OutcomeUnclassified:
 			category = Unclassified
-		} else {
+		default:
 			d.Outcome = OutcomeRecorded
-			if previewAction(def, item, &d); d.Outcome == OutcomeFailed {
-				break // the live action would fail; not recorded, so the next dry run tries it again
-			}
+			previewAction(def, item, &d) // fails the item when the live action would fail
+		}
+		if d.Outcome == OutcomeFailed {
+			// No decision is recorded, so the next dry run tries it again;
+			// the failure is, so its attempts can be counted.
+			storeErr(st.setDryFailed(wctx, cls, item.id, d.Error, now))
+			break
 		}
 		storeErr(st.setDry(wctx, cls, item.id, category, d.Reason, d.Model, now))
 	case d.Outcome == OutcomeFailed:
@@ -312,8 +315,12 @@ func (s *Service) handleItem(ctx context.Context, scope Scope, def *Definition, 
 
 // runClassifier runs one classifier once (design 4.1, 6, 7): it prunes the
 // state, checks the definition against the current maximums and the agent's
-// grants, lists the items, skips those already handled, and handles up to
-// items_per_run of the rest, parallel at a time, in source order. It stops
+// grants, lists the items (every page of a paged source, until it has
+// items_per_run to handle), skips those already handled or given up on, and
+// handles up to items_per_run of the rest, parallel at a time: items whose
+// action is pending, then new ones in source order, then failed ones
+// (backlog.go). A listing that ended at the page maximum fails the run once
+// its items are handled: the items after it were not seen. It stops
 // starting items after stop_after_failures consecutive failures (a failed
 // run, quoting the last item's error), when stop is closed (the classifier
 // was disabled or deleted, or the agent's switch turned off: the items in
@@ -350,8 +357,8 @@ func (s *Service) runClassifier(ctx context.Context, scope Scope, def *Definitio
 		if rec.Status == RunError {
 			logf = s.host.Logger.Warnf
 		}
-		logf("classifier=%s agent=%s: run %s: %d listed, %d new, %d classified, %d acted, %d unclassified, %d failed%s",
-			def.ID, scope.AgentID, rec.Status, rec.Listed, rec.NewItems, rec.Classified, rec.Acted, rec.Unclassified, rec.Failed,
+		logf("classifier=%s agent=%s: run %s: %d listed%s, %d new, %d classified, %d acted, %d unclassified, %d failed%s",
+			def.ID, scope.AgentID, rec.Status, rec.Listed, listingSuffix(rec), rec.NewItems, rec.Classified, rec.Acted, rec.Unclassified, rec.Failed,
 			errSuffix(rec.Error))
 		s.afterRun(ctx, scope, def, st, rec, cooling)
 		return rec
@@ -383,24 +390,43 @@ func (s *Service) runClassifier(ctx context.Context, scope Scope, def *Definitio
 	if err != nil {
 		return fail(err)
 	}
-	items, err := listItems(ctx, def, scope.AgentID, s.host.Tools)
-	if err != nil {
-		return fail(err)
-	}
-	rec.Listed = len(items)
-
-	todo, reuse, err := s.pending(ctx, st, def, items)
-	if err != nil {
+	stateUnread := func(err error) RunRecord {
 		if ctx.Err() == nil {
 			s.host.Logger.Errorf("classifier=%s agent=%s: read state: %v", def.ID, scope.AgentID, err)
 		}
 		return failWith("the classifier's state could not be read", cause{kind: causeOperator})
 	}
-	// After pending marked every listed item seen: an item still listed is
-	// never pruned.
+	// What is known of every item, read before the source is listed: the
+	// listing stops once it has found the items this run takes.
+	known, err := s.known(ctx, st, def)
+	if err != nil {
+		return stateUnread(err)
+	}
+	perRun := def.itemsPerRun(s.host.ceilings())
+	found := 0
+	listed, err := listSource(ctx, def, scope.AgentID, s.host.Tools, s.host.ceilings(), func(added []listedItem) bool {
+		for _, it := range added {
+			if known.first(it.id) {
+				found++
+			}
+		}
+		return perRun > 0 && found >= perRun
+	})
+	if err != nil {
+		return fail(err)
+	}
+	rec.Listed, rec.Pages, rec.Listing = len(listed.items), listed.pages, listed.end
+
+	if err = s.markSeen(ctx, st, def, listed.items); err != nil {
+		return stateUnread(err)
+	}
+	// After every listed item was marked seen: an item still listed is never
+	// pruned.
 	s.prune(ctx, st, def, true)
-	if limit := def.itemsPerRun(s.host.ceilings()); limit > 0 && len(todo) > limit {
-		todo = todo[:limit]
+	todo, reuse := known.pending(listed.items)
+	rec.MoreItems = listed.end == ListEnough
+	if perRun > 0 && len(todo) > perRun {
+		todo, rec.MoreItems = todo[:perRun], true
 	}
 	rec.NewItems = len(todo)
 
@@ -414,6 +440,7 @@ func (s *Service) runClassifier(ctx context.Context, scope Scope, def *Definitio
 		consecutive int
 		fatal       error
 		stoppedBy   string
+		failedIDs   []string        // the items that failed, for their attempts
 		failedOut   bool            // stopped by stop_after_failures: a failed run
 		lastCause   cause           // the run's cause when failedOut
 		streak      []streakFailure // the failures in a row
@@ -466,6 +493,9 @@ func (s *Service) runClassifier(ctx context.Context, scope Scope, def *Definitio
 			case OutcomeFailed:
 				rec.Failed++
 				consecutive++
+				if d.fatal == nil {
+					failedIDs = append(failedIDs, item.id)
+				}
 				c := d.cause
 				if c.summary == "" {
 					c.summary = d.Error // never an empty cause in the run's error
@@ -503,6 +533,7 @@ func (s *Service) runClassifier(ctx context.Context, scope Scope, def *Definitio
 		// not a failure even when items had failed in a row.
 		stoppedBy, failedOut = stoppedByService, false
 	}
+	s.countAttempts(ctx, scope, def, st, rec, failedIDs)
 	switch {
 	case fatal != nil:
 		rec.Status, rec.Error, rec.cause = RunError, s.host.redact(fatal.Error()), s.redactCause(causeOf(fatal))
@@ -511,6 +542,11 @@ func (s *Service) runClassifier(ctx context.Context, scope Scope, def *Definitio
 		rec.Status, rec.Error, rec.cause, rec.lastItemError = RunError, stoppedBy, lastCause, lastCause.detail
 	case stoppedBy != "":
 		rec.Status, rec.Error = RunStopped, stoppedBy
+	case listed.end == ListMaxPages:
+		// Everything listed was handled; what the listing did not reach was
+		// not, and will not be while the pages before it stay full.
+		tErr := &truncatedError{tool: def.Source.Tool, pages: listed.pages, ceiling: s.host.ceilings().MaxSourcePages}
+		rec.Status, rec.Error, rec.cause = RunError, tErr.Error(), causeOf(tErr)
 	}
 	return finish()
 }
@@ -584,72 +620,20 @@ func (s *Service) stateNotice(base string, now time.Time) bool {
 	return true
 }
 
+// listingSuffix says, in the run's log line, how a paged listing went:
+// " (3 pages, complete)".
+func listingSuffix(rec RunRecord) string {
+	if rec.Listing == "" {
+		return ""
+	}
+	return fmt.Sprintf(" (%s, %s)", pagePlural(rec.Pages), rec.Listing)
+}
+
 func errSuffix(e string) string {
 	if e == "" {
 		return ""
 	}
 	return " (" + e + ")"
-}
-
-// pending returns the items a run takes, in source order (design 4.1d, 7.1),
-// each id once: a live run skips items acted or unclassified and takes again
-// those classified with the action pending (reusing their category) and
-// failed; a dry run skips items with a dry-run decision. Every listed item's
-// row is marked seen now, so retention runs from when it leaves the list.
-func (s *Service) pending(ctx context.Context, st *stateDB, def *Definition, items []listedItem) ([]listedItem, map[string]*processedRow, error) {
-	cls := NormalizeID(def.ID)
-	reuse := map[string]*processedRow{}
-	var todo []listedItem
-	var unique []listedItem
-	seen := map[string]bool{}
-	ids := make([]string, 0, len(items))
-	for _, it := range items {
-		if seen[it.id] {
-			continue // a list naming an item twice handles it once
-		}
-		seen[it.id] = true
-		unique = append(unique, it)
-		ids = append(ids, it.id)
-	}
-	table := "processed"
-	if def.DryRun {
-		table = "dry_run"
-	}
-	if err := st.markSeen(ctx, table, cls, ids, s.host.clock().Now()); err != nil {
-		return nil, nil, err
-	}
-	if def.DryRun {
-		decided, err := st.dryDecided(ctx, cls)
-		if err != nil {
-			return nil, nil, err
-		}
-		for _, it := range unique {
-			if !decided[it.id] {
-				todo = append(todo, it)
-			}
-		}
-		return todo, reuse, nil
-	}
-	rows, err := st.processed(ctx, cls)
-	if err != nil {
-		return nil, nil, err
-	}
-	for _, it := range unique {
-		row, ok := rows[it.id]
-		if !ok {
-			todo = append(todo, it)
-			continue
-		}
-		switch row.status {
-		case StatusActed, StatusUnclassified:
-			continue
-		default:
-			r := row
-			reuse[it.id] = &r
-			todo = append(todo, it)
-		}
-	}
-	return todo, reuse, nil
 }
 
 // prune deletes activity older than the definition's activity_hours and,
@@ -809,6 +793,9 @@ func summaryText(def *Definition, rec RunRecord) string {
 		b.WriteString(" (dry run)")
 	}
 	fmt.Fprintf(&b, ": %d new items, %d acted, %d unclassified, %d failed", rec.NewItems, rec.Acted, rec.Unclassified, rec.Failed)
+	if rec.MoreItems {
+		b.WriteString("; more items are left for the next run")
+	}
 	b.WriteString(errSuffix(rec.Error))
 	b.WriteString(". Use classifier_activity for details.")
 	return b.String()

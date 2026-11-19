@@ -27,6 +27,7 @@ type ClassifierLimitsConfig struct {
 	MaxItemsPerRun   int `json:"max_items_per_run,omitempty"`
 	MaxParallel      int `json:"max_parallel,omitempty"`
 	MaxActivityHours int `json:"max_activity_hours,omitempty"`
+	MaxSourcePages   int `json:"max_source_pages,omitempty"`
 	MinEverySeconds  int `json:"min_every_seconds,omitempty"`
 }
 
@@ -41,6 +42,7 @@ const (
 	DefaultClassifierMaxItemsPerRun   = 500
 	DefaultClassifierMaxParallel      = 8
 	DefaultClassifierMaxActivityHours = 720
+	DefaultClassifierMaxSourcePages   = 100
 	DefaultClassifierMinEverySeconds  = 15
 )
 
@@ -62,6 +64,7 @@ func (c ClassifiersConfig) Effective() ClassifiersConfig {
 			MaxItemsPerRun:   orDefault(l.MaxItemsPerRun, DefaultClassifierMaxItemsPerRun),
 			MaxParallel:      orDefault(l.MaxParallel, DefaultClassifierMaxParallel),
 			MaxActivityHours: orDefault(l.MaxActivityHours, DefaultClassifierMaxActivityHours),
+			MaxSourcePages:   orDefault(l.MaxSourcePages, DefaultClassifierMaxSourcePages),
 			MinEverySeconds:  orDefault(l.MinEverySeconds, DefaultClassifierMinEverySeconds),
 		},
 	}
@@ -82,6 +85,7 @@ func (c ClassifiersConfig) Validate() error {
 		{"maximum for max_items_per_run", l.MaxItemsPerRun},
 		{"maximum for max_parallel", l.MaxParallel},
 		{"maximum for max_activity_hours", l.MaxActivityHours},
+		{"maximum for max_source_pages", l.MaxSourcePages},
 		{"minimum for min_every_seconds", l.MinEverySeconds},
 	} {
 		if f.value < 0 {

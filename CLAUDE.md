@@ -552,7 +552,8 @@ shortcoming in the module, never here.
   `internal/gateway/classifier.go` BEFORE `NewAgentLoop`, started once the loop
   has `Started()`, closed in `shutdownGateway` right after the forum, `Reload()`
   on every config reload). A classifier lists items with a source tool, skips
-  ids already handled, fetches the named fields, asks the agent's ONE classifier
+  ids already handled (a paged source, `source.paging`, page after page:
+  see below), fetches the named fields, asks the agent's ONE classifier
   model (no fallback; the model never has tools: one `Chat` with no tool
   definitions, reply parsed strictly, one retry, else `unclassified`) and runs
   the category's action. Definitions are `<workspace>/classifiers/<id>.json`
@@ -695,15 +696,37 @@ shortcoming in the module, never here.
   create/update/validate check only what exists (`checkInstructions`);
   `Test` returns `TestResult` with `system_prompt`. Decisions: interval trigger
   only (`trigger.every_seconds`, the core's own timer, nothing in cron);
-  create/update also call the source tool once; `classifier_*` tools are
+  create/update also call the source tool once (its first page); `classifier_*` tools are
   refused as source, fetch or action; per-definition defaults parallel 1,
-  stop_after_failures 5, items_per_run = `max_items_per_run`, `fetch.max_chars`
-  = `max_item_chars`, `activity_hours` 72. Hand edits are re-read on mtime/size
+  stop_after_failures 5, max_attempts 5, items_per_run = `max_items_per_run`,
+  `source.paging.max_pages` = `max_source_pages`, `fetch.max_chars`
+  = `max_item_chars`, `activity_hours` 72.
+  **Listing** (`classifier/paging.go`, `listSource`): without
+  `source.paging` the source is called once; with it (`mode` `offset`:
+  `offset_arg` grows by the items each page returned, from its value in
+  `source.args`, until an empty page; `cursor`: the result's `next` path is
+  passed back in `cursor_arg` until a result has none) every page is listed
+  before any item is handled, until the source ends (`ListComplete`), the
+  run found `items_per_run` items to take (`ListEnough`, early stop), or
+  the page maximum (`ListMaxPages`: the run handles what it listed, then
+  ends `RunError` with `truncatedError`). A page with only ids already
+  listed, or a cursor given twice, fails the run (the tool ignores the
+  argument). `RunRecord` has `Pages`, `Listing`, `MoreItems` (runs columns
+  added by `addedRunColumns`); `pickItem` (test, rerun) lists only as far
+  as the item. **Order and retries** (`classifier/backlog.go`): a run
+  takes action-pending items, then new ones in source order, then failed
+  ones; a failed item is skipped once `limits.max_attempts` attempts were
+  counted (`Status.GaveUp`/`DryRunGaveUp`), and an attempt is counted only
+  at the end of a run that handled another item without failing
+  (`countAttempts`), never for a model that cannot be used; a dry run's
+  failures are rows of `dry_failed`. `Create`/`Update` reset the attempts
+  (`resetAttempts`, in `clearFailures`); `migrateAttempts` zeroes the
+  counts of a state.db written before the limit, once. Hand edits are re-read on mtime/size
   change and validated the same way; an invalid file is logged and reported to its agent once per change, never run
   or deleted. Install-wide `classifiers` (`config.ClassifiersConfig`,
   `config/classifiers.go`: `processed_days` 30, `limits.max_rules` 100,
   `max_prompt_chars` 20000, `max_item_chars` 50000, `max_items_per_run` 500,
-  `max_parallel` 8, `max_activity_hours` 720, `min_every_seconds` 15, the
+  `max_parallel` 8, `max_activity_hours` 720, `max_source_pages` 100, `min_every_seconds` 15, the
   minimum `trigger.every_seconds`; 0/absent = default, negative refused; System page **Classifiers**, `classifiers-section.tsx`, defaults
   shared with the frontend through `config/testdata/classifier_defaults.json`). A classifier
   model must be in the Classification list on Task models (`Config.ClassifierModelUsable`,
@@ -1121,7 +1144,7 @@ Hard-won learnings (don't relearn these):
 - A change is not done until its tests are updated AND passing. Run `make test` before calling anything done — it is the whole suite, lint included, and the thing a pipeline would gate on. `go test ./...` is the fast Go-only loop for iterating.
 - **Add tests for new behavior.** New config flags, gating, and branches need a test for both the on and off paths — not just a tweak that makes existing tests compile.
 - **Keep test fixtures in sync with renames/refactors.** When tool names, config keys, or APIs change, grep the whole repo (including `*_test.go`, `test.sh`, `tests/`) and update every reference. A rename that compiles can still break integration tests.
-- **MCP integration tests are part of the suite.** `make test` runs `test.sh`, which runs `tests/test_mcpserver.sh` via the external `probe` binary against an ephemeral ClawEh instance. Every provider tool must be exposed in the test config and probed: success for hermetic tools, graceful-error probes for network/LLM tools (web, skill, agent_spawn). Add a probe case when you add a tool. After it, `test.sh` runs `tests/test_classifier.sh`, the classifiers end to end on a gateway of its own: `tests/testdata/classifierllm` is the stub model (a fixed category per marker in the item) and a stub Telegram Bot API for the agent's chat (it also writes the admin account, `-admin-credentials`); the script checks the moved files, `state.db`, the activity log, no reprocessing, a dry run, the problem summary, an invalid hand-edited definition (log and Check Up) and the agents-area modes. Then `tests/test_task_models.sh` runs task models end to end on a gateway of its own: `tests/testdata/taskmodelsllm` is the stub vendor (OpenAI-style chat with text and image output, `/images/generations` and `/images/edits`, `/audio/speech`, `/audio/transcriptions`, and Gemini `generateContent` TTS returning L16 PCM; a model `down-1` answers 503); the script drives `agent_spawn` with `kind` over the MCP host with service tokens for every kind (wait mode, one callback) and checks the result text, the files under `files/generated/<date>/` with the agents-area modes, the WAV header, the fallback past the 503 model, the grant refusal, the `task_model` audit rows and that nothing is written outside the workspaces. Then `tests/test_coding_harness.sh` runs the coding harness end to end on a gateway of its own (needs `git`): one agent whose `tools` are exactly the ten coding tools, a git repository in its `files/` (root and nested `.gitignore`, ignored copies of the function it looks for) and a read-only allowed folder outside the workspace; over the MCP host with the agent's service token it globs, searches with `include`/`context`, reads, edits and counts, writes a file and edits it with the line tools, runs `git diff --stat`/`git status` through `shell_exec`, reads the allowed folder by absolute path and checks that writes there are refused as read-only, that a tool outside the ten is not offered and that a deny pattern still refuses. Its unit-level counterpart is `tools/files/harness_matrix_test.go` (every coding file tool in every place it can be pointed at).
+- **MCP integration tests are part of the suite.** `make test` runs `test.sh`, which runs `tests/test_mcpserver.sh` via the external `probe` binary against an ephemeral ClawEh instance. Every provider tool must be exposed in the test config and probed: success for hermetic tools, graceful-error probes for network/LLM tools (web, skill, agent_spawn). Add a probe case when you add a tool. After it, `test.sh` runs `tests/test_classifier.sh`, the classifiers end to end on a gateway of its own: `tests/testdata/classifierllm` is the stub model (a fixed category per marker in the item) and a stub Telegram Bot API for the agent's chat (it also writes the admin account, `-admin-credentials`); the script checks the moved files, `state.db`, the activity log, no reprocessing, a dry run, the problem summary, an invalid hand-edited definition (log and Check Up), a paged source (the stub's MCP `pages` tool: listed to its end, and one item per run with the early stop) and the agents-area modes. Then `tests/test_task_models.sh` runs task models end to end on a gateway of its own: `tests/testdata/taskmodelsllm` is the stub vendor (OpenAI-style chat with text and image output, `/images/generations` and `/images/edits`, `/audio/speech`, `/audio/transcriptions`, and Gemini `generateContent` TTS returning L16 PCM; a model `down-1` answers 503); the script drives `agent_spawn` with `kind` over the MCP host with service tokens for every kind (wait mode, one callback) and checks the result text, the files under `files/generated/<date>/` with the agents-area modes, the WAV header, the fallback past the 503 model, the grant refusal, the `task_model` audit rows and that nothing is written outside the workspaces. Then `tests/test_coding_harness.sh` runs the coding harness end to end on a gateway of its own (needs `git`): one agent whose `tools` are exactly the ten coding tools, a git repository in its `files/` (root and nested `.gitignore`, ignored copies of the function it looks for) and a read-only allowed folder outside the workspace; over the MCP host with the agent's service token it globs, searches with `include`/`context`, reads, edits and counts, writes a file and edits it with the line tools, runs `git diff --stat`/`git status` through `shell_exec`, reads the allowed folder by absolute path and checks that writes there are refused as read-only, that a tool outside the ten is not offered and that a deny pattern still refuses. Its unit-level counterpart is `tools/files/harness_matrix_test.go` (every coding file tool in every place it can be pointed at).
 - **A test gateway must never alert the operator.** Any script that starts a gateway outside production sources `tests/lib/gateway_env.sh` (or exports the same `ALERTER_*` variables empty), so the operator's `~/.alerter` is not used and alerts go only to `<CLAW_HOME>/logs/alerts.log`.
 - After implementing, do a final grep for the old name/symbol to confirm nothing stale remains in code, tests, scripts, or docs.
 

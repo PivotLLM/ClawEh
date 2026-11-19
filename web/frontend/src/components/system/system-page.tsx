@@ -457,6 +457,11 @@ export function SystemPage() {
                 t("pages.config.classifiers_max_activity_hours"),
                 { min: 0 },
               ),
+              max_source_pages: parseOptionalIntField(
+                form.classifierMaxSourcePages,
+                t("pages.config.classifiers_max_source_pages"),
+                { min: 0 },
+              ),
               min_every_seconds: parseOptionalIntField(
                 form.classifierMinEverySeconds,
                 t("pages.config.classifiers_min_every_seconds"),

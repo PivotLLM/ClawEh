@@ -2,7 +2,57 @@
 
 ## [0.6.5]
 
+### Added
+
+- **A classifier can list a source that returns its items in pages.** Until
+  now a classifier called its source tool once per run and never saw what
+  that call left out. With a tool that returns 50 or 100 items at a time,
+  everything past the first page was invisible, and once that page was full
+  of items that stay in the source (ones a rule leaves in place,
+  unclassified or failed ones, and in a dry run every item) nothing new was
+  handled, with no error. A definition can now set `source.paging`:
+  `{"mode": "offset", "offset_arg": "<argument>"}` for a tool that takes the
+  number of items to skip, or `{"mode": "cursor", "cursor_arg":
+  "<argument>", "next": "<path>"}` for a tool whose result names the next
+  page. Every page is listed before any item is handled, the listing stops
+  once the run has found `limits.items_per_run` items to handle, and
+  `classifier_status` shows the last run's `pages`, `listing` (`complete`,
+  `items_per_run` or `max_pages`) and `more_items`; Check Up's
+  **Classifiers** table shows the items and pages listed. Existing definitions are
+  unchanged: without `source.paging` the tool is still called once, so a
+  classifier whose source returns pages needs the block added (ask its agent
+  to update it). This is also what lets a classifier work through a backlog:
+  widen what the source lists and each run takes the next `items_per_run`
+  items.
+- **`classifiers.limits.max_source_pages`** (default 100; System page,
+  **Classifiers**, *Max pages listed per run*) is the most pages of a paged
+  source one run lists, and the maximum for a definition's
+  `source.paging.max_pages`. A run that reaches it with pages left handles
+  what it listed and then fails, saying that the rest were not seen; it is
+  reported like any failed run and marked on Check Up.
+- **`limits.max_attempts`** (default 5) in a classifier definition is how
+  often a failing item is tried; see Changed.
+
 ### Changed
+
+- **A classifier stops retrying an item that keeps failing.** A failed item
+  was tried again on every run, for ever. It is now tried
+  `limits.max_attempts` times (5 by default) and then left alone;
+  `classifier_status` counts such items as `gave_up` (`dry_run_gave_up` for
+  a dry run). An attempt counts only in a run where at least one other item
+  was handled without failing, so an outage of a tool or the model uses up
+  no attempts. Any `classifier_update` of the classifier tries those items
+  again, and `classifier_rerun` tries one. Attempts counted before this
+  version are set to 0 on upgrade. To keep an item retried for longer, set
+  `limits.max_attempts` higher in the definition.
+- **A classifier run takes new items before failed ones.** A run handled its
+  items in the source's order, so with `stop_after_failures` items that keep
+  failing listed first, every run stopped before it reached anything new. A
+  run now takes the items whose action is still pending, then new items in
+  the source's order, then failed ones.
+- **A failed item of a dry run is recorded.** It still has no dry-run
+  decision and is tried again, but its attempts are counted like a live
+  item's.
 
 - **`/ready` answers 200 only once the MCP host is up.** It turned ready as
   soon as the channels had started, before the MCP host was listening, at

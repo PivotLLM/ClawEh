@@ -670,6 +670,7 @@
       "classifiers_max_items_per_run": "Max items per run",
       "classifiers_max_parallel": "Max items at once",
       "classifiers_max_activity_hours": "Max activity history (hours)",
+      "classifiers_max_source_pages": "Max pages listed per run",
       "classifiers_min_every_seconds": "Shortest run interval (seconds)",
       "classifiers_default": "Default {{value}}.",
       "default_model_models_hint": "Models tried in order; index 0 first."

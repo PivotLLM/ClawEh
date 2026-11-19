@@ -28,6 +28,7 @@ func classifierCeilings(cfg *config.Config) classifier.Ceilings {
 		MaxItemsPerRun:   c.Limits.MaxItemsPerRun,
 		MaxParallel:      c.Limits.MaxParallel,
 		MaxActivityHours: c.Limits.MaxActivityHours,
+		MaxSourcePages:   c.Limits.MaxSourcePages,
 		MinEverySeconds:  c.Limits.MinEverySeconds,
 		ProcessedDays:    c.ProcessedDays,
 	}
@@ -118,6 +119,12 @@ func classifiersTable(ctx context.Context, cfg *config.Config, a *config.AgentCo
 			}
 			counts = "new " + itoa(r.NewItems) + ", acted " + itoa(r.Acted) +
 				", unclassified " + itoa(r.Unclassified) + ", failed " + itoa(r.Failed)
+			if r.Listing != "" {
+				counts += "; listed " + itoa(r.Listed) + " on " + itoa(r.Pages) + " page(s)"
+			}
+			if r.MoreItems {
+				counts += "; more left for the next run"
+			}
 			if lastErr == "" {
 				lastErr = truncateText(r.Error, maxClassifierErrorChars)
 			}

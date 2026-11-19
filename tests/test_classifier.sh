@@ -46,6 +46,9 @@
 #     reported by the Check Up assessment API;
 #   - tools of an external MCP server (the stub's /mcp), whose results are
 #     marked untrusted for the model, work as source and fetch;
+#   - a paged source (the stub's "pages" tool, two items a page) is listed to
+#     its end through source.paging, and a second classifier limited to one
+#     item per run stops listing early and works through it run by run;
 #   - classifier_test on a source that fails gives the tool's own error, marked untrusted;
 #   - a run stopped by stop_after_failures is a failed run: a run_failed row
 #     naming the cause (the last item's error as its detail), logged at warn,
@@ -589,6 +592,43 @@ if wait_for 30 ext_decided; then
     pass "an item listed and read through MCP tools was classified from its fetched fields"
 else
     fail "ext decision: $(sql "SELECT item_id, category FROM dry_run WHERE classifier='ext'"); activity: $(sql "SELECT outcome, error FROM activity WHERE classifier='ext'")"
+fi
+
+# ---- 6b2. A paged source is listed past its first page. ----
+# The stub's "pages" tool returns five messages two at a time from "skip".
+PAGED_SRC='{"tool":"mcp_mail_pages","items":"items","id":"id","paging":{"mode":"offset","offset_arg":"skip"}}'
+PAGED_REST='"fetch":{"tool":"mcp_mail_read","args":{"id":"{{item.id}}"},"fields":{"subject":"subject","body":"body"}},"classify":'"$CLASSIFY"',"report":{"summary":"never"}}'
+PAGED='{"id":"paged","enabled":true,"dry_run":true,"trigger":{"every_seconds":2},"source":'"$PAGED_SRC"','"$PAGED_REST"
+OUT="$(mcp classifier_create "{\"definition\":$PAGED}")"
+if echo "$OUT" | grep -qF "Classifier paged created."; then pass "a paged source is accepted"; else fail "classifier_create (paged): $OUT"; fi
+paged_done() { [ "$(sql "SELECT COUNT(*) FROM dry_run WHERE classifier='paged'")" = "5" ]; }
+if wait_for 30 paged_done; then
+    pass "all five items of a source that returns two a page were classified"
+else
+    fail "paged decisions: $(sql "SELECT item_id FROM dry_run WHERE classifier='paged'"); activity: $(sql "SELECT outcome, error FROM activity WHERE classifier='paged'")"
+fi
+paged_run() { [ "$(sql "SELECT listed, pages, listing, more_items FROM runs WHERE classifier='paged'")" = "5|4|complete|0" ]; }
+if wait_for 15 paged_run; then
+    pass "the run records its listing: 5 items on 4 pages, complete"
+else
+    fail "paged run: $(sql "SELECT status, error, listed, pages, listing, more_items FROM runs WHERE classifier='paged'")"
+fi
+# One item per run: the listing stops at the first page that has one to
+# take, the run says more are left, and later runs finish the rest.
+SLOW='{"id":"slow","enabled":true,"dry_run":true,"trigger":{"every_seconds":2},"limits":{"items_per_run":1},"source":'"$PAGED_SRC"','"$PAGED_REST"
+OUT="$(mcp classifier_create "{\"definition\":$SLOW}")"
+if ! echo "$OUT" | grep -qF "Classifier slow created."; then fail "classifier_create (slow): $OUT"; fi
+slow_partial() { [ "$(sql "SELECT listing, more_items FROM runs WHERE classifier='slow'")" = "items_per_run|1" ]; }
+if wait_for 15 slow_partial; then
+    pass "a run limited to one item stops listing early and reports more items left"
+else
+    fail "slow run: $(sql "SELECT status, error, listed, pages, listing, more_items FROM runs WHERE classifier='slow'")"
+fi
+slow_done() { [ "$(sql "SELECT COUNT(*) FROM dry_run WHERE classifier='slow'")" = "5" ] && [ "$(sql "SELECT listing, more_items FROM runs WHERE classifier='slow'")" = "complete|0" ]; }
+if wait_for 45 slow_done; then
+    pass "later runs work through the rest, one item a run"
+else
+    fail "slow decisions: $(sql "SELECT COUNT(*) FROM dry_run WHERE classifier='slow'"); run: $(sql "SELECT status, error, listing, more_items FROM runs WHERE classifier='slow'")"
 fi
 
 # ---- 6c. classifier_test gives the source's own error. ----

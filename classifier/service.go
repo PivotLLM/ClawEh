@@ -68,12 +68,15 @@ func New(host Host) *Service {
 
 // Summary describes one classifier.
 type Summary struct {
-	ID      string     `json:"id"`
-	Owner   string     `json:"owner,omitempty"`
-	Enabled bool       `json:"enabled"`
-	DryRun  bool       `json:"dry_run"`
-	Trigger string     `json:"trigger,omitempty"`
-	Invalid string     `json:"invalid,omitempty"` // why the file is not run
+	ID      string `json:"id"`
+	Owner   string `json:"owner,omitempty"`
+	Enabled bool   `json:"enabled"`
+	DryRun  bool   `json:"dry_run"`
+	Trigger string `json:"trigger,omitempty"`
+	Invalid string `json:"invalid,omitempty"` // why the file is not run
+	// Paging is source.paging.mode; "" for a source called once per run,
+	// whose later pages (if it has any) are never seen.
+	Paging  string     `json:"paging,omitempty"`
 	LastRun *RunRecord `json:"last_run,omitempty"`
 	// ErrorsReported is report.errors (nil for an invalid file);
 	// ErrorsMutedUntil is set while error notices are muted.
@@ -93,6 +96,10 @@ type Status struct {
 	Recent       []Decision     `json:"recent,omitempty"`
 	LastError    string         `json:"last_error,omitempty"`
 	FailedRuns   int            `json:"failed_runs"`
+	// GaveUp is the failed items no longer tried (limits.max_attempts
+	// attempts counted), live; DryRunGaveUp the same of the dry run.
+	GaveUp       int `json:"gave_up"`
+	DryRunGaveUp int `json:"dry_run_gave_up"`
 	// RuleUsage is how often each rule was cited; nil for an invalid file
 	// or Markdown that cannot be read.
 	RuleUsage *RuleUsage `json:"rule_usage,omitempty"`
@@ -272,6 +279,9 @@ func summaryOf(path string, fi fileInfo) Summary {
 	if fi.def != nil {
 		sum.ID, sum.Enabled, sum.DryRun = fi.def.ID, fi.def.Enabled, fi.def.DryRun
 		sum.Trigger = fmt.Sprintf("every %d seconds", fi.def.Trigger.EverySeconds)
+		if p := fi.def.Source.Paging; p != nil {
+			sum.Paging = p.Mode
+		}
 		reported := fi.def.reportErrors()
 		sum.ErrorsReported = &reported
 	}
@@ -342,7 +352,7 @@ func (s *Service) check(ctx context.Context, scope Scope, def *Definition, live 
 	if err := s.checkInstructions(scope, def); err != nil {
 		return err
 	}
-	if _, err := listItems(ctx, def, scope.AgentID, s.host.Tools); err != nil {
+	if _, err := listSource(ctx, def, scope.AgentID, s.host.Tools, s.host.ceilings(), firstPage); err != nil {
 		return s.sourceRefusal(err)
 	}
 	return nil
@@ -488,6 +498,9 @@ func (s *Service) clearFailures(ctx context.Context, scope Scope, id string) {
 	if err == nil {
 		err = st.clearRunFailures(context.WithoutCancel(ctx), NormalizeID(id))
 	}
+	if err == nil {
+		err = st.resetAttempts(context.WithoutCancel(ctx), NormalizeID(id))
+	}
 	if err != nil {
 		s.host.Logger.Errorf("classifier=%s agent=%s: reset run failures: %v", id, scope.AgentID, err)
 	}
@@ -573,6 +586,13 @@ func (s *Service) Status(scope Scope, id string) ([]Status, error) {
 		if status.DryRunCounts, err = st.dryCounts(ctx, cls); err != nil {
 			return nil, err
 		}
+		maxAttempts := DefaultMaxAttempts
+		if fi, ownErr := s.owned(scope, sum.ID); ownErr == nil && fi.def != nil {
+			maxAttempts = fi.def.maxAttempts()
+		}
+		if status.GaveUp, status.DryRunGaveUp, err = st.gaveUp(ctx, cls, maxAttempts); err != nil {
+			return nil, err
+		}
 		status.FailedRuns = failuresOf(ctx, st.db, &status.Summary, s.host.clock().Now()).failures
 		recent, err := st.activity(ctx, cls, ActivityQuery{Limit: recentDecisions, itemsOnly: true})
 		if err != nil {
@@ -633,22 +653,36 @@ func (s *Service) validDefinition(scope Scope, id string) (*Definition, error) {
 }
 
 // pickItem lists the source and returns the item with itemID, or the first
-// item in source order when itemID is "".
+// item in source order when itemID is "". A paged source is listed only as
+// far as the item: its first page for the first item, else page after page
+// until the item is found, up to the page maximum.
 func (s *Service) pickItem(ctx context.Context, scope Scope, def *Definition, itemID string) (listedItem, error) {
 	if err := validateGrants(def, scope.AgentID, s.host.Tools); err != nil {
 		return listedItem{}, err
 	}
-	items, err := listItems(ctx, def, scope.AgentID, s.host.Tools)
+	var found *listedItem
+	listed, err := listSource(ctx, def, scope.AgentID, s.host.Tools, s.host.ceilings(), func(added []listedItem) bool {
+		for i := range added {
+			if itemID == "" || added[i].id == itemID {
+				found = &added[i]
+				return true
+			}
+		}
+		return itemID == "" // the first item: only the first page that has one
+	})
 	if err != nil {
 		return listedItem{}, s.sourceRefusal(err)
 	}
-	if len(items) == 0 {
+	if found != nil {
+		return *found, nil
+	}
+	if len(listed.items) == 0 {
 		return listedItem{}, ErrNoItems
 	}
 	if itemID == "" {
-		return items[0], nil
+		return listed.items[0], nil
 	}
-	for _, it := range items {
+	for _, it := range listed.items { // a source without paging: enough is not asked
 		if it.id == itemID {
 			return it, nil
 		}

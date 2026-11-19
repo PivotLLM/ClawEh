@@ -614,6 +614,7 @@ func TestClassifierHost_Ceilings(t *testing.T) {
 		MaxItemsPerRun:   config.DefaultClassifierMaxItemsPerRun,
 		MaxParallel:      config.DefaultClassifierMaxParallel,
 		MaxActivityHours: config.DefaultClassifierMaxActivityHours,
+		MaxSourcePages:   config.DefaultClassifierMaxSourcePages,
 		MinEverySeconds:  config.DefaultClassifierMinEverySeconds,
 		ProcessedDays:    config.DefaultClassifierProcessedDays,
 	}

@@ -66,6 +66,7 @@ export interface CoreConfigForm {
   classifierMaxItemsPerRun: string
   classifierMaxParallel: string
   classifierMaxActivityHours: string
+  classifierMaxSourcePages: string
   classifierMinEverySeconds: string
 }
 
@@ -91,6 +92,7 @@ export const CLASSIFIER_DEFAULTS = {
     max_items_per_run: 500,
     max_parallel: 8,
     max_activity_hours: 720,
+    max_source_pages: 100,
     min_every_seconds: 15,
   },
 } as const
@@ -150,6 +152,7 @@ export const EMPTY_FORM: CoreConfigForm = {
   classifierMaxItemsPerRun: "",
   classifierMaxParallel: "",
   classifierMaxActivityHours: "",
+  classifierMaxSourcePages: "",
   classifierMinEverySeconds: "",
 }
 
@@ -339,6 +342,7 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
     classifierMaxActivityHours: asLimitString(
       classifierLimits.max_activity_hours,
     ),
+    classifierMaxSourcePages: asLimitString(classifierLimits.max_source_pages),
     classifierMinEverySeconds: asLimitString(
       classifierLimits.min_every_seconds,
     ),
