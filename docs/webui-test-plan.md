@@ -62,7 +62,7 @@ it; anything else under `/api/*` is `401`. Where a step says **anonymous**, run
 it without the jar.
 
 **Wait for startup before testing.** `/health` answers as soon as the listener
-binds; `/ready` only answers 200 once the channels are up. Poll `/ready`, not
+binds; `/ready` only answers 200 once the channels and the MCP host are up. Poll `/ready`, not
 `/health`, or early steps race the boot:
 
 ```

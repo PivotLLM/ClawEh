@@ -67,6 +67,15 @@ func startMCPServer(cfg *config.Config, agentLoop *agent.AgentLoop, msgBus *bus.
 	if err != nil {
 		return fmt.Errorf("error creating MCP server: %w", err)
 	}
+	// Tokens are loaded before the listener opens, so a request that reaches
+	// the host never finds a valid token missing.
+	registerTestSessionToken(agentLoop, srv)
+
+	// Load persisted long-lived service tokens (claw token CLI) into the store.
+	// Runs at boot and on every config reload (this function rebuilds the server);
+	// the file watcher in the main loop also re-syncs on demand.
+	syncServiceTokensFromDisk(cfg, agentLoop, srv)
+
 	if err := srv.Start(); err != nil {
 		return fmt.Errorf("error starting MCP server: %w", err)
 	}
@@ -75,13 +84,6 @@ func startMCPServer(cfg *config.Config, agentLoop *agent.AgentLoop, msgBus *bus.
 	// external MCP server's tools are re-registered, the loop asks the host to
 	// refresh, so a renamed tool reaches external clients without a restart.
 	agentLoop.SetMCPHost(srv)
-
-	registerTestSessionToken(agentLoop, srv)
-
-	// Load persisted long-lived service tokens (claw token CLI) into the store.
-	// Runs at boot and on every config reload (this function rebuilds the server);
-	// the file watcher in the main loop also re-syncs on demand.
-	syncServiceTokensFromDisk(cfg, agentLoop, srv)
 
 	logger.InfoCF("mcpserver", "MCP host started",
 		map[string]any{

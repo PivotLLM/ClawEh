@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.6.5]
+
+### Changed
+
+- **`/ready` answers 200 only once the MCP host is up.** It turned ready as
+  soon as the channels had started, before the MCP host was listening, at
+  start and after every configuration reload. Anything that waits for
+  `/ready` now waits a little longer; with external MCP servers configured,
+  that includes the time taken to connect to them.
+
+### Fixed
+
+- **A valid service token is no longer refused just after a start or a
+  configuration reload.** The MCP host opened its port before it had loaded
+  the tokens issued with the `token` command, so a client calling in that
+  moment got `401 invalid bearer token`. The tokens are now loaded first.
+
 ## [0.6.4]
 
 ### Security
@@ -3862,6 +3879,8 @@ on, and breaking one is a deliberate decision rather than a free move.
   entered, and the entry had to be worked around rather than typed. Affects the
   Telegram, Slack and generic channel forms.
 
+[0.6.5]: https://github.com/PivotLLM/ClawEh/compare/0.6.4...0.6.5
+[0.6.4]: https://github.com/PivotLLM/ClawEh/compare/0.6.3...0.6.4
 [0.6.3]: https://github.com/PivotLLM/ClawEh/compare/0.6.2...0.6.3
 [0.6.2]: https://github.com/PivotLLM/ClawEh/compare/0.6.1...0.6.2
 [0.6.1]: https://github.com/PivotLLM/ClawEh/compare/0.6.0...0.6.1

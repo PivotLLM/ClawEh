@@ -5,6 +5,7 @@ package gateway
 
 import (
 	"context"
+	"net"
 	"testing"
 
 	"github.com/PivotLLM/ClawEh/agent"
@@ -76,5 +77,53 @@ func TestStartMCPServer_ReloadKeepsSessionTokens(t *testing.T) {
 	}
 	if _, ok := store.Resolve(svcToken); !ok {
 		t.Fatal("the service token was not re-synced after the reload")
+	}
+}
+
+// TestStartMCPServer_TokensLoadedBeforeListening: the service tokens are in
+// the store before the host binds its port, so no request can reach it while
+// a valid token is still unknown. The port is taken, so the start stops at
+// the bind: whatever is in the store then was loaded before it.
+func TestStartMCPServer_TokensLoadedBeforeListening(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv(global.EnvVarHome, home)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() {
+		if closeErr := ln.Close(); closeErr != nil {
+			t.Errorf("close: %v", closeErr)
+		}
+	})
+
+	cfg := config.DefaultConfig()
+	cfg.Agents.BaseDir = t.TempDir()
+	cfg.Agents.Defaults.Models = []string{"test-model"}
+	cfg.Agents.List = []config.AgentConfig{{ID: "alice", Name: "Alice", Default: true}}
+	cfg.MCPHost.Enabled = true
+	cfg.MCPHost.Listen = ln.Addr().String()
+
+	msgBus := bus.NewMessageBus()
+	al, err := agent.NewAgentLoop(cfg, msgBus, providers.NewUnconfiguredProvider(), nil)
+	if err != nil {
+		t.Fatalf("NewAgentLoop: %v", err)
+	}
+	t.Cleanup(func() { al.Close(context.Background()) })
+
+	const svcToken = "SVC-alice-plain"
+	if err := servicetoken.Save(servicetoken.Path(cfg.DataDir()), map[string]string{"alice": svcToken}); err != nil {
+		t.Fatalf("save service tokens: %v", err)
+	}
+
+	services := &gatewayServices{fatal: newFatalNotifier(nil)}
+	if err := startMCPServer(cfg, al, msgBus, services); err == nil {
+		if err := services.MCPServer.Shutdown(context.Background()); err != nil {
+			t.Errorf("shutdown: %v", err)
+		}
+		t.Fatal("the start succeeded on a port already in use")
+	}
+	if _, ok := services.SessionTokens.Resolve(svcToken); !ok {
+		t.Fatal("the service token was not loaded before the host bound its port")
 	}
 }
