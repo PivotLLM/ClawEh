@@ -137,8 +137,8 @@ func TestParseReplyWithRules(t *testing.T) {
 			t.Errorf("parseReply(%q) = %q, %q, %v; want %q, %q", tc.reply, c, r, ok, tc.category, tc.reason)
 		}
 		rules, unknown := parseCitation(replyLines(tc.reply)).resolve(labels)
-		if rules == nil || !slices.Equal(rules, tc.rules) || unknown != tc.unknown { // nil want: an empty list
-			t.Errorf("citation of %q = %v, %d; want %v, %d", tc.reply, rules, unknown, tc.rules, tc.unknown)
+		if rules == nil || !slices.Equal(rules, tc.rules) || len(unknown) != tc.unknown { // nil want: an empty list
+			t.Errorf("citation of %q = %v, %d; want %v, %d", tc.reply, rules, len(unknown), tc.rules, tc.unknown)
 		}
 	}
 	// A Rules line in place of the category is still no category.
@@ -432,6 +432,7 @@ func TestStatusRuleUsage(t *testing.T) {
 		WithRules:       2,
 		None:            1,
 		Unknown:         1,
+		UnknownLabels:   map[string]int{"mystery": 1},
 		NoLongerPresent: map[string]int{"070-old.md": 1},
 	}
 	if got, want := mustJSON(t, u), mustJSON(t, want); string(got) != string(want) {

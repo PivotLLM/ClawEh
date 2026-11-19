@@ -24,7 +24,12 @@ import (
 // "Rules: none"; NoCitation, those whose answer cited nothing usable (no
 // Rules line, or only unknown labels), so WithRules + None + NoCitation =
 // Decisions. Unknown counts the items whose answer cited a label matching
-// no rule of its request; NoLongerPresent counts, per cited label not
+// no rule of its request, whatever else it cited; OnlyUnknown those of them
+// that cited nothing else (they are part of NoCitation), so Unknown -
+// OnlyUnknown items cited a rule as well. UnknownLabels counts, per unknown
+// label as the model wrote it, the items that cited it (the
+// UnknownLabelsShown most cited; decisions stored before the labels were
+// kept have none). NoLongerPresent counts, per cited label not
 // among the rules now (a file removed or renamed), the items whose answer
 // cited it.
 type RuleUsage struct {
@@ -36,6 +41,8 @@ type RuleUsage struct {
 	None            int            `json:"none"`
 	NoCitation      int            `json:"no_citation"`
 	Unknown         int            `json:"unknown"`
+	OnlyUnknown     int            `json:"only_unknown"`
+	UnknownLabels   map[string]int `json:"unknown_labels,omitempty"`
 	NoLongerPresent map[string]int `json:"no_longer_present,omitempty"`
 }
 
@@ -62,10 +69,17 @@ func (s *Service) ruleUsage(ctx context.Context, scope Scope, def *Definition, s
 	}
 	u := &RuleUsage{Hours: hours}
 	cited := map[string]int{}
+	unknown := map[string]int{}
 	u.Decisions = len(rows)
 	for _, r := range rows {
 		if r.unknown > 0 {
 			u.Unknown++
+			if len(r.rules) == 0 {
+				u.OnlyUnknown++
+			}
+			for _, l := range r.labels {
+				unknown[l]++
+			}
 		}
 		switch {
 		case len(r.rules) == 0:
@@ -94,7 +108,26 @@ func (s *Service) ruleUsage(ctx context.Context, scope Scope, def *Definition, s
 	if len(cited) > 0 {
 		u.NoLongerPresent = cited
 	}
+	u.UnknownLabels = mostCited(unknown, UnknownLabelsShown)
 	return u, nil
+}
+
+// UnknownLabelsShown is how many unknown labels RuleUsage lists.
+const UnknownLabelsShown = 20
+
+// mostCited keeps the n labels of counts cited by the most items (ties in
+// the labels' order); nil when there are none.
+func mostCited(counts map[string]int, n int) map[string]int {
+	if len(counts) == 0 {
+		return nil
+	}
+	labels := sortedKeys(counts)
+	slices.SortStableFunc(labels, func(a, b string) int { return counts[b] - counts[a] })
+	out := make(map[string]int, min(n, len(labels)))
+	for _, l := range labels[:min(n, len(labels))] {
+		out[l] = counts[l]
+	}
+	return out
 }
 
 // resolveRuleFilter is ActivityQuery.Rule as the label stored in the log:

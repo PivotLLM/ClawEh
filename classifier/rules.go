@@ -33,6 +33,14 @@ import (
 // instructions file's bare name, with or without ".md"; an inline rule as
 // "rule #N", "rules N", "#N" or "N". Bare "none" always means no rule, so a
 // folder file none.md is cited only as "none.md".
+//
+// A citation that names no label as written is tried again in the shapes a
+// model gives a label it does know (citedForms), each by the same rules:
+// without the marker around it ("=== Rules from <label> ===", "Rules from
+// <label>"), without a note in parentheses after it ("<label> (client
+// domain)"), and, for a path, by its last element ("rules/<label>"). A cited
+// token that still names nothing is kept as written (Decision.UnknownLabels),
+// so the agent can see what the model called its rules.
 
 // Rule label constants.
 const (
@@ -103,7 +111,47 @@ var ruleNumber = regexp.MustCompile(`(?i)^(?:rules?\s*)?#?\s*(\d+)$`)
 // accepted forms above): the exact label, else the one label a loose form
 // names; none when several do, and never for bare "none".
 func resolveLabel(labels []string, token string) (string, bool) {
+	for _, form := range citedForms(token) {
+		if l, ok := matchLabel(labels, form); ok {
+			return l, true
+		}
+	}
+	return "", false
+}
+
+// rulesFromPrefix starts a label cited with its marker's words.
+const rulesFromPrefix = "rules from "
+
+// citedForms are the texts a cited token is matched as, in order: the token
+// itself, then the same without the section marker's "=" and "Rules from",
+// then without a note in parentheses after the label, then a path's last
+// element. Each later form is derived from the one before, so
+// "=== Rules from rules/050-x.md (clients) ===" ends as "050-x.md".
+func citedForms(token string) []string {
 	token = strings.Join(strings.Fields(token), " ")
+	forms := []string{token}
+	add := func(next string) string {
+		next = citationTrim(next)
+		if next != "" && next != forms[len(forms)-1] {
+			forms = append(forms, next)
+		}
+		return forms[len(forms)-1]
+	}
+	cur := add(strings.Trim(token, "= "))
+	if hasPrefixFold(cur, rulesFromPrefix) {
+		cur = add(cur[len(rulesFromPrefix):])
+	}
+	if i := strings.Index(cur, " ("); i > 0 {
+		cur = add(cur[:i])
+	}
+	if i := strings.LastIndex(cur, "/"); i >= 0 {
+		add(cur[i+1:])
+	}
+	return forms
+}
+
+// matchLabel is resolveLabel for one form of a cited token.
+func matchLabel(labels []string, token string) (string, bool) {
 	if token == "" || strings.EqualFold(token, RulesNone) {
 		return "", false
 	}
@@ -192,7 +240,7 @@ func parseCitation(lines []string) citation {
 			continue
 		}
 		var c citation
-		for t := range strings.FieldsFuncSeq(citationTrim(body), func(r rune) bool { return r == ',' || r == ';' }) {
+		for _, t := range splitCitation(citationTrim(body)) {
 			if t = citationTrim(t); t == "" {
 				continue
 			}
@@ -211,23 +259,64 @@ func parseCitation(lines []string) citation {
 	return citation{}
 }
 
+// splitCitation splits a Rules line's body into its cited tokens at commas
+// and semicolons, except those inside parentheses, which belong to a note
+// after a label ("050-x.md (clients, partners)").
+func splitCitation(body string) []string {
+	var out []string
+	depth, start := 0, 0
+	for i, r := range body {
+		switch r {
+		case '(':
+			depth++
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+		case ',', ';':
+			if depth == 0 {
+				out = append(out, body[start:i])
+				start = i + 1
+			}
+		}
+	}
+	return append(out, body[start:])
+}
+
+// Limits of the unknown labels kept from one reply.
+const (
+	// UnknownLabelsMax is how many are kept.
+	UnknownLabelsMax = 10
+	// UnknownLabelChars cuts each of them, in characters.
+	UnknownLabelChars = 120
+)
+
 // resolve matches the citation against the labels loaded for the request:
 // the known labels in the reply's order without repeats, or [RulesNone],
-// and how many tokens named no loaded label. The list is never nil: it is
-// empty when the reply had no Rules line or cited only unknown labels.
-func (c citation) resolve(labels []string) (rules []string, unknown int) {
+// and the tokens that named no loaded label, as the model wrote them (each
+// once, cut to UnknownLabelChars, at most UnknownLabelsMax). The rules list
+// is never nil: it is empty when the reply had no Rules line or cited only
+// unknown labels.
+func (c citation) resolve(labels []string) (rules, unknown []string) {
 	rules = []string{}
 	if !c.given {
-		return rules, 0
+		return rules, nil
 	}
 	if c.none {
-		return []string{RulesNone}, 0
+		return []string{RulesNone}, nil
 	}
 	for _, t := range c.tokens {
 		l, ok := resolveLabel(labels, t)
 		switch {
 		case !ok:
-			unknown++
+			t = strings.Join(strings.Fields(t), " ")
+			if strings.Count(t, "(") > strings.Count(t, ")") {
+				t += ")" // trimmed as end punctuation: the note's own bracket
+			}
+			t = cutRunes(t, UnknownLabelChars)
+			if len(unknown) < UnknownLabelsMax && !slices.Contains(unknown, t) {
+				unknown = append(unknown, t)
+			}
 		case !slices.Contains(rules, l):
 			rules = append(rules, l)
 		}

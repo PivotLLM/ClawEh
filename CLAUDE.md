@@ -677,7 +677,14 @@ shortcoming in the module, never here.
   forms (any case, without `.md`, the instructions file's bare name, `rule
   #N`/`rules N`/`#N`/`N`) count only when they fit exactly one label;
   bare `none` (any case) is never a label; `none` beside labels is
-  dropped. Activity and processed columns `rules`
+  dropped. A token that names nothing as written is tried again in the
+  shapes of `citedForms` (the `=== Rules from … ===` marker or `Rules from`
+  removed, a note in parentheses after the label removed, a path's last
+  element), each matched by the same rules; `splitCitation` does not split
+  at a comma inside parentheses. Tokens still unknown are kept as written
+  in `Decision.UnknownLabels` (`UnknownLabelsMax` 10, `UnknownLabelChars`
+  120; activity and processed column `unknown_labels`, searched by
+  `ActivityQuery.Search`). Activity and processed columns `rules`
   (JSON list, `["none"]`, NULL when empty) and `unknown_rules` (INTEGER, `addColumn` takes a
   type); a reused answer reuses its stored citation. `Decision.Rules`
   (`omitzero`) is never nil for a decision with a category: labels,
@@ -687,7 +694,9 @@ shortcoming in the module, never here.
   cites, unknown refused), `Status.RuleUsage` over `activity_hours` (each
   item once, by its latest categorised row; current labels only; gone ones
   in `no_longer_present`; `with_rules` + `none` + `no_citation` =
-  `decisions`; nil when the Markdown cannot be read), `Status.Counts`
+  `decisions`; `unknown` counts items citing any unknown label, `only_unknown`
+  those citing nothing else, `unknown_labels` the `UnknownLabelsShown` 20
+  most cited; nil when the Markdown cannot be read), `Status.Counts`
   (processed by status, live only) and `DryRunCounts` (`dry_run` table by
   category, `unclassified` included), `TestExcluding` (`classifier_test` `exclude_rules`:
   `instructions.exclude` drops sections, rules keep their numbers; one

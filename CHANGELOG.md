@@ -32,9 +32,29 @@
   reported like any failed run and marked on Check Up.
 - **`limits.max_attempts`** (default 5) in a classifier definition is how
   often a failing item is tried; see Changed.
+- **A classifier keeps the rule names the model cited that are not rules.**
+  Only their number was stored (`unknown_rules`), so there was no way to see
+  what the model had written. Each decision in `classifier_activity`,
+  `classifier_test` and `classifier_status` now has `unknown_labels`, the
+  names as written (at most 10 per item, 120 characters each), and
+  `classifier_activity`'s `search` finds them. `rule_usage` in
+  `classifier_status` adds `unknown_labels` (the 20 most cited, with the
+  number of items) and `only_unknown` (the items that cited an unknown label
+  and no rule; `unknown` minus `only_unknown` cited a rule as well).
+  Decisions stored before this version have the count only.
 
 ### Changed
 
+- **A classifier recognises a rule the model cites in a slightly different
+  shape.** A cited label was unknown unless it was the rule's label itself
+  (in any case, or without `.md`). It is now also accepted with a path
+  before it (`rules/050-domain-example.md`), with a note in parentheses
+  after it (`050-domain-example.md (client domain)`), and with its section
+  marker around it (`=== Rules from 050-domain-example.md ===`, `Rules from
+  …`), whenever that names exactly one rule. The same replies therefore
+  count as fewer unknown citations in `classifier_status` `rule_usage` and
+  more per rule; where an item is filed never depended on the citation and
+  is unchanged.
 - **A classifier's tool arguments are checked when it is saved.**
   `classifier_create`, `classifier_update` and `classifier_validate` now
   check the arguments of the source, fetch and action tools against each

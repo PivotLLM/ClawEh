@@ -282,13 +282,24 @@ Every decision with a category has `rules`, one of:
 - `["none"]`: the model said no rule applies. That is a gap: consider
   writing a rule for such items;
 - `[]` (empty): the model gave no citation, or cited only names that are
-  not rules (`unknown_rules` counts them). Many empty ones mean the model
-  is ignoring the request; consider another classifier model.
+  not rules. Many empty ones mean the model is ignoring the request;
+  consider another classifier model.
+
+A cited name that is not a rule is kept as the model wrote it in
+`unknown_labels` (`unknown_rules` is how many), beside whatever rules it did
+cite. It never changes the category: the citation is only the model's
+account. Read them before judging the model: a heading from inside a file, a
+description instead of a file name, or two labels joined by "and" show what
+the model takes your rules to be called, and a clearer file name often fixes
+it.
 
 `none` written beside labels is dropped. A label may also be written in
 any case, without `.md`, the instructions file by its bare name, and a
-numbered rule as `rule #3`, `#3` or `3`, but such a form counts only when
-it fits exactly one label; otherwise it is unknown.
+numbered rule as `rule #3`, `#3` or `3`. It may come with a path before it
+(`rules/050-domain-example.md`), a note in parentheses after it
+(`050-domain-example.md (client domain)`), or its marker around it
+(`=== Rules from 050-domain-example.md ===`, `Rules from …`). Any such form
+counts only when it fits exactly one label; otherwise it is unknown.
 
 A citation shows where to look; it is the model's own account, not proof.
 
@@ -302,8 +313,13 @@ A citation shows where to look; it is the model's own account, not proof.
   (many of them: write a rule) and `no_citation` (empty `rules`; many of
   them: consider another model), which add up to `decisions`; items per
   rule (`cited`), rules no item cited (`never_cited`, maybe dead),
-  `unknown` (items citing a name that is not a rule), and cited files
-  since removed (`no_longer_present`).
+  `unknown` (items citing a name that is not a rule, whatever else they
+  cited), `only_unknown` (those of them that cited nothing else; the rest
+  cited a rule too), `unknown_labels` (the 20 names most often cited that
+  are not rules, with the number of items), and cited files since removed
+  (`no_longer_present`).
+- `classifier_activity` shows each item's `unknown_labels`, and `search`
+  finds them.
 - Before editing a rule because of an item, confirm the rule decided it:
   `classifier_test` with `exclude_rules` classifies the item with all rules
   and again without those, and `changed` says whether the category

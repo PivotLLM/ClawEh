@@ -108,11 +108,11 @@ func TestInstructionsFilePathLabel(t *testing.T) {
 // its full name.
 func TestNoneIsNeverAFile(t *testing.T) {
 	labels := []string{"none.md", "rule 1"}
-	if rules, unknown := parseCitation(replyLines("low\nx\nRules: none")).resolve(labels); !slices.Equal(rules, []string{RulesNone}) || unknown != 0 {
-		t.Errorf("none = %v, %d", rules, unknown)
+	if rules, unknown := parseCitation(replyLines("low\nx\nRules: none")).resolve(labels); !slices.Equal(rules, []string{RulesNone}) || len(unknown) != 0 {
+		t.Errorf("none = %v, %d", rules, len(unknown))
 	}
-	if rules, unknown := parseCitation(replyLines("low\nx\nRules: none.md, rule 1")).resolve(labels); !slices.Equal(rules, []string{"none.md", "rule 1"}) || unknown != 0 {
-		t.Errorf("none.md = %v, %d", rules, unknown)
+	if rules, unknown := parseCitation(replyLines("low\nx\nRules: none.md, rule 1")).resolve(labels); !slices.Equal(rules, []string{"none.md", "rule 1"}) || len(unknown) != 0 {
+		t.Errorf("none.md = %v, %d", rules, len(unknown))
 	}
 	for _, token := range []string{"none", "NONE"} {
 		if l, ok := resolveLabel(labels, token); ok {
@@ -140,8 +140,8 @@ func TestAmbiguousCitationsAreUnknown(t *testing.T) {
 			t.Errorf("ambiguous %q resolved to %q", token, l)
 		}
 	}
-	if rules, unknown := parseCitation(replyLines("low\nx\nRules: a, news")).resolve(labels); !slices.Equal(rules, []string{"news.md"}) || unknown != 1 {
-		t.Errorf("citation = %v, %d", rules, unknown)
+	if rules, unknown := parseCitation(replyLines("low\nx\nRules: a, news")).resolve(labels); !slices.Equal(rules, []string{"news.md"}) || len(unknown) != 1 {
+		t.Errorf("citation = %v, %d", rules, len(unknown))
 	}
 }
 
@@ -156,7 +156,8 @@ func TestReusedAnswerKeepsCitation(t *testing.T) {
 	if rec := e.run("inbox-priority"); rec.Failed != 3 {
 		t.Fatalf("failing run = %+v", rec)
 	}
-	if r := e.processed("inbox-priority")["m1"]; !slices.Equal(r.rules, []string{"050-domain-example.md"}) || r.unknownRules != 1 {
+	if r := e.processed("inbox-priority")["m1"]; !slices.Equal(r.rules, []string{"050-domain-example.md"}) || r.unknownRules != 1 ||
+		!slices.Equal(r.unknownLabels, []string{"nope"}) {
 		t.Errorf("processed m1 = %+v", r)
 	}
 	calls := e.model.count()
@@ -165,8 +166,8 @@ func TestReusedAnswerKeepsCitation(t *testing.T) {
 		t.Fatalf("replay run = %+v, %d model calls", rec, e.model.count()-calls)
 	}
 	for _, a := range e.activity(ActivityQuery{Outcome: OutcomeActed}) {
-		if !slices.Equal(a.Rules, []string{"050-domain-example.md"}) || a.UnknownRules != 1 {
-			t.Errorf("reused row %s = %v, %d", a.ItemID, a.Rules, a.UnknownRules)
+		if !slices.Equal(a.Rules, []string{"050-domain-example.md"}) || a.UnknownRules != 1 || !slices.Equal(a.UnknownLabels, []string{"nope"}) {
+			t.Errorf("reused row %s = %v, %d %v", a.ItemID, a.Rules, a.UnknownRules, a.UnknownLabels)
 		}
 	}
 }

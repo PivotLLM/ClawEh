@@ -78,7 +78,7 @@ func (s *Service) decide(ctx context.Context, scope Scope, def *Definition, in i
 	if reuse != nil && reuse.category != "" {
 		if c, ok := def.categoryNamed(reuse.category); ok {
 			d.Category, d.Reason, d.Model = c.Name, reuse.reason, reuse.model
-			d.Rules, d.UnknownRules = storedRules(reuse.rules), reuse.unknownRules
+			d.Rules, d.UnknownRules, d.UnknownLabels = storedRules(reuse.rules), reuse.unknownRules, reuse.unknownLabels
 			return d
 		}
 	}
@@ -113,7 +113,8 @@ func (s *Service) classify(ctx context.Context, scope Scope, def *Definition, in
 		}
 	}
 	d.Category, d.Reason = category, reason
-	d.Rules, d.UnknownRules = parseCitation(replyLines(reply)).resolve(promptLabels(def, in))
+	d.Rules, d.UnknownLabels = parseCitation(replyLines(reply)).resolve(promptLabels(def, in))
+	d.UnknownRules = len(d.UnknownLabels)
 	return d
 }
 
