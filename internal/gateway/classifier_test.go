@@ -78,6 +78,8 @@ func TestStartClassifiers_WaitsForStarted(t *testing.T) {
 type gwClassifierHost struct{}
 
 func (gwClassifierHost) Has(string, string) error { return errors.New("unused") }
+
+func (gwClassifierHost) Schema(string, string) (map[string]any, error) { return nil, nil }
 func (gwClassifierHost) Call(context.Context, string, string, map[string]any) (string, error) {
 	return "", errors.New("unused")
 }

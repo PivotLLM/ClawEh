@@ -188,6 +188,28 @@ func (h *ClassifierHost) Has(agentID, tool string) error {
 	return nil
 }
 
+// Schema implements classifier.ToolRunner: the JSON Schema of the tool's
+// arguments in the agent's own registry, as the model is given it. A tool
+// of an MCP server that advertised no schema has none (nil): the empty
+// schema it is given for models says nothing about its arguments.
+func (h *ClassifierHost) Schema(agentID, tool string) (map[string]any, error) {
+	if err := h.Has(agentID, tool); err != nil {
+		return nil, err
+	}
+	reg, err := h.registryFor(agentID)
+	if err != nil {
+		return nil, err
+	}
+	t, ok := reg.Get(tool)
+	if !ok {
+		return nil, fmt.Errorf("tool %s is not available to agent %s", tool, agentID)
+	}
+	if advertised, ok := t.(interface{ HasInputSchema() bool }); ok && !advertised.HasInputSchema() {
+		return nil, nil
+	}
+	return t.Parameters(), nil
+}
+
 // Call implements classifier.ToolRunner: tool runs as agentID through the
 // agent's own registry, unattended (no session, no chat) and bounded by the
 // same timeout, exactly as a scheduled watch probe does. A tool the agent

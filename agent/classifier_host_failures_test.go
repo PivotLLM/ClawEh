@@ -94,6 +94,33 @@ func TestClassifierHost_UntrustedResults(t *testing.T) {
 	if _, err = svc.Create(context.Background(), scope, def); err != nil {
 		t.Fatalf("Create with an MCP source = %v", err)
 	}
+
+	// A tool that advertises its arguments is checked against them: here
+	// "read" declares only "id", so "format" is refused. The tools above
+	// advertise no schema, so theirs are not checked.
+	if s, sErr := host.Schema("alice", read.Name()); sErr != nil || s != nil {
+		t.Errorf("Schema of a tool that advertises none = %v, %v; want nil", s, sErr)
+	}
+	declared := tools.NewMCPTool(mailServer{}, "post", mcp.Tool{Name: "read", InputSchema: mcp.ToolInputSchema{
+		Type: "object", Properties: map[string]any{"id": map[string]any{"type": "string"}}, Required: []string{"id"},
+	}})
+	registerOn(t, al, "alice", declared)
+	strict, err := json.Marshal(map[string]any{
+		"id": "strict", "enabled": false, "trigger": map[string]any{"every_seconds": 60},
+		"source": map[string]any{"tool": list.Name(), "items": "value", "id": "id"},
+		"fetch": map[string]any{
+			"tool": declared.Name(), "args": map[string]any{"id": "{{item.id}}", "format": "text"},
+			"fields": map[string]any{"subject": "subject"},
+		},
+		"classify": map[string]any{"instructions": "Sort it.", "categories": []any{map[string]any{"name": "urgent"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "fetch.args.format: " + declared.Name() + ` has no argument "format"; its only argument is id.`
+	if err = svc.Validate(context.Background(), scope, strict, false); err == nil || !strings.Contains(err.Error(), want) {
+		t.Errorf("Validate with an argument the tool does not declare = %v, want %q", err, want)
+	}
 	res, err := svc.Test(context.Background(), scope, "inbox", "m1")
 	if err != nil || res.Outcome != classifier.OutcomeRecorded || res.Category != "urgent" || len(res.MissingFields) != 0 {
 		t.Fatalf("Test = %+v, %v; want m1 classified with every fetch field", res.Decision, err)

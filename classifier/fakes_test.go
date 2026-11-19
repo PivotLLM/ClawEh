@@ -25,7 +25,27 @@ import (
 type fakeTools struct {
 	mu       sync.Mutex
 	handlers map[string]func(args map[string]any) (string, error)
+	schemas  map[string]map[string]any // by tool; a tool without one is not checked
 	calls    []toolCall
+}
+
+func (f *fakeTools) Schema(agentID, tool string) (map[string]any, error) {
+	if err := f.Has(agentID, tool); err != nil {
+		return nil, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.schemas[tool], nil
+}
+
+// setSchema gives tool an argument schema.
+func (f *fakeTools) setSchema(tool string, schema map[string]any) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.schemas == nil {
+		f.schemas = map[string]map[string]any{}
+	}
+	f.schemas[tool] = schema
 }
 
 type toolCall struct {

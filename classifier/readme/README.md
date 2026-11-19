@@ -117,6 +117,30 @@ for you; a definition does not name one.
 
 `owner`, `created_at` and `updated_at` are written by {{HOST}}.
 
+## Arguments are checked against the tool
+
+When you create, update or validate a classifier, the arguments of its
+source, fetch and actions are checked against each tool's own argument
+list, and anything the tool would not accept is refused, naming the
+argument:
+
+- an argument the tool does not have, such as a misspelt or assumed one
+  (`source.args.orderby: mail_list_messages has no argument "orderby"; its
+  arguments are folder, skip, top.`). Tools usually ignore such an argument
+  without a word, so a filter or sort you believe is applied would not be;
+- an argument the tool requires that is left out;
+- a value of the wrong type (`"top": "100"` where the tool takes a number)
+  or not one of the values the tool lists;
+- `source.paging.offset_arg` or `cursor_arg` naming an argument the tool
+  does not have.
+
+Use the names and types in the tool's description exactly. A placeholder's
+type is not checked, a tool that publishes no argument list is not checked,
+and a correct argument with a wrong value (a filter the service rejects)
+is the tool's to refuse: `classifier_test` shows its error. A classifier
+saved before this check keeps running and is checked on its next
+`classifier_update`.
+
 ## Sources that return pages
 
 A source without `paging` is called once per run, and what that one call
@@ -443,8 +467,9 @@ resolves to nothing fails that item; nothing empty is passed to a tool.
 
 - `classifier_create`, `classifier_update` (a JSON merge patch: objects
   merge, null deletes a key, arrays are replaced whole), `classifier_delete`.
-  A create or update is checked against your tools and calls the source
-  tool once (its first page).
+  A create or update is checked against your tools and their arguments
+  (see "Arguments are checked against the tool") and calls the source tool
+  once (its first page).
 - `classifier_validate`: the same checks without saving.
 - `classifier_list`, `classifier_get`, `classifier_status`.
 - `classifier_test`: classify one item (or the first listed) without acting

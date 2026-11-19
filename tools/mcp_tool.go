@@ -202,6 +202,17 @@ func (t *MCPTool) Parameters() map[string]any {
 	return result
 }
 
+// HasInputSchema reports whether the server advertised an input schema
+// that could be read. Without one Parameters returns the permissive empty
+// schema, which says nothing about the arguments the tool takes.
+func (t *MCPTool) HasInputSchema() bool {
+	if len(t.tool.RawInputSchema) > 0 {
+		var result map[string]any
+		return json.Unmarshal(t.tool.RawInputSchema, &result) == nil
+	}
+	return t.tool.InputSchema.Type != ""
+}
+
 // emptyObjectSchema is the permissive no-argument schema used when an upstream
 // tool advertises no usable input schema.
 func emptyObjectSchema() map[string]any {

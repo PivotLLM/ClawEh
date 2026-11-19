@@ -25,6 +25,8 @@ type reportTools struct{}
 
 func (reportTools) Has(string, string) error { return nil }
 
+func (reportTools) Schema(string, string) (map[string]any, error) { return nil, nil }
+
 func (reportTools) Call(_ context.Context, _, tool string, args map[string]any) (string, error) {
 	switch tool {
 	case "a_list":

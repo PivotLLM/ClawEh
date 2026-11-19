@@ -113,6 +113,17 @@ When `classifiers/state.db` can't be opened, none of the agent's classifiers run
 
 ClawEh writes `owner`, `created_at` and `updated_at`.
 
+### Arguments are checked against the tool
+
+When a classifier is created, changed or validated, the arguments of its source, fetch and action tools are checked against each tool's own argument list. Most tools ignore an argument they do not have, so a misspelt filter or sort would change nothing and say nothing; the save is refused instead, naming the argument:
+
+- an argument the tool does not have: "source.args.orderby: mail_list_messages has no argument "orderby"; its arguments are folder, skip, top."
+- an argument the tool requires that is left out;
+- a value of the wrong type, or not one of the values the tool lists;
+- a paging argument (`offset_arg`, `cursor_arg`) the tool does not have.
+
+A tool that publishes no argument list (some MCP servers) cannot be checked, and neither can a placeholder's type. A correctly named argument with a value the service rejects is the tool's to refuse; `classifier_test` shows its error. A classifier saved before this check existed keeps running, and is checked the next time the agent changes it.
+
 ### Sources that return pages
 
 Most list tools return a page at a time, often 50 or 100 items. A source without `paging` is called once per run, so items past its first page are never seen. Once that page is full of items that stay in the source (ones a rule leaves in place, unclassified or failed ones, and in a dry run every item), nothing new is handled and no error is raised. Ask the agent to set `source.paging` for any tool that pages.
@@ -243,7 +254,7 @@ Every item handled (live or dry run) is logged with the fields sent to the model
 |---|---|
 | `classifier_readme` | The format, paths, placeholders and the install's limits. |
 | `classifier_list`, `classifier_get` | The agent's classifiers; one definition. |
-| `classifier_create`, `classifier_update`, `classifier_delete` | Save, change (a JSON merge patch) or remove a classifier. A save checks the definition and calls the source tool once (its first page). |
+| `classifier_create`, `classifier_update`, `classifier_delete` | Save, change (a JSON merge patch) or remove a classifier. A save checks the definition, checks every tool argument against the tool, and calls the source tool once (its first page). |
 | `classifier_validate` | The same checks, without saving. |
 | `classifier_status` | Last run (with its pages and how the listing ended), live counts (`counts`) and dry-run counts (`dry_run_counts`), recent decisions, the last error, whether error notices are on, off or muted, and how often each rule was cited (`rule_usage`). |
 | `classifier_test` | Classifies one item without acting or storing anything, and shows the item's fields and the system prompt the model got. With `exclude_rules`, also classifies it without those rules and says whether the category changed. |

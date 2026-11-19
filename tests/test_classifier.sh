@@ -49,6 +49,9 @@
 #   - a paged source (the stub's "pages" tool, two items a page) is listed to
 #     its end through source.paging, and a second classifier limited to one
 #     item per run stops listing early and works through it run by run;
+#   - an argument a tool does not declare, a value of the wrong type and an
+#     undeclared paging argument are refused by classifier_validate, naming
+#     the argument and the tool's own arguments;
 #   - classifier_test on a source that fails gives the tool's own error, marked untrusted;
 #   - a run stopped by stop_after_failures is a failed run: a run_failed row
 #     naming the cause (the last item's error as its detail), logged at warn,
@@ -629,6 +632,35 @@ if wait_for 45 slow_done; then
     pass "later runs work through the rest, one item a run"
 else
     fail "slow decisions: $(sql "SELECT COUNT(*) FROM dry_run WHERE classifier='slow'"); run: $(sql "SELECT status, error, listing, more_items FROM runs WHERE classifier='slow'")"
+fi
+
+# ---- 6b3. Arguments are checked against the tool's own schema. ----
+BADARG='{"id":"badarg","enabled":true,"dry_run":true,"trigger":{"every_seconds":60},"source":{"tool":"mcp_mail_pages","args":{"orderby":"date asc"},"items":"items","id":"id","paging":{"mode":"offset","offset_arg":"skip"}},'"$PAGED_REST"
+OUT="$(mcp classifier_validate "{\"definition\":$BADARG}")"
+if echo "$OUT" | grep -qF 'source.args.orderby: mcp_mail_pages has no argument "orderby"; its only argument is skip.'; then
+    pass "an argument the source tool does not declare is refused, naming the tool's arguments"
+else
+    fail "classifier_validate (undeclared argument): $OUT"
+fi
+BADTYPE='{"id":"badtype","enabled":true,"dry_run":true,"trigger":{"every_seconds":60},"source":{"tool":"mcp_mail_pages","args":{"skip":"0"},"items":"items","id":"id"},'"$PAGED_REST"
+OUT="$(mcp classifier_validate "{\"definition\":$BADTYPE}")"
+if echo "$OUT" | grep -qF 'source.args.skip must be a number; it is a text.'; then
+    pass "an argument of the wrong type is refused"
+else
+    fail "classifier_validate (wrong type): $OUT"
+fi
+OUT="$(mcp classifier_validate "{\"definition\":${PAGED/\"offset_arg\":\"skip\"/\"offset_arg\":\"offset\"}}")"
+if echo "$OUT" | grep -qF 'source.paging.offset_arg: mcp_mail_pages has no argument "offset"'; then
+    pass "a paging argument the tool does not declare is refused"
+else
+    fail "classifier_validate (undeclared paging argument): $OUT"
+fi
+BADFETCH='{"id":"badfetch","enabled":true,"dry_run":true,"trigger":{"every_seconds":60},"source":'"$PAGED_SRC"',"fetch":{"tool":"mcp_mail_read","args":{"id":"{{item.id}}","format":"text"},"fields":{"subject":"subject"}},"classify":'"$CLASSIFY"'}'
+OUT="$(mcp classifier_validate "{\"definition\":$BADFETCH}")"
+if echo "$OUT" | grep -qF 'fetch.args.format: mcp_mail_read has no argument "format"; its only argument is id.'; then
+    pass "an argument the fetch tool does not declare is refused"
+else
+    fail "classifier_validate (undeclared fetch argument): $OUT"
 fi
 
 # ---- 6c. classifier_test gives the source's own error. ----

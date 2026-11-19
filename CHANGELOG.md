@@ -35,6 +35,18 @@
 
 ### Changed
 
+- **A classifier's tool arguments are checked when it is saved.**
+  `classifier_create`, `classifier_update` and `classifier_validate` now
+  check the arguments of the source, fetch and action tools against each
+  tool's own argument list, and refuse an argument the tool does not have, a
+  required one that is missing, a value of the wrong type or outside the
+  tool's listed values, and a `source.paging` argument the tool does not
+  have. Tools usually ignore an unknown argument silently, so a misspelt
+  filter or sort looked accepted and did nothing. The refusal names the
+  argument and lists the tool's arguments. A classifier saved earlier keeps
+  running unchanged; its next `classifier_update` is refused until the
+  arguments are corrected (remove or rename the one named). A tool that
+  publishes no argument list is not checked.
 - **A classifier stops retrying an item that keeps failing.** A failed item
   was tried again on every run, for ever. It is now tried
   `limits.max_attempts` times (5 by default) and then left alone;

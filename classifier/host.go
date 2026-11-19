@@ -38,6 +38,12 @@ type ToolRunner interface {
 	// A result the host marked as untrusted external content is returned
 	// unwrapped: the classifier reads it as data.
 	Call(ctx context.Context, agentID, tool string, args map[string]any) (result string, err error)
+	// Schema returns the JSON Schema of tool's arguments as agentID sees
+	// it (an object schema with "properties"), which a definition's
+	// arguments are checked against when it is saved (args.go). nil with no
+	// error means the tool publishes none: its arguments are not checked.
+	// The map is read only.
+	Schema(agentID, tool string) (map[string]any, error)
 }
 
 // ErrToolUnavailable matches a ToolRunner.Call error for a tool the agent

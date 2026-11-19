@@ -42,6 +42,8 @@ func (nopHost) Call(context.Context, string, string, map[string]any) (string, er
 	return "[]", nil
 }
 
+func (nopHost) Schema(string, string) (map[string]any, error) { return nil, nil }
+
 func (nopHost) Complete(context.Context, string, string, string) (string, string, error) {
 	return "", "", classifierpkg.ErrNoModel
 }

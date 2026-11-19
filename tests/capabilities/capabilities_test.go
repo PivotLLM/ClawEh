@@ -346,6 +346,8 @@ func (nopForumHost) Errorf(string, ...any) {}
 type nopClassifierHost struct{}
 
 func (nopClassifierHost) Has(string, string) error { return errors.New("unused") }
+
+func (nopClassifierHost) Schema(string, string) (map[string]any, error) { return nil, nil }
 func (nopClassifierHost) Call(context.Context, string, string, map[string]any) (string, error) {
 	return "", errors.New("unused")
 }

@@ -336,7 +336,8 @@ func (s *Service) Get(scope Scope, id string) (json.RawMessage, error) {
 }
 
 // check is the validation of a definition for scope: the static rules under
-// the current maximums, the agent's grants, and (live) one call of the
+// the current maximums, the agent's grants, every tool argument against the
+// tool's own schema (args.go), and (live) one call of the
 // source tool that must answer with a list at source.items whose elements
 // all have an id.
 func (s *Service) check(ctx context.Context, scope Scope, def *Definition, live bool) error {
@@ -344,6 +345,9 @@ func (s *Service) check(ctx context.Context, scope Scope, def *Definition, live 
 		return err
 	}
 	if err := validateGrants(def, scope.AgentID, s.host.Tools); err != nil {
+		return err
+	}
+	if err := validateArgs(def, scope.AgentID, s.host.Tools); err != nil {
 		return err
 	}
 	if !live {
