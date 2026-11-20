@@ -1,7 +1,8 @@
 # Agent SDK extraction plan
 
-Status: **proposal, nothing implemented.** Revision 6. Written against ClawEh
-`dev/0.6.5` (3476109) and `go.bison9.com/agent` branch `dev/0.0.1` (5bbfa3a,
+Status: **proposal, nothing implemented.** Revision 7. Written against ClawEh
+0.6.5 as released (`main`, ee944b3; the code was read at the `dev/0.6.5` tip
+it was cut from) and `go.bison9.com/agent` branch `dev/0.0.1` (5bbfa3a,
 version 0.2.0 in development).
 
 Changes in revision 2, from the maintainer's review:
@@ -16,7 +17,7 @@ Changes in revision 2, from the maintainer's review:
   agent's friendly name (section 4.1).
 - Cancellation is the first deliverable and is redesigned: a user interrupt
   stops the agent being talked to and **leaves its sub-agents running**; the
-  agent gets a tool to cancel its own sub-agents (section 5, phase 1).
+  agent gets a tool to cancel its own sub-agents (section 5; built as part of the engine work, phase 5b).
 - The tool registry is a live object the host adds to and removes from at any
   time (section 4.4).
 - The MCP host is split: a generic core moves to the SDK, ClawEh's policy
@@ -67,7 +68,7 @@ and accounting come from the SDK.
 
 ClawEh becomes the first host. **No existing ClawEh behaviour, config key,
 tool name or protocol shape changes** through the extraction. The one
-deliberate exception is the cancellation work in phase 1, which adds a tool
+deliberate exception is the cancellation work in phase 5b, which adds a tool
 and changes what `/cancel` does to waiting sub-agents; it is called out
 there with its changelog entries.
 
@@ -136,7 +137,7 @@ maintainer, nothing consumes the repository yet.
 | Asked agent (`agent_message`) | The asked turn is not stopped when the asker stops (only the forum's asks stop theirs). | `agent/ask.go` |
 
 Not verified: what a Maestro dispatch (`RunSync`) does when the calling turn
-is cancelled. Phase 1 establishes it before deciding.
+is cancelled. Phase 5b establishes it before deciding.
 
 ## 3. Target layout
 
@@ -695,7 +696,7 @@ Consequences to design for:
 - Tool callbacks fire on the `mcphost` dispatch path, so audit and redaction
   are uniform across HTTP and CLI models. Today ClawEh duplicates that logic
   in `mcpserver/tools.go`.
-- It moves late (phase 7), after the engine. Until then ClawEh's
+- It moves late (phase 6), after the engine. Until then ClawEh's
   `mcpserver` keeps working against the `toolkit` aliases.
 
 ### 4.7 `agent`, `agent/loop`, `agent/hook`
@@ -869,10 +870,13 @@ is a product feature with its own tools and on-disk layout; moving them is
 worth doing only when a second host wants one. Channels, routing, cron,
 audit, alerts, backup and the WebUI are ClawEh's.
 
-## 5. Cancellation (priority; ships first, in ClawEh)
+## 5. Cancellation
 
-Built in ClawEh now, in the shape the SDK will have, then moved with the
-engine. It does not wait for the extraction.
+Cancellation is not a separate project ahead of the refactoring: it is
+built into the agent loop as the loop is restructured (phase 5b). It is the
+first operator-visible result of that phase, and it is done while the loop
+is still inside ClawEh, so it is proven against ClawEh's whole test suite
+before the files move to the SDK.
 
 ### 5.1 Model
 
@@ -996,7 +1000,7 @@ individually (D4).
 messages: the command's own reply (`commands/cmd_cancel.go`) and the reply
 owed to the interrupted message (`decideTurnReply`), plus one more per
 queued message that required a reply (`publishCancelledReplies`). After
-phase 1 a cancel sends exactly one message to the chat it was typed in,
+phase 5b a cancel sends exactly one message to the chat it was typed in,
 saying what was stopped, how many queued messages were dropped and which
 tasks are still running. The interrupted and dropped messages are still
 closed with `Outcome: cancelled` for the turn contract, but without text of
@@ -1014,7 +1018,7 @@ same connection at any time. Two ways to cancel follow from that:
   defect to fix: the listener tracks a single `currentRun` per connection
   and the second `chat.send` overwrites it, so the cancelled run's closing
   events are attributed to the `/cancel` run id and the original run never
-  gets its own terminal event. Phase 1 keeps runs by id so the interrupted
+  gets its own terminal event. Phase 5b keeps runs by id so the interrupted
   run ends with `chat` state `aborted` (and `agent` lifecycle end) under
   its own id.
 - *A dedicated request:* an abort method carrying the run id, for clients
@@ -1062,8 +1066,8 @@ the SDK agent supplies the task contexts and ids they register with.
 ## 7. Phases
 
 Each phase lands on its own with `make test` green in both repositories.
-Phases 2–5 must leave `tests/capabilities/testdata/effective.golden`
-unchanged.
+Phases 1–4 must leave `tests/capabilities/testdata/effective.golden`
+unchanged; phase 5b changes it once, for `agent_cancel`.
 
 **Phase 0 — adopt the module.**
 Widen `accounting.Identity` and add
@@ -1076,35 +1080,15 @@ Check Up row) or leaves accounting on the logger for now.
 carry id and friendly name; `CLAUDE.md` "Shared modules" rewritten. Needs a
 tagged SDK version from the maintainer.
 
-**Phase 1 — cancellation in ClawEh.** Independent of phase 0; may run first
-or in parallel.
-
-- 1a. Task contexts: every sub-agent and task-model job runs on a context
-  registered by id and owner. Establish and record what Maestro dispatch
-  does on a cancelled turn.
-- 1b. `Interrupt` as an exported method with a turn handle; `/cancel`
-  reimplemented on it; `wait` tasks detach (5.2).
-- 1c. `agent_cancel`, the `cancelled` status, supervisor and restart
-  handling (5.3).
-- 1c'. `/cancel all` (5.4).
-- 1d. WebUI Stop button and device abort, if approved (5.4).
-
-*Exit:* tests for each numbered rule in 5.2 and 5.3 on the fake clock,
-including: interrupt during a model call, during a tool, with a `wait` task
-(task finishes and reports), cancel of a task with its own task, cancel then
-restart (not relaunched), CLI model (process gone, token revoked). `make
-test`, the MCP integration script with the new probe, and the WebUI browser
-suite if 1d is included.
-
-**Phase 2 — `modelspec`.** Move the types; ClawEh aliases them; fixture
+**Phase 1 — `modelspec`.** Move the types; ClawEh aliases them; fixture
 configs marshal byte-identically before and after.
 
-**Phase 3 — `models`.** In two steps, because it changes more than it moves.
+**Phase 2 — `models`.** In two steps, because it changes more than it moves.
 
-- 3a. Move factory, client cache, fallback and cooldown into `models` as the
+- 2a. Move factory, client cache, fallback and cooldown into `models` as the
   `Catalog`, behind the Observer/BaseEnv seams, with ClawEh `providers/`
   reduced to aliases. No behaviour change.
-- 3b. Add `Set` (purposes, priorities, selection, `Current`, `Begin`) and
+- 2b. Add `Set` (purposes, priorities, selection, `Current`, `Begin`) and
   move ClawEh's chain building, `/model` state, summarization chain and
   task-model candidate code onto it. ClawEh builds the catalogue at boot,
   and on reload builds a new one and hands it over with `Adopt`.
@@ -1115,46 +1099,62 @@ touch models leaves cooldowns alone, one that does clears them; `/model` choices
 fallback cases (cooldown skip, exhausted chain, context limit, sticky turn)
 against the new package with identical attempt sequences.
 
-**Phase 4 — `toolkit`.** Move the tool core and give the registry the API in
+**Phase 3 — `toolkit`.** Move the tool core and give the registry the API in
 4.4 (`Add`/`Remove`/`Replace`/`Subscribe`/`View`); ClawEh's `Register*` and
 `ReplaceByPrefix` calls become thin wrappers. *Exit:* `tests/test_mcpserver.sh`
 untouched and passing; new tests for add/remove mid-turn.
 
-**Phase 5 — `discovery`.** Extract index, search, meta-tools and deferral.
+**Phase 4 — `discovery`.** Extract index, search, meta-tools and deferral.
 *Exit:* identical tool lists with discovery on and off.
 
-**Phase 6 — the engine (`agent`, `agent/loop`, `agent/hook`).** The large one.
+**Phase 5 — the engine (`agent`, `agent/loop`, `agent/hook`).** The large one.
 
-- 6a. In ClawEh, introduce the callback signatures and events and make
+- 5a. In ClawEh, introduce the callback signatures and events and make
   `llmTurn` call them, with today's behaviour as the callback
   implementations. No package moves. This is where the 38 imports are cut.
-- 6b. Move the host-free engine files, with phase 1's cancellation, to
-  `agent/loop`; add `agent/hook` and the root package (interface, `New`,
-  options) with its size guard; `AgentLoop` builds each agent with
-  `agent.New`. Delete `spawnllm.Worker`.
-- 6c. An example host in the SDK (`examples/chat`): two models, two tools,
+- 5b. Cancellation (section 5), still in ClawEh:
+  - task contexts: every sub-agent and task-model job runs on a context
+    registered by id and owner; establish what Maestro dispatch does on a
+    cancelled turn;
+  - `Interrupt` with a turn handle; `/cancel` reimplemented on it, `wait`
+    tasks detach, one reply per cancel;
+  - `agent_cancel` (granted with `agent_spawn`), the `cancelled` status,
+    supervisor and restart handling; `/cancel all`;
+  - the device listener keeps runs by id, so an interrupted run ends as
+    `aborted` under its own id.
+- 5c. Move the host-free engine files to `agent/loop`; add `agent/hook` and
+  the root package (interface, `New`, options) with its size guard;
+  `AgentLoop` builds each agent with `agent.New`. Delete `spawnllm.Worker`.
+- 5d. An example host in the SDK (`examples/chat`): two models, two tools,
   stdin/stdout, Ctrl-C as interrupt. It is the acceptance test for
   section 1 and stays under ~100 lines.
 
-*Exit:* `make test`, every integration script, the WebUI browser suite on a
-dev instance, and a real-device check with the R1 for streaming order.
+*Exit, 5b:* a test for each numbered rule in 5.2 and 5.3 on the fake clock:
+interrupt during a model call, during a tool, with a `wait` task (the task
+finishes and reports), cancel of a task that has its own task, cancel then
+restart (not relaunched), a CLI model (process gone, token revoked); the
+MCP integration script with the `agent_cancel` probe.
 
-**Phase 7 — `mcphost`.** Split `mcpserver` per 4.6; the example host gains a
+*Exit, phase:* `make test`, every integration script, the WebUI browser
+suite on a dev instance, the agent conformance suite, and a real-device
+check with the R1 for streaming order.
+
+**Phase 6 — `mcphost`.** Split `mcpserver` per 4.6; the example host gains a
 CLI model with tools. *Exit:* section 8 of `tests/test_mcpserver.sh` and the
 opt-in real-CLI tests pass.
 
 **Standards (4.9) are not a phase of their own.** `clock`, `hook.Scope`,
-the id rule and the error vocabulary land with phase 6, because the loop
+the id rule and the error vocabulary land with phase 5, because the loop
 needs them. The `slog` conversion and the permission type are done on the
-existing SDK packages before phase 6, as a small change of their own. The
-single model-caller follows phase 3.
+existing SDK packages before phase 5, as a small change of their own. The
+single model-caller follows phase 2.
 
 **Later, if a second host needs them:** `agentreg` and the task store as SDK
 packages; the upstream-MCP client as `toolkit/mcpclient`.
 
-Size: phases 0 and 2–5 are mostly mechanical. Phase 1 is moderate and
-self-contained. Phase 6 is the bulk (the engine files are ~4,500 lines and
-the seam work touches most of `agent/`). I have not estimated calendar time.
+Size: phases 0–4 are mostly mechanical. Phase 5 is the bulk (the engine
+files are ~4,500 lines and the seam work touches most of `agent/`), and
+5b is the part with new behaviour. I have not estimated calendar time.
 
 ## 8. Testing
 
@@ -1166,14 +1166,14 @@ the seam work touches most of `agent/`). I have not estimated calendar time.
   and the cancellation rules.
 - Guards: `imports_test.go` per package; ClawEh's `cycle_guard_test.go`
   asserts no SDK package imports ClawEh.
-- The capabilities golden file is the oracle for phases 2–5; integration
-  scripts and the browser suite for phases 1, 6 and 7.
+- The capabilities golden file is the oracle for phases 1–4; integration
+  scripts and the browser suite for phases 5 and 6.
 
 ## 9. Documentation
 
 - ClawEh `CLAUDE.md`: "Shared modules", "Providers", the tool-provider,
   discovery and sub-agent passages change as packages move, in the same
-  commits. Phase 1 adds the cancellation rules.
+  commits. Phase 5b adds the cancellation rules.
 - `manual/`: `/cancel` and the new tool (agents section); the Stop control
   and device abort if added; `docs/device-protocol.md`.
 - `docs/tool-providers.md`: new import paths, the registry API.
@@ -1181,14 +1181,14 @@ the seam work touches most of `agent/`). I have not estimated calendar time.
 
 ## 10. Risks
 
-- **Phase 6 rewrites the hottest path under a no-behaviour-change rule.**
-  Mitigation is 6a: restructure in place, behind the existing suite, before
+- **Phase 5 rewrites the hottest path under a no-behaviour-change rule.**
+  Mitigation is 5a: restructure in place, behind the existing suite, before
   anything moves.
 - **Detached `wait` tasks change what an agent sees.** A turn that was
   interrupted while waiting gets the result later as a background result,
   in a new turn. Prompts and the `agent_spawn` description must say so, or
   the model will be surprised by a result it believes it never got.
-- **Runaway workers.** After phase 1 `/cancel` alone no longer stops a
+- **Runaway workers.** After phase 5b `/cancel` alone no longer stops a
   waiting worker; `/cancel all` does, and the `/cancel` reply says so.
 - **Callback ordering.** Redaction before storage, audit before execution,
   images saved before the assistant message is stored. Hooks run in
@@ -1200,7 +1200,7 @@ the seam work touches most of `agent/`). I have not estimated calendar time.
   (reference sites, grants, human agents) must stay out of it, or ClawEh's
   config validation ends up split across two repositories.
 - **Alias sprawl** across `global`, `providers`, `tools`, `config`. Plan a
-  cleanup pass after phase 6 replacing aliases with direct imports.
+  cleanup pass after phase 5 replacing aliases with direct imports.
 - **Two repositories moving together.** ClawEh needs pseudo-versions or a
   `replace` during development; `main` never carries a `replace`.
 - **Reload.** `models.Catalog.Adopt` and agent rebuilds must keep the
@@ -1244,9 +1244,9 @@ Still open, each with my recommendation:
 - **D2. MCP host split** (4.6). *Recommended:* split, moved last. Without
   it an SDK agent on a CLI model has no tools.
 - **D4. Stop button and device abort** (5.4). *Recommended:* defer both
-  out of phase 1. `/cancel` works everywhere text does; ship the
+  out of this work. `/cancel` works everywhere text does; ship the
   cancellation semantics first, then add controls once they are proven.
-  Fix the device run-id defect in phase 1 regardless.
+  Fix the device run-id defect in phase 5b regardless.
 - **D6. Detached `wait` results** (5.2). *Recommended:* deliver as a
   background result that starts a new turn, as `callback` does. Storing
   silently means work the user paid for is never mentioned.
@@ -1274,6 +1274,9 @@ Still open, each with my recommendation:
   more code moves in on the old logger.
 - **D19. Tools in two levels** (4.4). *Recommended:* yes, same shape as
   models.
-- **D11. Branching.** *Recommended:* phase 1 on the current dev branch;
-  each later phase on the dev branch of the version it ships in; no
-  long-lived SDK branch.
+- **D11. Branching and version.** 0.6.5 is released and there is no dev
+  branch. Per the project's workflow rule this work needs the version in
+  `app/app.go` bumped and a `dev/<version>` branch before its first
+  changelog entry (phase 5b certainly has entries; phase 0 may). Every
+  phase lands on that branch as it passes. The maintainer picks the
+  version number.
