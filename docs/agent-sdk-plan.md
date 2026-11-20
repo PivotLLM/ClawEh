@@ -321,7 +321,7 @@ c := models.New(models.WithCooldown(policy), models.WithObserver(obs))
 c.AddProvider(p modelspec.Provider) error
 c.Add(m modelspec.Model, uses ...Use) error       // uses apply to the default set
 c.Remove(name string) error
-c.Replace(providers []modelspec.Provider, list []modelspec.Model) (Diff, error) // reload, atomic
+c.Adopt(next *Catalog) Diff                       // "when you can, switch to these" (see below)
 c.Get(name string) (Info, bool)
 c.Health() []Health                               // available / parked until / last reason / failures
 c.ResetHealth(names ...string)                    // clear cooldown (the WebUI button)
@@ -383,12 +383,39 @@ Points of design, each answering something in the current code:
   `SelectionStore` write. Health counters have their own lock, as the
   cooldown tracker does now. Race tests cover add/remove/select/replace
   during calls.
-- **Reload is `Replace`.** ClawEh populates the catalogue at boot, but its
-  config can be saved at any time. `Replace` diffs against the running
-  catalogue: unchanged models keep their client and health (cooldowns
-  already survive a reload today and must keep doing so), changed ones get
-  a new client, and a replaced or removed client is closed only after its
-  in-flight calls end (today's `providerCalls` guarantee, which moves here).
+- **Updating is handing over a new object.** The host never edits a
+  running catalogue for a config change. It builds a complete new one the
+  same way it built the first (`models.New`, `AddProvider`, `Add`, the
+  per-agent sets), and calls `c.Adopt(next)` on the one the agents hold:
+  "when you can, switch to these".
+  - *Validated before it arrives.* Every error (unknown provider, duplicate
+    name, a purpose with no model) is returned while the host builds
+    `next`. `Adopt` itself cannot fail half-way, so a bad config never
+    reaches a running agent.
+  - *The handle does not change.* Agents keep the pointer they were given;
+    `Adopt` swaps what is behind it in one step. Nothing has to be passed
+    to the agents again.
+  - *The right time is the turn boundary.* A turn already running finishes
+    on the chain it pinned at `Begin`, old clients included. Every turn
+    that begins after `Adopt` uses the new contents. There is no waiting
+    and no pause: `Adopt` returns at once with a `Diff` (added, removed,
+    changed) for the host to log.
+  - *What is carried over,* matched by model name: health and cooldown
+    counters, the per-scope selections, and the "serving now" record. A
+    selection whose model is gone reverts to the default and is listed in
+    the `Diff`. A model whose definition is unchanged also keeps its
+    client, so connection pools survive a save that touched something else.
+  - *What is not.* A changed definition gets a new client. Whether its
+    cooldown is carried is decision D16: today the tracker keeps it on
+    every reload, so a model parked for a rejected key stays parked after
+    the operator fixes the key, until the cooldown runs out or is cleared.
+  - *Old clients* are closed once their last in-flight call ends (today's
+    `providerCalls` guarantee, which moves here).
+  - *Health lives outside the snapshots,* so a failure recorded by a turn
+    still running on the old contents is not lost, and several `Adopt`
+    calls in quick succession are safe: the latest wins.
+  `Add`, `Remove`, `Assign` and `Select` on the live object remain for
+  small hosts and for run-time choices such as `/model`.
 - **Isolated CLI clients** (`GetIsolated`: an empty workspace and no bypass
   flags for fresh temporary agents, classifiers and task models) become
   `chain.Isolated(workspace)`.
@@ -828,8 +855,8 @@ configs marshal byte-identically before and after.
   reduced to aliases. No behaviour change.
 - 3b. Add `Set` (purposes, priorities, selection, `Current`, `Begin`) and
   move ClawEh's chain building, `/model` state, summarization chain and
-  task-model candidate code onto it. ClawEh populates the catalogue at boot
-  and calls `Replace` on reload.
+  task-model candidate code onto it. ClawEh builds the catalogue at boot,
+  and on reload builds a new one and hands it over with `Adopt`.
 
 *Exit:* CLI command lines and environments in the golden file identical;
 cooldown alerts unchanged (`ALERTS.md` untouched); cooldowns still survive
@@ -919,7 +946,7 @@ the seam work touches most of `agent/`). I have not estimated calendar time.
   cleanup pass after phase 6 replacing aliases with direct imports.
 - **Two repositories moving together.** ClawEh needs pseudo-versions or a
   `replace` during development; `main` never carries a `replace`.
-- **Reload.** `models.Catalog.Replace` and agent rebuilds must keep the
+- **Reload.** `models.Catalog.Adopt` and agent rebuilds must keep the
   guarantee that a replaced provider is closed only after its in-flight
   calls end.
 
@@ -953,6 +980,11 @@ Still open:
 - **D15. `modelspec` separate from `models`:** keep the definitions in a
   stdlib-only leaf so ClawEh's `config` does not import run-time machinery
   (recommended), or fold them into `models`.
+- **D16. Cooldown after a changed definition** (4.3): keep it as today
+  (carried across every reload), or clear it when the model's provider
+  connection settings changed (key, base URL, protocol), so fixing a
+  rejected key takes effect on save. I recommend clearing it; it is a
+  behaviour change and would get a changelog entry.
 - **D2. MCP host split** as in 4.6 (recommended), or leave all of it in
   ClawEh and accept that SDK agents on CLI models have no tools.
 - **D4. Controls that need no typing:** a WebUI Stop button and a dedicated
