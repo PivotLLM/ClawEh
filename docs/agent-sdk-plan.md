@@ -1,13 +1,17 @@
 # Agent SDK extraction plan
 
-Status: **proposal, nothing implemented.** Revision 3. Written against ClawEh
+Status: **proposal, nothing implemented.** Revision 4. Written against ClawEh
 `dev/0.6.5` (3476109) and `go.bison9.com/agent` branch `dev/0.0.1` (5bbfa3a,
 version 0.2.0 in development).
 
 Changes in revision 2, from the maintainer's review:
 
-- The SDK repository keeps its name, `agent`; the engine is the module's
-  root package (section 3.1).
+- The SDK repository keeps its name, `agent`. The module's root package is
+  a deliberately small front door: the `Agent` interface, `agent.New` and
+  functional options. The loop lives in a sub-package (section 3.1).
+- A `models` package owns everything about models at run time: the list,
+  purposes, priorities, selection, fallback, cooldown and what is serving
+  now. ClawEh populates it and hands it to the agent (section 4.3).
 - The accounting agent name grows to 64 characters and records gain the
   agent's friendly name (section 4.1).
 - Cancellation is the first deliverable and is redesigned: a user interrupt
@@ -25,34 +29,39 @@ Section 11 lists the decisions still open.
 A new project that needs a custom agent writes roughly this and nothing more:
 
 ```go
-models, _ := modelspec.LoadFile("models.json")       // providers + models
 logger.SetBackend(myLogger)
+
+m := models.New()
+m.AddProvider(modelspec.Provider{Name: "anthropic", Protocol: "anthropic", APIKey: key})
+m.Add(modelspec.Model{ModelName: "sonnet", Model: "claude-sonnet-5-5", Provider: "anthropic"},
+    models.For(models.Chat, 1))
+m.Add(modelspec.Model{ModelName: "haiku", Model: "claude-haiku-5-5", Provider: "anthropic"},
+    models.For(models.Chat, 2), models.For(models.Summarize, 1))
 
 reg := toolkit.NewRegistry()
 reg.Add(lookupOrder, refund)                          // toolspec definitions
 reg.AddToolset(discovery.Hidden(crmTools))            // listed only once searched for
 
-alice, _ := agent.New(agent.Config{
-    ID:          "alice",
-    Name:        "Alice",                             // friendly name: logs, accounting, notices
-    Instruction: "You are Alice, a support agent for ...",
-    Models:      models.Resolve("sonnet", "gpt-fallback"), // ordered: fallback chain
-    Tools:       reg,
-    Callbacks:   agent.Callbacks{BeforeTool: approveRefunds},
-})
+alice, _ := agent.New("alice",
+    agent.WithName("Alice"),                          // friendly name: logs, accounting, notices
+    agent.WithInstruction("You are Alice, a support agent for ..."),
+    agent.WithModels(m),
+    agent.WithTools(reg),
+    agent.WithSessions(session.NewSQLite(dir)),
+    agent.WithBeforeTool(approveRefunds),
+)
 
-r, _ := runner.New(runner.Config{Agent: alice, Sessions: session.NewSQLite(dir)})
-
-run := r.Run(ctx, "session-42", agent.UserText("Where is my order?"))
+run := alice.Run(ctx, "session-42", agent.UserText("Where is my order?"))
 for ev, err := range run.Events() { /* stream to the user */ }
 
 // from anywhere, at any time:
 run.Interrupt()                     // stop this reply; sub-agents keep working
 reg.Remove("refund")                // takes effect at the next model call
+m.Select(models.Chat, "haiku")      // takes effect at the next turn
 ```
 
 The host owns: loading config, building tools, a logger, and moving messages
-between the user and the runner. Model fallback and cooldown, the tool loop,
+between the user and the agent. Model fallback and cooldown, the tool loop,
 discovery, context assembly and compaction, optional memory, cancellation
 and accounting come from the SDK.
 
@@ -131,64 +140,93 @@ is cancelled. Phase 1 establishes it before deciding.
 
 ## 3. Target layout
 
-### 3.1 Name: keep `agent`, engine at the module root
+### 3.1 The top level: `agent`, kept small
 
-The repository and module stay `go.bison9.com/agent` (`BisonNine/agent`).
-`adk` is Google's name for its SDK and is not used.
+The repository and module stay `go.bison9.com/agent` (`BisonNine/agent`);
+`adk` is Google's name and is not used. Everything else in the module is
+part of the agent or helps it, so the agent itself is the module's root
+package.
 
-The engine is the **root package of the module**, so there is no
-`agent/agent`:
+**Rule: the root package is a front door, not a workshop.** It holds only:
+
+- the `Agent` interface;
+- the constructor `agent.New(id string, opts ...Option) (Agent, error)`;
+- `Option` and the `With...` functions (Go functional options), which is
+  how *everything* is supplied: models, tools, sessions, memory, limits,
+  clock, and every callback;
+- the small values a caller needs to talk to an agent (`UserText`, run
+  options), and type aliases for the public types defined below it
+  (`Run`, `Event`, `Outcome`, the callback signatures), so a host imports
+  one package for ordinary use.
+
+It holds no loop, no provider code, no session logic. A guard test caps it:
+the root package starts no goroutine and has no file other than
+`agent.go`, `options.go`, `aliases.go` and their tests.
 
 ```go
-import (
-    "go.bison9.com/agent"            // package agent: Agent, Config, Callbacks, events
-    "go.bison9.com/agent/runner"
-    "go.bison9.com/agent/toolkit"
-)
-
-alice, err := agent.New(agent.Config{...})
+type Agent interface {
+    ID() string
+    Name() string
+    Run(ctx context.Context, session string, msg Message, opts ...RunOption) Run
+    Interrupt(session string) (running bool, dropped int)
+    Tasks() []TaskInfo
+    CancelTask(taskID string, cause error) error
+    Cancel(cause error)            // every turn and task of this agent
+    Tools() *toolkit.Registry
+    Models() *models.Set
+    Close(ctx context.Context) error
+}
 ```
 
-This is the usual Go shape for a module named after its main type. The
-root package imports the sub-packages (`dispatch`, `toolkit`, `discovery`,
-`ctxengine`, `modelspec`); none of them may import the root, which the
-import guards enforce.
+**Where the struct lives.** The loop needs the agent's settings, and the
+root needs the loop to build an agent. If the struct were defined in the
+root, the loop would have to import the root, and Go refuses that cycle.
+So:
 
-Alternatives considered:
+- `agent/hook` (a leaf) defines the callback signatures, `Event`, `Outcome`,
+  `Run`, `Message`, and the small interfaces the loop depends on (`Memory`,
+  `SessionStore`). No logic.
+- `agent/loop` defines the concrete struct that *is* the agent
+  (`loop.Agent`, with its settings in `loop.Spec`) and the whole turn
+  engine: iterations, tool execution, retries, session queues, task
+  contexts, interrupt and cancel.
+- The root's options are `func(*loop.Spec)`; `agent.New` applies them,
+  validates, and returns `loop.New(spec)` as the `Agent` interface.
 
-- `agent/agent`: legal and reads fine at call sites, but the doubled path
-  looks like a mistake and "the agent package" becomes ambiguous.
-- `agent/runtime`: collides with the standard library's `runtime`, so every
-  file using both needs an alias.
-- `agent/factory`: describes construction only; the package is the whole
-  turn engine.
-- `agent/engine` or `agent/core`: workable, but `engine.New` returning an
-  agent reads worse than `agent.New`.
+Dependencies run one way: `agent` → `agent/loop` → `agent/hook`, and
+`agent/loop` → `models`, `toolkit`, `discovery`, `ctxengine`. Nothing
+imports the root.
 
-One cost that applies to every option named `agent`: ClawEh already has its
-own `agent` package (`github.com/PivotLLM/ClawEh/agent`), so the ClawEh
-files that use both import the SDK under an alias. That is a handful of
-files (the builder and the turn runner), not every call site.
+**No separate runner.** Revisions 1–3 had a `runner` package, after Google's
+design. With the agent as the object the host holds, running, interrupting
+and cancelling are methods on it; the session queues a runner would own are
+inside `agent/loop`. A host with many agents (ClawEh) holds many `Agent`
+values that share one models catalogue.
+
+ClawEh already has its own package named `agent`, so the few ClawEh files
+that use both import the SDK under an alias.
 
 ### 3.2 Packages
 
-New packages in **bold**.
+New packages are marked NEW.
 
 ```
-toolspec     stdlib                          tool contract
-logger       stdlib
-accounting   logger                          (identity widened, see 4.1)
-spawnllm     toolspec accounting logger      provider clients (Worker retired, see 4.8)
-modelspec    stdlib                          NEW  providers, models, validation, CLI table
-dispatch     modelspec spawnllm logger       NEW  client factory + cache, fallback, cooldown
-toolkit      toolspec logger                 NEW  Tool, Result, live Registry, Toolset
-discovery    toolkit toolspec                NEW  hidden-tool index, search, deferred loading
-ctxengine    spawnllm toolspec
-cogmem       toolspec
-(root) agent dispatch toolkit discovery      NEW  Agent, callbacks, events, the turn engine
-             ctxengine modelspec accounting
-runner       agent                           NEW  session queues, Run handles, tasks, Cancel
-mcphost      toolkit + mark3labs/mcp-go      NEW  serves a Registry over MCP (for CLI models)
+toolspec      stdlib                           tool contract
+logger        stdlib
+accounting    logger                           (identity widened, see 4.1)
+spawnllm      toolspec accounting logger       provider clients (Worker retired, see 4.8)
+modelspec     stdlib                           NEW  provider + model definitions, validation, CLI table
+models        modelspec spawnllm logger        NEW  the live model object: lists, purposes, selection,
+                                                    fallback, cooldown, clients (see 4.3)
+toolkit       toolspec logger                  NEW  Tool, Result, live Registry, Toolset
+discovery     toolkit toolspec                 NEW  hidden-tool index, search, deferred loading
+ctxengine     spawnllm toolspec
+cogmem        toolspec
+agent/hook    toolkit spawnllm(types)          NEW  callback signatures, events, run handle, small interfaces
+agent/loop    hook models toolkit discovery    NEW  the agent struct and the turn engine
+              ctxengine accounting
+agent (root)  loop hook models toolkit         NEW  Agent interface, New, options, aliases
+mcphost       toolkit + mark3labs/mcp-go       NEW  serves a Registry over MCP (for CLI models)
 ```
 
 Every new package gets an `imports_test.go` guard. The module rule stays:
@@ -218,7 +256,7 @@ type Identity struct {
   to the agent that caused it, and `Name` is the clone label
   (`Alice (clone 1a2b3c4d)`, today's `AgentInstance.Label`). A fresh
   temporary agent uses its UUID and its given name.
-- In the SDK, `agent.Config.ID` and `.Name` feed it; the host never builds an
+- In the SDK, the id given to `agent.New` and `agent.WithName` feed it; the host never builds an
   `Identity` by hand for turns. Direct `speech`/`imagegen` calls still take
   one.
 - Display names can be longer than 64 or contain anything. `Normalize`
@@ -251,20 +289,137 @@ the `Store`, model reference sites/rename/prune, `task_models`, human-agent
 rules. The `human` protocol is registered by ClawEh through
 `modelspec.RegisterProtocol`; the SDK does not know it.
 
-### 4.3 `dispatch` — clients, fallback, cooldown
+### 4.3 `models` — one object for everything about models
 
-Moves from ClawEh `providers/`: the factory (`CreateProviderFromConfig`,
-`compatOpts`, `responsesOpts`), `ProviderDispatcher` → `dispatch.Clients`
-(`Get`, `GetIsolated`, `Flush`, `Register`), `FallbackChain` and its types,
-`CooldownTracker`/`CooldownPolicy`.
+Today model handling is spread over ClawEh: the catalogue in `config`,
+clients in `ProviderDispatcher`, health in `CooldownTracker`, ordering in
+`FallbackChain`, per-agent chains in `agent/instance.go`
+(`resolveAgentCandidates`, `resolveWorkerCandidates`), the summarization
+chain in `agent/context_manager.go`, the per-session `/model` choice in
+`agent/loop_session_state.go`, and six task-model lists read in several
+places. The `models` package replaces all of the run-time part (and the
+`dispatch` package of earlier revisions). ClawEh's job becomes: populate
+it from config, and ask it questions.
+
+**Two levels, because the data has two scopes.** A single flat list cannot
+represent ClawEh as it is:
+
+- *Install-wide:* the definitions, the HTTP/CLI clients, and health. A
+  model that is out of credit is out of credit for every agent, and the
+  compaction path must skip it too.
+- *Per agent:* which models it uses for which purpose and in what order.
+  Alice and Bob may share a model at different priorities, and the same
+  model may serve chat for one and summarization for another.
+
+So there is one **`Catalog`** per process and one **`Set`** per agent, which
+is a view onto the catalogue. `models.New()` returns a catalogue with a
+default set, so a single-agent host never sees the distinction.
+
+```go
+// Catalog: install-wide. Definitions, clients, health.
+c := models.New(models.WithCooldown(policy), models.WithObserver(obs))
+c.AddProvider(p modelspec.Provider) error
+c.Add(m modelspec.Model, uses ...Use) error       // uses apply to the default set
+c.Remove(name string) error
+c.Replace(providers []modelspec.Provider, list []modelspec.Model) (Diff, error) // reload, atomic
+c.Get(name string) (Info, bool)
+c.Health() []Health                               // available / parked until / last reason / failures
+c.ResetHealth(names ...string)                    // clear cooldown (the WebUI button)
+c.RegisterClient(name string, cl spawnllm.LLMProvider) // ready-made client (ClawEh's human provider)
+c.Set(id string) *Set                             // per-agent view, created on first use
+
+// Set: one agent's models, by purpose and priority.
+s.Assign(purpose Purpose, name string, priority int, opts ...AssignOption) error
+s.Unassign(purpose Purpose, name string)
+s.Reorder(purpose Purpose, names []string)
+s.List(purpose Purpose) []Entry                   // in priority order, with health and settings
+s.Select(purpose Purpose, name string, scope ...Scope) error
+s.Selected(purpose Purpose, scope ...Scope) Entry
+s.Reset(purpose Purpose, scope ...Scope)          // back to the top-priority model
+s.Current(purpose Purpose, scope ...Scope) Serving // {Selected, Serving, Since, Reason, Attempts}
+s.Begin(purpose Purpose, scope ...Scope) *Chain   // a pinned chain for one turn
+```
+
+Points of design, each answering something in the current code:
+
+- **Purpose** is an open string type with constants the SDK itself uses:
+  `Chat`, `Summarize` (compaction), `Memory` (cogmem consolidation),
+  `Worker` (sub-agents). A host adds its own; ClawEh adds `vision`, `stt`,
+  `tts`, `image`, `text`, `classify` for its task models. A purpose with no
+  models falls back by a declared rule (`Worker` → `Chat`, as
+  `WorkerCandidates` does today), never silently.
+- **Priority belongs to the assignment, not the model.** It is an integer,
+  lower first, ties in insertion order. ClawEh's config stores ordered
+  lists, so it assigns list position as the priority; nothing in
+  `config.json` changes.
+- **Per-assignment settings.** An assignment can carry opaque settings
+  (`models.WithSettings(v)`), which is where ClawEh's `image_api` and
+  `tts_defaults` ride.
+- **Selection has a scope.** `/model` in ClawEh is per session and is
+  persisted in the session's compaction state. `Select` takes an optional
+  scope (a session key); without one it sets the agent's default. Selection
+  is held in memory and written through an optional `SelectionStore`
+  interface, which the loop implements over the session store, so the
+  choice survives restarts as it does now. A selection whose model is
+  removed reverts to the default and reports it.
+- **A turn is pinned.** `Begin` returns a `Chain`: the selected model
+  first, then the rest in priority order, fixed for the turn so a
+  multi-step tool chain never changes model half-way (today's `turnModel`).
+  `chain.Chat(ctx, id, req)` runs the call with cooldown skips and
+  fallback, marks success and failure, and reports each hop. The chain also
+  exposes the pinned model's limits (context window, max tokens, thinking,
+  `no_tools`, vision), which the loop needs before the first call.
+- **"What is serving now"** is `Current`: the selected model, the one that
+  actually answered last, since when, and why they differ (cooldown, auth,
+  rate limit, timeout). That feeds the "model X failed, trying Y" notice,
+  `/model`, the WebUI and Check Up from one source.
+- **Events, not alerts.** `Observer` gets `Parked`, `Recovered`,
+  `FellBack`, `Exhausted`. ClawEh's observer raises the same alerts with
+  the same incident keys (`ALERTS.md` unchanged); another host logs them or
+  ignores them.
+- **Locking.** The catalogue and each set publish immutable snapshots
+  behind an atomic pointer; writers build a new snapshot under one mutex.
+  No lock is ever held across a model call, an observer callback, or a
+  `SelectionStore` write. Health counters have their own lock, as the
+  cooldown tracker does now. Race tests cover add/remove/select/replace
+  during calls.
+- **Reload is `Replace`.** ClawEh populates the catalogue at boot, but its
+  config can be saved at any time. `Replace` diffs against the running
+  catalogue: unchanged models keep their client and health (cooldowns
+  already survive a reload today and must keep doing so), changed ones get
+  a new client, and a replaced or removed client is closed only after its
+  in-flight calls end (today's `providerCalls` guarantee, which moves here).
+- **Isolated CLI clients** (`GetIsolated`: an empty workspace and no bypass
+  flags for fresh temporary agents, classifiers and task models) become
+  `chain.Isolated(workspace)`.
+
+What moves in from ClawEh `providers/`: the factory (`CreateProviderFromConfig`,
+`compatOpts`, `responsesOpts`), `ProviderDispatcher`, `FallbackChain` and
+its types, `CooldownTracker`/`CooldownPolicy`, `providerCalls`.
 
 | Dependency today | Replacement |
 | --- | --- |
-| `*config.Config` | `modelspec.Set` |
-| `alerter` + `alerts.Incidents` in the cooldown tracker | `dispatch.Observer` (`ModelParked`, `ModelRecovered`); ClawEh raises the same alerts with the same keys |
-| `internal/childenv` | `ClientOptions.BaseEnv`; the SDK default is a minimal allowlist, never the full environment |
-| `internal/perms` | `ClientOptions.FileModes` |
+| `*config.Config` | `modelspec` values passed to `Add`/`Replace` |
+| `alerter` + `alerts.Incidents` | `models.Observer` |
+| `internal/childenv` | `models.WithBaseEnv`; the SDK default is a minimal allowlist, never the full environment |
+| `internal/perms` | `models.WithFileModes` |
 | CLI-declined wording | host-supplied formatter (ClawEh names the agent and model) |
+
+**What does not move.** The config file and its shape; secret references;
+validation on save; the model reference sites (rename follows a model
+through every list, delete is refused while a list names it, a dangling
+name is pruned); human-agent rules; per-agent task-model *grants*; the
+WebUI pages. Those are about ClawEh's configuration document, not about
+models at run time. The `TaskModelsConfig.Entries(use)` rule stays: it
+becomes the one place ClawEh reads the lists in order to assign them.
+
+What ClawEh deletes or shrinks once this exists: `providers/` (to the human
+provider, the observer and aliases), `resolveAgentCandidates`,
+`resolveWorkerCandidates`, `selectCandidates`, the active-model cache,
+`resolveCompressModelChain` and its client resolution, the candidate
+plumbing in `ToolDeps` (`Provider`, `Dispatcher`, `Fallback`, `Candidates`,
+`CandidateResolver` become one `*models.Set`), and the task-model host's
+candidate and cooldown code.
 
 ### 4.4 `toolkit` — tools and the live registry
 
@@ -362,40 +517,41 @@ Consequences to design for:
 - It moves late (phase 7), after the engine. Until then ClawEh's
   `mcpserver` keeps working against the `toolkit` aliases.
 
-### 4.7 `agent` and `runner`
+### 4.7 `agent`, `agent/loop`, `agent/hook`
 
-Modelled loosely on Google ADK for Go (`google.golang.org/adk` v1.10.0:
-`llmagent.Config`, `Runner.Run` returning `iter.Seq2[*session.Event, error]`,
-slices of before/after callbacks, toolsets, plugins). Kept: the agent/runner
-split, config-struct constructors, callbacks that can short-circuit, an event
-iterator. Different on purpose: plain Go types rather than `genai`, an
-ordered model list rather than one model, and a run handle with interrupt
-and cancel.
+Modelled loosely on Google's Agent Development Kit for Go
+(`google.golang.org/adk` v1.10.0): callbacks around the turn, the model
+call and the tool call that can short-circuit; an event iterator; toolsets.
+Different on purpose: functional options instead of a config struct, plain
+Go types rather than `genai`, a models object with fallback instead of one
+model, no separate runner, and a run handle with interrupt and cancel.
+
+Options (all in the root package, each a one-line function over
+`loop.Spec`):
 
 ```go
-type Config struct {
-    ID, Name, Description string
-    Instruction           string
-    InstructionLayers     func(TurnInfo) []ctxengine.Layer // ClawEh's PromptLayers
+agent.WithName(string)                    agent.WithDescription(string)
+agent.WithInstruction(string)             agent.WithInstructionLayers(func(TurnInfo) []ctxengine.Layer)
+agent.WithModels(m)                       // a *models.Catalog (its default set) or a *models.Set
+agent.WithTools(*toolkit.Registry)        agent.WithAllow(toolkit.AllowChecker)
+agent.WithSessions(SessionStore)          agent.WithMemory(Memory)
+agent.WithContext(...ctxengine.Option)    agent.WithLimits(Limits)
+agent.WithProject(string)                 agent.WithClock(Clock)
+agent.WithPlugin(Plugin)                  // a named bundle of callbacks
 
-    Models  []modelspec.Ref   // ordered fallback chain; index 0 is primary
-    Clients *dispatch.Clients // shared across agents, so cooldown is shared
-
-    Tools *toolkit.Registry   // live; see 4.4
-    Allow toolkit.AllowChecker
-
-    Context ContextOptions    // ctxengine options
-    Memory  Memory            // optional; cogmem through an adapter
-    Limits  Limits            // iterations, tool timeout, turn timeout, result cap, cancel grace
-    Project string            // accounting
-
-    Callbacks Callbacks
-    Plugins   []Plugin        // a named Callbacks bundle
-    Clock     Clock
-}
+agent.WithBeforeTurn(fn)   agent.WithAfterTurn(fn)
+agent.WithBeforeModel(fn)  agent.WithAfterModel(fn)  agent.WithOnModelError(fn)
+agent.WithBeforeTool(fn)   agent.WithAfterTool(fn)   agent.WithOnToolError(fn)
+agent.WithOnFallback(fn)   agent.WithOnCompaction(fn)
+agent.WithOnTextDelta(fn)  agent.WithOnInterrupt(fn) agent.WithOnEvent(fn)
 ```
 
-**Callbacks.** A non-nil replacement skips the step (ADK semantics). The
+A callback option may be given more than once; hooks run in the order
+given. `agent.New` fails on a missing model set, a purpose with no models
+and no fallback rule, or a duplicate tool name, so a wrong setup is refused
+at construction rather than on the first turn.
+
+**Callbacks.** A non-nil replacement skips the step (as in Google's kit). The
 right column is the ClawEh behaviour that becomes an implementation of the
 hook.
 
@@ -406,7 +562,7 @@ hook.
 | `BeforeModel` | edit the request, answer instead | low-steps note, media resolution, strict alternation, reasoning backfill, dumps |
 | `AfterModel` | edit the response | `emitFinish`, spend, usage, generated images, reasoning channel |
 | `OnModelError` | supply a response, change the error | failover and billing text |
-| `OnFallback` | observe | "model X failed, trying Y", logs |
+| `OnFallback` | observe (fed by `models`) | "model X failed, trying Y", logs |
 | `BeforeTool` | edit args, answer instead, refuse | audit row, breadcrumb, approval, depth and turn-chat scoping |
 | `AfterTool` | edit the result | secret redaction, ForUser/media publishing, vision describe, stats |
 | `OnToolError` | supply a result | refusals logged at WARN |
@@ -451,17 +607,17 @@ Three things can be stopped, and they are separate:
 | **Queue** | Messages waiting behind the running turn | Dropped with an interrupt, as now |
 
 Tasks are **not children of the turn's context.** Every task runs on its own
-context, registered with the runner under its id and its owner. That one
+context, registered with the agent under its id and its owner. That one
 change gives both requirements: an interrupt cannot reach a task, and a task
 can be cancelled by id.
 
 ```go
 run.Interrupt()                         // the turn only; tasks keep running
 run.Cancel(cause)                       // the turn and every task it started (host use)
-r.Interrupt(sessionID) (running bool, dropped int)
-r.Tasks(ownerID) []TaskInfo
-r.CancelTask(ownerID, taskID, cause) error   // cascades to that task's own tasks
-r.CancelAll(cause)                      // shutdown
+alice.Interrupt(sessionID) (running bool, dropped int)
+alice.Tasks() []TaskInfo
+alice.CancelTask(taskID, cause) error   // cascades to that task's own tasks
+alice.Cancel(cause)                     // everything of this agent (shutdown, /cancel all)
 ```
 
 ### 5.2 Interrupt: stop the reply, leave sub-agents alone
@@ -621,9 +777,9 @@ audit, alerts, restart recovery, retention, message tokens, `ContextBuilder`,
 of the MCP host (4.6).
 
 `AgentLoop` remains ClawEh's host object and shrinks to: route inbound →
-resolve the `AgentInstance` → `runner.Run` with ClawEh's callbacks → publish
+resolve the `AgentInstance` → `Agent.Run` with ClawEh's callbacks → publish
 the reply. `agentreg` and the sub-agent task store stay in ClawEh at first;
-the runner supplies the task contexts and ids they register with.
+the SDK agent supplies the task contexts and ids they register with.
 
 ## 7. Phases
 
@@ -631,7 +787,7 @@ Each phase lands on its own with `make test` green in both repositories.
 Phases 2–5 must leave `tests/capabilities/testdata/effective.golden`
 unchanged.
 
-**Phase 0 — rename and adopt.**
+**Phase 0 — adopt the module.**
 Widen `accounting.Identity` and add
 `Name` (4.1). ClawEh swaps the four `PivotLLM/*` requirements for the one
 module, updates the alias shims and `cycle_guard_test.go`, and passes an
@@ -665,9 +821,21 @@ suite if 1d is included.
 **Phase 2 — `modelspec`.** Move the types; ClawEh aliases them; fixture
 configs marshal byte-identically before and after.
 
-**Phase 3 — `dispatch`.** Move factory, cache, fallback, cooldown behind the
-Observer/BaseEnv seams. *Exit:* CLI command lines and environments in the
-golden file identical; cooldown alerts unchanged (`ALERTS.md` untouched).
+**Phase 3 — `models`.** In two steps, because it changes more than it moves.
+
+- 3a. Move factory, client cache, fallback and cooldown into `models` as the
+  `Catalog`, behind the Observer/BaseEnv seams, with ClawEh `providers/`
+  reduced to aliases. No behaviour change.
+- 3b. Add `Set` (purposes, priorities, selection, `Current`, `Begin`) and
+  move ClawEh's chain building, `/model` state, summarization chain and
+  task-model candidate code onto it. ClawEh populates the catalogue at boot
+  and calls `Replace` on reload.
+
+*Exit:* CLI command lines and environments in the golden file identical;
+cooldown alerts unchanged (`ALERTS.md` untouched); cooldowns still survive
+a reload; `/model` choices survive a restart; a table test replays today's
+fallback cases (cooldown skip, exhausted chain, context limit, sticky turn)
+against the new package with identical attempt sequences.
 
 **Phase 4 — `toolkit`.** Move the tool core and give the registry the API in
 4.4 (`Add`/`Remove`/`Replace`/`Subscribe`/`View`); ClawEh's `Register*` and
@@ -677,15 +845,17 @@ untouched and passing; new tests for add/remove mid-turn.
 **Phase 5 — `discovery`.** Extract index, search, meta-tools and deferral.
 *Exit:* identical tool lists with discovery on and off.
 
-**Phase 6 — the engine (`agent`, `runner`).** The large one.
+**Phase 6 — the engine (`agent`, `agent/loop`, `agent/hook`).** The large one.
 
-- 6a. In ClawEh, introduce the callback struct and events and make `llmTurn`
-  call them, with today's behaviour as the callback implementations. No
-  package moves. This is where the 38 imports are cut.
-- 6b. Move the host-free engine files, with phase 1's cancellation, to the
-  SDK; `AgentLoop` calls them. Delete `spawnllm.Worker`.
-- 6c. An example host in the SDK (`examples/chat`): a models file, two
-  tools, stdin/stdout, Ctrl-C as interrupt. It is the acceptance test for
+- 6a. In ClawEh, introduce the callback signatures and events and make
+  `llmTurn` call them, with today's behaviour as the callback
+  implementations. No package moves. This is where the 38 imports are cut.
+- 6b. Move the host-free engine files, with phase 1's cancellation, to
+  `agent/loop`; add `agent/hook` and the root package (interface, `New`,
+  options) with its size guard; `AgentLoop` builds each agent with
+  `agent.New`. Delete `spawnllm.Worker`.
+- 6c. An example host in the SDK (`examples/chat`): two models, two tools,
+  stdin/stdout, Ctrl-C as interrupt. It is the acceptance test for
   section 1 and stays under ~100 lines.
 
 *Exit:* `make test`, every integration script, the WebUI browser suite on a
@@ -742,11 +912,14 @@ the seam work touches most of `agent/`). I have not estimated calendar time.
   pins the order.
 - **Tool-list churn and the prompt cache** (4.4): a host that adds and
   removes listed tools often will pay for it on every turn.
+- **`models` growing beyond run-time state.** Configuration rules
+  (reference sites, grants, human agents) must stay out of it, or ClawEh's
+  config validation ends up split across two repositories.
 - **Alias sprawl** across `global`, `providers`, `tools`, `config`. Plan a
   cleanup pass after phase 6 replacing aliases with direct imports.
 - **Two repositories moving together.** ClawEh needs pseudo-versions or a
   `replace` during development; `main` never carries a `replace`.
-- **Reload.** `dispatch.Clients.Flush` and agent rebuilds must keep the
+- **Reload.** `models.Catalog.Replace` and agent rebuilds must keep the
   guarantee that a replaced provider is closed only after its in-flight
   calls end.
 
@@ -754,8 +927,11 @@ the seam work touches most of `agent/`). I have not estimated calendar time.
 
 Settled in review:
 
-- The repository stays `agent`; `adk` is not used. Engine package placement
-  per 3.1 (root package) unless the maintainer prefers a sub-package.
+- The repository stays `agent`. The root package is the small front door
+  (interface, `agent.New`, functional options); the struct and the loop are
+  in `agent/loop` (3.1).
+- A `models` package owns models at run time; ClawEh populates it and
+  passes it to the agent (4.3).
 - Accounting agent name 64 characters, plus a friendly name.
 - Interrupt leaves sub-agents running; the agent can cancel its own.
 - The registry is live.
@@ -769,6 +945,14 @@ Still open:
 - **D1. Clone spend:** attribute a sub-agent's accounting records to its
   source agent with the clone label as the name (recommended, 4.1), or to
   the clone's own id.
+- **D13. No separate runner** (3.1): running and cancelling as methods on
+  the agent (recommended), or keep a `runner` package.
+- **D14. `models` in two levels** (4.3): a process-wide catalogue plus a
+  per-agent set (recommended; shared cooldown with per-agent ordering needs
+  it), or one flat object.
+- **D15. `modelspec` separate from `models`:** keep the definitions in a
+  stdlib-only leaf so ClawEh's `config` does not import run-time machinery
+  (recommended), or fold them into `models`.
 - **D2. MCP host split** as in 4.6 (recommended), or leave all of it in
   ClawEh and accept that SDK agents on CLI models have no tools.
 - **D4. Controls that need no typing:** a WebUI Stop button and a dedicated
