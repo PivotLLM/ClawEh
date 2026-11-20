@@ -6,7 +6,8 @@ version 0.2.0 in development).
 
 Changes in revision 2, from the maintainer's review:
 
-- The SDK repository is renamed to `adk` (section 3.1).
+- The SDK repository keeps its name, `agent`; the engine is the module's
+  root package (section 3.1).
 - The accounting agent name grows to 64 characters and records gain the
   agent's friendly name (section 4.1).
 - Cancellation is the first deliverable and is redesigned: a user interrupt
@@ -130,23 +131,44 @@ is cancelled. Phase 1 establishes it before deciding.
 
 ## 3. Target layout
 
-### 3.1 Rename the repository to `adk`
+### 3.1 Name: keep `agent`, engine at the module root
 
-Recommendation: **yes, rename now.** Nothing depends on it, no tag exists,
-and it removes `agent/agent`. Module path `go.bison9.com/adk`, repository
-`BisonNine/adk`.
+The repository and module stay `go.bison9.com/agent` (`BisonNine/agent`).
+`adk` is Google's name for its SDK and is not used.
 
-One cost to accept knowingly: Google's Go SDK is `google.golang.org/adk`,
-with packages also named `agent`, `runner`, `tool`, `session`. The import
-paths never collide, but documentation searches and coding assistants will
-mix the two up, and a project importing both needs aliases. If that matters
-more than the short name, `agentkit` avoids it. The rest of this plan uses
-`adk`.
+The engine is the **root package of the module**, so there is no
+`agent/agent`:
 
-Mechanics: rename the GitHub repository, update the vanity-import record at
-`go.bison9.com`, change the `module` line and every internal import (311 Go
-files, one `sed`), the READMEs, `CLAUDE.md` and the import guards. Do it as
-the first commit of phase 0 so ClawEh only ever imports the final path.
+```go
+import (
+    "go.bison9.com/agent"            // package agent: Agent, Config, Callbacks, events
+    "go.bison9.com/agent/runner"
+    "go.bison9.com/agent/toolkit"
+)
+
+alice, err := agent.New(agent.Config{...})
+```
+
+This is the usual Go shape for a module named after its main type. The
+root package imports the sub-packages (`dispatch`, `toolkit`, `discovery`,
+`ctxengine`, `modelspec`); none of them may import the root, which the
+import guards enforce.
+
+Alternatives considered:
+
+- `agent/agent`: legal and reads fine at call sites, but the doubled path
+  looks like a mistake and "the agent package" becomes ambiguous.
+- `agent/runtime`: collides with the standard library's `runtime`, so every
+  file using both needs an alias.
+- `agent/factory`: describes construction only; the package is the whole
+  turn engine.
+- `agent/engine` or `agent/core`: workable, but `engine.New` returning an
+  agent reads worse than `agent.New`.
+
+One cost that applies to every option named `agent`: ClawEh already has its
+own `agent` package (`github.com/PivotLLM/ClawEh/agent`), so the ClawEh
+files that use both import the SDK under an alias. That is a handful of
+files (the builder and the turn runner), not every call site.
 
 ### 3.2 Packages
 
@@ -163,7 +185,7 @@ toolkit      toolspec logger                 NEW  Tool, Result, live Registry, T
 discovery    toolkit toolspec                NEW  hidden-tool index, search, deferred loading
 ctxengine    spawnllm toolspec
 cogmem       toolspec
-agent        dispatch toolkit discovery      NEW  Agent, callbacks, events, the turn engine
+(root) agent dispatch toolkit discovery      NEW  Agent, callbacks, events, the turn engine
              ctxengine modelspec accounting
 runner       agent                           NEW  session queues, Run handles, tasks, Cancel
 mcphost      toolkit + mark3labs/mcp-go      NEW  serves a Registry over MCP (for CLI models)
@@ -321,7 +343,7 @@ reaches host tools is an MCP server. If that stays entirely in ClawEh, an
 SDK agent on `claude-cli` or `codex-cli` has no tools, and "model fallbacks"
 quietly lose tools whenever the chain reaches a CLI model.
 
-| Moves to `adk/mcphost` | Stays in ClawEh |
+| Moves to `agent/mcphost` | Stays in ClawEh |
 | --- | --- |
 | Serving a `toolkit.Registry` per agent over streamable HTTP; catalogue diffing and `tools/list_changed` | Listener address, endpoint paths `/mcp` and `/internal`, TLS, the Host check |
 | The session-token store: issue, resolve, revoke, per-turn scope (depth, reply chat, ask chain) | Service tokens (`servicetoken`), `agenttoken`, token hashing, the ACL policy (`mcpserver/acl`) |
@@ -610,13 +632,13 @@ Phases 2–5 must leave `tests/capabilities/testdata/effective.golden`
 unchanged.
 
 **Phase 0 — rename and adopt.**
-Rename the repository to `adk` (3.1). Widen `accounting.Identity` and add
+Widen `accounting.Identity` and add
 `Name` (4.1). ClawEh swaps the four `PivotLLM/*` requirements for the one
 module, updates the alias shims and `cycle_guard_test.go`, and passes an
 identity on every `Chat`/`Transcribe`/`Synthesize`/`Generate` call. Decide
 whether ClawEh writes `accounting.log` (location, permissions area, backup,
 Check Up row) or leaves accounting on the logger for now.
-*Exit:* ClawEh builds on `go.bison9.com/adk`, no behaviour change; records
+*Exit:* ClawEh builds on `go.bison9.com/agent`, no behaviour change; records
 carry id and friendly name; `CLAUDE.md` "Shared modules" rewritten. Needs a
 tagged SDK version from the maintainer.
 
@@ -732,8 +754,8 @@ the seam work touches most of `agent/`). I have not estimated calendar time.
 
 Settled in review:
 
-- Repository renamed to `adk` (the plan assumes it; say if `agentkit` is
-  preferred after reading 3.1).
+- The repository stays `agent`; `adk` is not used. Engine package placement
+  per 3.1 (root package) unless the maintainer prefers a sub-package.
 - Accounting agent name 64 characters, plus a friendly name.
 - Interrupt leaves sub-agents running; the agent can cancel its own.
 - The registry is live.
