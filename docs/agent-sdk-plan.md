@@ -519,6 +519,35 @@ Rules, each with a test:
   that agent. Hidden (discovery) tools do not have this cost, which is the
   reason to put a large or changing set behind discovery.
 
+**The same shape as `models`.** Tools have the same two scopes as models:
+what exists in the process, and what each agent may use. So the registry
+follows the model object's pattern, and a host learns one idea, not two:
+
+| | `models` | `toolkit` |
+| --- | --- | --- |
+| Process-wide | `Catalog`: definitions, clients, health | `Catalog`: every provider and toolset the host mounted, with namespaces |
+| Per agent | `Set`: purpose → models by priority | `Set`: the tools this agent is granted, each listed or hidden |
+| Given to the agent | `agent.WithModels(set)` | `agent.WithTools(set)` |
+| Small host | `models.New()` has a default set | `toolkit.New()` has a default set |
+| Live change | `Assign`, `Select` | `Add`, `Remove`, `Replace` |
+| Config reload | build a new one, `Adopt(next)` | build a new one, `Adopt(next)` |
+| Takes effect | next turn | next model call |
+| Ask it | `List(purpose)`, `Current`, `Health` | `List()`, `Listed()`, `Hidden()`, `Stats()` |
+
+The per-agent `Set` is what earlier text in this section calls a filtered
+view (`reg.View(allow)`): ClawEh builds one catalogue from its tool
+providers and gives each agent a set filtered by that agent's grants.
+`Adopt` has the same guarantees as for models: the new bundle is validated
+while it is built (duplicate names refused), the agent keeps its handle,
+a tool call already running finishes on the old tool, and subscribers get
+one change notice for the whole swap.
+
+Where the parallel stops: tools have no priority and no fallback, and
+"listed or hidden" (discovery) takes the place of "purpose". The package
+keeps the name `toolkit` rather than `tools`, because ClawEh's own `tools`
+package is imported by some eighty files and a second package of that name
+would need an alias in every one that touches both.
+
 `Toolset` (`Name()`, `Tools(ctx)`) covers dynamic groups. Tools that live in
 **another process** come in as a toolset too: ClawEh's upstream-MCP client
 (`mcp/`, 1,826 lines) already does this with `ReplaceByPrefix`. It can move
@@ -1124,6 +1153,9 @@ Still open:
 - **D18. `log/slog` as the logging interface** (4.9), replacing the SDK's
   global `logger` package (recommended), or keep `logger` and only make it
   per-instance.
+- **D19. Tools in the same two levels as models** (4.4): a process-wide
+  catalogue plus a per-agent set with `Adopt` (recommended), or keep the
+  single registry with a filtered view.
 - **D2. MCP host split** as in 4.6 (recommended), or leave all of it in
   ClawEh and accept that SDK agents on CLI models have no tools.
 - **D4. Controls that need no typing:** a WebUI Stop button and a dedicated
