@@ -536,10 +536,39 @@ control that needs no typing:
 Both are optional conveniences on top of the command and need approval
 individually (D4).
 
-Observed, for a decision (D12): one `/cancel` today produces two messages,
-the command's own reply and the reply owed to the interrupted message. They
-are separate by construction (each inbound message gets its reply). They
-could be merged into one message when both go to the same chat.
+**One reply per cancel (decided).** Today one `/cancel` produces two
+messages: the command's own reply (`commands/cmd_cancel.go`) and the reply
+owed to the interrupted message (`decideTurnReply`), plus one more per
+queued message that required a reply (`publishCancelledReplies`). After
+phase 1 a cancel sends exactly one message to the chat it was typed in,
+saying what was stopped, how many queued messages were dropped and which
+tasks are still running. The interrupted and dropped messages are still
+closed with `Outcome: cancelled` for the turn contract, but without text of
+their own when they belong to the same chat. A waiting asker (another agent)
+and a message from a different chat still get their own cancelled reply,
+since nobody else would tell them.
+
+**Devices.** The device socket is not blocked while a reply is pending:
+`chat.send` is acknowledged at once (`{runId, status:"started"}`) and the
+reply arrives later as events, so a client can send another request on the
+same connection at any time. Two ways to cancel follow from that:
+
+- *Today, with no protocol change:* a second `chat.send` whose message is
+  `/cancel`. It reaches the same `/cancel` path as any text channel. One
+  defect to fix: the listener tracks a single `currentRun` per connection
+  and the second `chat.send` overwrites it, so the cancelled run's closing
+  events are attributed to the `/cancel` run id and the original run never
+  gets its own terminal event. Phase 1 keeps runs by id so the interrupted
+  run ends with `chat` state `aborted` (and `agent` lifecycle end) under
+  its own id.
+- *A dedicated request:* an abort method carrying the run id, for clients
+  that have a stop button or a hardware key rather than a text box. The
+  OpenClaw Gateway this listener imitates acknowledges runs and documents
+  an `aborted` chat state, which implies such a method, but I could not
+  confirm its name or payload from this session; it must be checked against
+  the protocol before it is added (D4). Whether a given client ever sends
+  it is up to the client: the R1 and the Android app would each need
+  checking.
 
 ### 5.5 What changes for operators (changelog)
 
@@ -547,6 +576,9 @@ could be merged into one message when both go to the same chat.
   `agent_status` / `agent_list`; (if approved) the WebUI Stop control and the
   device abort method.
 - `Added`: `/cancel all`.
+- `Changed`: a cancel sends one message instead of two or more.
+- `Fixed`: on the device listener, a run interrupted by a `/cancel` sent
+  during it now ends under its own run id with state `aborted`.
 - `Changed`: `/cancel` no longer stops a sub-agent the reply was waiting on;
   the sub-agent finishes and its result arrives as a background result. The
   reply names the tasks still running and points to `/cancel all`, which
@@ -708,6 +740,7 @@ Settled in review:
 - Any agent granted `agent_spawn` gets `agent_cancel` (5.3).
 - `/cancel` stops only the agent being talked to; `/cancel all` also cancels
   all of its tasks (5.4).
+- A cancel sends one message, not one per affected message (5.4).
 
 Still open:
 
@@ -716,9 +749,9 @@ Still open:
   the clone's own id.
 - **D2. MCP host split** as in 4.6 (recommended), or leave all of it in
   ClawEh and accept that SDK agents on CLI models have no tools.
-- **D4. Controls that need no typing:** a WebUI Stop button and a device
-  abort method in phase 1d, or defer them. `/cancel` already works in both
-  places by text.
+- **D4. Controls that need no typing:** a WebUI Stop button and a dedicated
+  device abort request in phase 1d, or defer them. `/cancel` as text
+  already works in both places, on a device as a second `chat.send`.
 - **D6. Detached `wait` results:** deliver as a background result that
   starts a new turn (recommended, consistent with `callback`), or store
   silently for `agent_status`.
@@ -732,6 +765,5 @@ Still open:
 - **D10. "The package that defines our tool provider interface":** I read
   this as ClawEh's `tools` core, since `toolspec` is already in the module.
   Correct me if it meant something else.
-- **D12. Two messages per `/cancel`** (5.4): keep as is, or merge into one.
 - **D11. Branching:** phase 1 on the current dev branch; each later phase on
   the dev branch of the version it ships in; no long-lived SDK branch.
