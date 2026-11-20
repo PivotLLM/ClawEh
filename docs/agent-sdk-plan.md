@@ -1,6 +1,6 @@
 # Agent SDK extraction plan
 
-Status: **proposal, nothing implemented.** Revision 2. Written against ClawEh
+Status: **proposal, nothing implemented.** Revision 3. Written against ClawEh
 `dev/0.6.5` (3476109) and `go.bison9.com/agent` branch `dev/0.0.1` (5bbfa3a,
 version 0.2.0 in development).
 
@@ -118,7 +118,7 @@ maintainer, nothing consumes the repository yet.
 | How a user interrupts | Only by typing `/cancel`. `processSessionMessage` intercepts it; `sessionState.cancel()` cancels the turn context with `errCancelledByUser` and drops the session's queue. | `agent/session_dispatch.go` |
 | Programmatic cancel | None. No exported method, no turn handle. | — |
 | Device protocol | Handles `connect`, `health`, `chat.send`, `node.event`, `agents.list`, `chat.history`. No abort method. | `channels/device/server.go` |
-| WebUI | No cancel endpoint or channel message found. | `channels/webui`, `web/backend` |
+| WebUI chat | Typing `/cancel` works, like any text channel. It produces two messages: "Cancelled the current request." (the command's reply, `commands/cmd_cancel.go`) and "⚠️ Cancelled by /cancel. Some steps may have completed — ask me to continue if needed." (the reply owed to the interrupted message, `decideTurnReply`). There is no dedicated Stop control. | `commands/cmd_cancel.go`, `agent/turn_reply.go` |
 | Sub-agent, `callback` mode | Runs on `context.Background()`: **already survives `/cancel`**. | `tools/agents/subagent.go` `runRecord` |
 | Sub-agent, `wait` mode | Runs on the turn's context: **killed by `/cancel`**. | `SubagentManager.Run` |
 | Cancelling a sub-agent | **Impossible.** The agent tools are `agent_spawn`, `agent_status`, `agent_list`; no cancel function is kept for a running task, and task status is `running`/`done`/`error` only. | `tools/agents/global_provider.go`, `taskstore.go` |
@@ -498,37 +498,61 @@ agent_cancel { "all": true }              // every running task this agent owns
 - **Idempotent:** cancelling a finished or already-cancelled task is not an
   error.
 
-Granting: an agent has only the tools its `tools` list names, so existing
-agents with `agent_spawn` do **not** get `agent_cancel` until it is added.
-Options are in decision D3.
+Granting (decided): **any agent granted `agent_spawn` gets `agent_cancel`.**
+It is registered together with `agent_spawn` and is not a separate entry in
+the `tools` list, the Agents page or `CODING_TOOLS`; `deny_tools` can still
+remove it. It is the first tool granted by implication, so the rule is
+written down where the grant rule lives (`AgentConfig.IsToolAllowed`,
+`CLAUDE.md` "Tool grants") and shown on Check Up's per-agent tool list and in
+the capabilities golden file, so nobody finds a tool the list does not name
+without an explanation. Clones and sub-agents inherit it with `agent_spawn`.
 
-### 5.4 Surfaces for the person
+### 5.4 What the person types
 
-`/cancel` already works on every text channel and becomes a call to
-`r.Interrupt`. Two channels have no practical way to type it:
+Decided:
 
-- **WebUI chat:** a Stop control while a reply is in progress, sending an
-  interrupt for the session over the existing socket.
-- **Device listener:** an abort request for a run. The protocol document
-  already lists `aborted` as a chat state; no inbound abort method is
-  handled today, and I found none in the client library ClawEh imports, so
-  the method name must be confirmed against the OpenClaw Gateway protocol
-  before it is added. Voice clients (the R1) are where interrupting matters
-  most.
+- **`/cancel` stops only the agent the person is talking to:** the running
+  reply and the messages queued behind it. Every sub-agent keeps running,
+  including one the reply was waiting on (5.2).
+- **`/cancel all` stops that agent and everything under it:** the reply, the
+  queue, and every running task the agent owns, cascading to their own
+  tasks (the same path as `agent_cancel {"all": true}`).
 
-Both are additions to released surfaces and need approval individually (D4).
+Replies name what happened, per the "name the thing" rule:
+"Alice: stopped. 2 background tasks are still running — /cancel all stops
+them too." and "Alice: stopped, and cancelled 2 background tasks."
+
+`/cancel` already works wherever text can be sent, the WebUI chat included
+(revision 2 wrongly called the WebUI a gap). What does not exist is a
+control that needs no typing:
+
+- a **Stop button** in the WebUI chat while a reply is in progress;
+- an **abort request** on the device listener, which matters for voice
+  clients such as the R1, where saying or typing "/cancel" is awkward. The
+  protocol document lists `aborted` as a chat state but no inbound abort
+  method is handled, and I found none in the client library ClawEh imports;
+  the method name must be confirmed against the OpenClaw Gateway protocol.
+
+Both are optional conveniences on top of the command and need approval
+individually (D4).
+
+Observed, for a decision (D12): one `/cancel` today produces two messages,
+the command's own reply and the reply owed to the interrupted message. They
+are separate by construction (each inbound message gets its reply). They
+could be merged into one message when both go to the same chat.
 
 ### 5.5 What changes for operators (changelog)
 
 - `Added`: the `agent_cancel` tool; task status `cancelled` in
   `agent_status` / `agent_list`; (if approved) the WebUI Stop control and the
   device abort method.
-- `Changed`: `/cancel` no longer stops a sub-agent the turn was waiting on;
+- `Added`: `/cancel all`.
+- `Changed`: `/cancel` no longer stops a sub-agent the reply was waiting on;
   the sub-agent finishes and its result arrives as a background result. The
-  `/cancel` reply names the tasks still running. This is not marked
-  BREAKING (nothing stops working), but an operator who relied on `/cancel`
-  to stop a runaway worker needs the new step: ask the agent to cancel it,
-  or see D5.
+  reply names the tasks still running and points to `/cancel all`, which
+  restores the old effect and also stops background tasks.
+- `Changed`: an agent granted `agent_spawn` now also has `agent_cancel`
+  (add it to `deny_tools` to withhold it).
 - `docs/webui-test-plan.md`, the MCP probe list (`tests/test_mcpserver.sh`)
   and the capabilities golden file gain the new tool; Check Up's per-agent
   tool list shows it.
@@ -574,7 +598,8 @@ or in parallel.
   reimplemented on it; `wait` tasks detach (5.2).
 - 1c. `agent_cancel`, the `cancelled` status, supervisor and restart
   handling (5.3).
-- 1d. WebUI Stop and device abort, if approved (5.4).
+- 1c'. `/cancel all` (5.4).
+- 1d. WebUI Stop button and device abort, if approved (5.4).
 
 *Exit:* tests for each numbered rule in 5.2 and 5.3 on the fake clock,
 including: interrupt during a model call, during a tool, with a `wait` task
@@ -655,8 +680,8 @@ the seam work touches most of `agent/`). I have not estimated calendar time.
   interrupted while waiting gets the result later as a background result,
   in a new turn. Prompts and the `agent_spawn` description must say so, or
   the model will be surprised by a result it believes it never got.
-- **Runaway workers.** After phase 1 a person can no longer stop a waiting
-  worker with `/cancel` alone. See D5.
+- **Runaway workers.** After phase 1 `/cancel` alone no longer stops a
+  waiting worker; `/cancel all` does, and the `/cancel` reply says so.
 - **Callback ordering.** Redaction before storage, audit before execution,
   images saved before the assistant message is stored. Hooks run in
   registration order; ClawEh registers them in one place with a test that
@@ -680,6 +705,9 @@ Settled in review:
 - Accounting agent name 64 characters, plus a friendly name.
 - Interrupt leaves sub-agents running; the agent can cancel its own.
 - The registry is live.
+- Any agent granted `agent_spawn` gets `agent_cancel` (5.3).
+- `/cancel` stops only the agent being talked to; `/cancel all` also cancels
+  all of its tasks (5.4).
 
 Still open:
 
@@ -688,19 +716,9 @@ Still open:
   the clone's own id.
 - **D2. MCP host split** as in 4.6 (recommended), or leave all of it in
   ClawEh and accept that SDK agents on CLI models have no tools.
-- **D3. Granting `agent_cancel`:** (a) an ordinary tool operators add,
-  written by the Agents page's **Coding tools** button alongside
-  `agent_spawn`; or (b) registered automatically whenever `agent_spawn` is
-  granted. (b) matches "the main agent should be able to cancel" with no
-  operator step but is the first tool granted by implication, against the
-  current rule that an agent has only the tools its list names. I lean (b),
-  shown on Check Up, because a spawner that cannot cancel is the worse
-  default.
-- **D4. Interrupt surfaces:** approve the WebUI Stop control and the device
-  abort method for phase 1d, or defer them.
-- **D5. A way for the person to stop sub-agents directly:** e.g.
-  `/cancel all` (the turn and every task of that agent). Recommended, since
-  after phase 1 `/cancel` alone no longer stops a waiting worker.
+- **D4. Controls that need no typing:** a WebUI Stop button and a device
+  abort method in phase 1d, or defer them. `/cancel` already works in both
+  places by text.
 - **D6. Detached `wait` results:** deliver as a background result that
   starts a new turn (recommended, consistent with `callback`), or store
   silently for `agent_status`.
@@ -714,5 +732,6 @@ Still open:
 - **D10. "The package that defines our tool provider interface":** I read
   this as ClawEh's `tools` core, since `toolspec` is already in the module.
   Correct me if it meant something else.
+- **D12. Two messages per `/cancel`** (5.4): keep as is, or merge into one.
 - **D11. Branching:** phase 1 on the current dev branch; each later phase on
   the dev branch of the version it ships in; no long-lived SDK branch.
