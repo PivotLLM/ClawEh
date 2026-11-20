@@ -747,16 +747,20 @@ func restartServices(
 	}
 
 	// Restart MCP server — it was shut down as part of stopAndCleanupServices.
-	err := startMCPServer(cfg, al, msgBus, services)
-	// rebuildSharedHTTPServer creates a fresh health.Server, which starts
-	// not-ready, so readiness is re-asserted after every reload, once the
-	// rebuilt channels have started and the MCP host is back. A host that
-	// failed to restart does not leave the reloaded process not-ready.
-	markReady(services, true)
-	if err != nil {
+	return restartMCPHost(cfg, al, msgBus, services)
+}
+
+// restartMCPHost brings the MCP host back after a reload and then reports
+// ready. rebuildSharedHTTPServer creates a fresh health.Server, which starts
+// not-ready, so readiness is re-asserted after every reload, once the rebuilt
+// channels have started and the MCP host is back (or is not enabled). When
+// the host fails to restart, /ready stays 503 until a reload that brings it
+// back: 200 would say the host is up.
+func restartMCPHost(cfg *config.Config, al *agent.AgentLoop, msgBus *bus.MessageBus, services *gatewayServices) error {
+	if err := startMCPServer(cfg, al, msgBus, services); err != nil {
 		return fmt.Errorf("error restarting MCP server: %w", err)
 	}
-
+	markReady(services, true)
 	return nil
 }
 

@@ -106,6 +106,11 @@
   start and after every configuration reload. Anything that waits for
   `/ready` now waits a little longer; with external MCP servers configured,
   that includes the time taken to connect to them.
+  When the MCP host cannot be restarted after a reload (for example
+  `mcp_host.listen` now names a port in use), `/ready` stays at 503 and the
+  "Config reload failed" alert is raised; it answers 200 again after a reload
+  that brings the host back. With the MCP host not enabled, `/ready` does not
+  wait for it.
 
 ### Fixed
 
