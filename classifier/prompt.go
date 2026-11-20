@@ -18,10 +18,21 @@ import (
 // replyContract is the output rule every request states. Only the first
 // line is required: parseReply accepts a reply without the reason or the
 // Rules line, and ignores a Rules line it cannot read.
-const replyContract = "Reply with exactly one category name on the first line. On the second line, give a brief reason. " +
-	"On the third line, write \"Rules:\" followed by the labels of only the rules that decided this item, comma-separated. " +
-	"If no rule applied, write exactly \"Rules: none\"; never leave the third line out. A rule's label is the <label> of the \"=== Rules from <label> ===\" line its section starts with, " +
-	"or \"rule N\" for numbered rule N; headings inside the text are not labels. Nothing else."
+//
+// It asks for a rule's label exactly as its marker line shows it (for a
+// rule file, the file name), never a number. "rule N" is offered only when
+// the request has numbered rules (numbered): a model told about "rule N"
+// with none in the prompt cites its rule files that way.
+func replyContract(numbered bool) string {
+	s := "Reply with exactly one category name on the first line. On the second line, give a brief reason. " +
+		"On the third line, write \"Rules:\" followed by the labels of only the rules that decided this item, comma-separated. " +
+		"If no rule applied, write exactly \"Rules: none\"; never leave the third line out. A rule's label is the <label> of the \"=== Rules from <label> ===\" line its section starts with: " +
+		"copy it exactly as written there (for a rule file, its whole file name), never its number alone or a description"
+	if numbered {
+		s += ". For a rule of the numbered \"Rules:\" list, which has no such line, write \"rule N\" with its number"
+	}
+	return s + "; headings inside the text are not labels. Nothing else."
+}
 
 // dataNotice says the item is data, not instructions (design 5.1e). %s is
 // the request's delimiter.
@@ -78,7 +89,7 @@ func buildPrompt(def *Definition, in instructions, data itemData, badReply, deli
 		}
 		s.WriteString(line + "\n")
 	}
-	s.WriteString("\n" + replyContract + "\n" + fmt.Sprintf(dataNotice, delim) + "\n")
+	s.WriteString("\n" + replyContract(len(rules) > 0) + "\n" + fmt.Sprintf(dataNotice, delim) + "\n")
 
 	var u strings.Builder
 	u.WriteString("<item " + delim + ">\n")

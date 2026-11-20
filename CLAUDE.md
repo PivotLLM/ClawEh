@@ -669,7 +669,9 @@ shortcoming in the module, never here.
   **Rule citations** (`classifier/rules.go`, `citations.go`): every source
   has a label (`promptSections`: `instructions`, the instructions file's
   cleaned workspace path, each folder file's name, `rule N`);
-  `replyContract` asks for line 2 a reason, line 3 `Rules: <labels>`, and
+  `replyContract(numbered)` asks for line 2 a reason, line 3 `Rules: <labels>`
+  copied exactly as the marker line shows them (a file's whole name, never
+  its number), offers `rule N` only when the request has numbered rules, and
   tells the model to write exactly `Rules: none` when no rule applied
   (never leave it out); both lines stay optional to the parser: `parseCitation` reads a `Rules:` line
   (plural only; `Rule:` is a reason) in place 2 or 3 only, a malformed one
@@ -677,7 +679,8 @@ shortcoming in the module, never here.
   forms (any case, without `.md`, the instructions file's bare name, `rule
   #N`/`rules N`/`#N`/`N`) count only when they fit exactly one label;
   bare `none` (any case) is never a label; `none` beside labels is
-  dropped. A token that names nothing as written is tried again in the
+  dropped; a number that is no numbered rule names the one file label whose
+  name starts with it (`numberedFiles`: `rule 11` → `11-jira.md`). A token that names nothing as written is tried again in the
   shapes of `citedForms` (the `=== Rules from … ===` marker or `Rules from`
   removed, a note in parentheses after the label removed, a path's last
   element), each matched by the same rules; `splitCitation` does not split

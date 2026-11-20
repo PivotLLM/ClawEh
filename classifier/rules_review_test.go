@@ -48,8 +48,16 @@ func TestPromptMarkersNotHeadings(t *testing.T) {
 	if !strings.Contains(system, "=== Rules from 050-domain-example.md ===\n\n## VIP senders\n") {
 		t.Errorf("the file's own heading is not kept as text under the marker:\n%s", system)
 	}
-	if !strings.Contains(replyContract, "=== Rules from <label> ===") || !strings.Contains(replyContract, "headings inside the text are not labels") {
-		t.Errorf("the contract does not say what a label is: %s", replyContract)
+	for _, numbered := range []bool{false, true} {
+		contract := replyContract(numbered)
+		if !strings.Contains(contract, "=== Rules from <label> ===") || !strings.Contains(contract, "headings inside the text are not labels") ||
+			!strings.Contains(contract, "copy it exactly as written there") {
+			t.Errorf("the contract does not say what a label is: %s", contract)
+		}
+		// "rule N" is offered only with numbered rules in the prompt.
+		if strings.Contains(contract, `"rule N"`) != numbered {
+			t.Errorf("numbered=%t: contract = %s", numbered, contract)
+		}
 	}
 	labels := promptLabels(def, in)
 	if l, ok := resolveLabel(labels, "050-domain-example.md"); !ok || l != "050-domain-example.md" {

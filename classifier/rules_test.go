@@ -66,7 +66,7 @@ func TestPromptLabelsAllKinds(t *testing.T) {
 	if !strings.HasPrefix(system, wantPrefix) {
 		t.Errorf("system prompt:\n%s\nwant it to start with:\n%s", system, wantPrefix)
 	}
-	if !strings.Contains(system, replyContract) || !strings.Contains(replyContract, `"Rules: none"`) {
+	if !strings.Contains(system, replyContract(true)) || !strings.Contains(replyContract(false), `"Rules: none"`) {
 		t.Errorf("the contract does not ask for the Rules line:\n%s", system)
 	}
 }

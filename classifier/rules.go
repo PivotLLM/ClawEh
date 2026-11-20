@@ -32,7 +32,9 @@ import (
 // unknown): the label in any case; a file label without ".md"; the
 // instructions file's bare name, with or without ".md"; an inline rule as
 // "rule #N", "rules N", "#N" or "N". Bare "none" always means no rule, so a
-// folder file none.md is cited only as "none.md".
+// folder file none.md is cited only as "none.md". A number that names no
+// numbered rule names the one rule file whose name starts with it
+// (numberedFiles): "rule 11" is 11-jira.md when there is no rule 11.
 //
 // A citation that names no label as written is tried again in the shapes a
 // model gives a label it does know (citedForms), each by the same rules:
@@ -172,10 +174,35 @@ func matchLabel(labels []string, token string) (string, bool) {
 			found = append(found, l)
 		}
 	}
+	if len(found) == 0 && rule != "" {
+		// A number that is no numbered rule: the one rule file whose name
+		// starts with it ("rule 11" for 11-jira.md, "5" for 005-vip.md).
+		found = numberedFiles(labels, rule)
+	}
 	if len(found) != 1 {
 		return "", false
 	}
 	return found[0], true
+}
+
+// leadingNumber matches the digits a file name starts with.
+var leadingNumber = regexp.MustCompile(`^\d+`)
+
+// numberedFiles are the file labels whose name (a path's last element)
+// starts with the number of the inline-rule label rule, as "11-jira.md"
+// does for "rule 11"; leading zeros do not count ("005-" is 5).
+func numberedFiles(labels []string, rule string) []string {
+	var out []string
+	for _, l := range labels {
+		if !isMarkdownName(l) {
+			continue // "instructions" and "rule N" are not files
+		}
+		digits := leadingNumber.FindString(path.Base(l))
+		if n, err := strconv.Atoi(digits); digits != "" && err == nil && ruleLabel(n) == rule {
+			out = append(out, l)
+		}
+	}
+	return out
 }
 
 // looseForms are the forms a label may also be cited by, in any case: the

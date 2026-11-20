@@ -242,7 +242,7 @@ func TestBuildPrompt(t *testing.T) {
 		"Decide how important this email is to the user.\n",
 		"Rules:\n1. Email from bob@example.com is from a client and is always urgent.\n",
 		"Categories:\n- urgent: Needs the user today.\n- low: Newsletters.\n",
-		replyContract,
+		replyContract(true),
 		"between the line <item T0K> and the line </item T0K>; each of its fields starts with a line beginning [T0K].",
 	} {
 		if !strings.Contains(system, want) {

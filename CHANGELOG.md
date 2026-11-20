@@ -51,7 +51,12 @@
   before it (`rules/050-domain-example.md`), with a note in parentheses
   after it (`050-domain-example.md (client domain)`), and with its section
   marker around it (`=== Rules from 050-domain-example.md ===`, `Rules from
-  …`), whenever that names exactly one rule. The same replies therefore
+  …`), whenever that names exactly one rule. A number that is no numbered
+  rule (`rule 11`, `#11`, `11`) names the one rule file whose name starts
+  with it (`11-jira.md`). The model is also now asked to copy a rule's label
+  exactly as shown, and is told about `rule N` only when the classifier has
+  numbered `rules`; it was told about it always, so it sometimes cited a
+  rule file by number. The same replies therefore
   count as fewer unknown citations in `classifier_status` `rule_usage` and
   more per rule; where an item is filed never depended on the citation and
   is unchanged.

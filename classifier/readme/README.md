@@ -272,7 +272,9 @@ files are not labels. Labels:
 - The workspace path of `instructions_file`, such as
   `files/classifiers/inbox-priority/guide.md`.
 - The file name of each folder file, such as `050-domain-example.md`.
-- `rule N`: numbered rule N of `rules`.
+- `rule N`: numbered rule N of `rules`. The model is asked to copy a label
+  exactly as its marker line shows it, and is told about `rule N` only when
+  the classifier has numbered `rules`.
 - `none` (`Rules: none`, in any case): no rule applied. A folder file
   `none.md` is cited only as `none.md`.
 
@@ -295,7 +297,9 @@ it.
 
 `none` written beside labels is dropped. A label may also be written in
 any case, without `.md`, the instructions file by its bare name, and a
-numbered rule as `rule #3`, `#3` or `3`. It may come with a path before it
+numbered rule as `rule #3`, `#3` or `3`. A number that is no numbered rule
+names the rule file whose name starts with it (`rule 11` for `11-jira.md`).
+It may come with a path before it
 (`rules/050-domain-example.md`), a note in parentheses after it
 (`050-domain-example.md (client domain)`), or its marker around it
 (`=== Rules from 050-domain-example.md ===`, `Rules from …`). Any such form

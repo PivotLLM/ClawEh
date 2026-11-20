@@ -38,7 +38,10 @@ func TestCitedForms(t *testing.T) {
 		{"Rules: notes (old).md", []string{"notes (old).md"}, nil}, // the exact label wins before any reshaping
 		// Still unknown, kept as the model wrote them.
 		{"Rules: 050-domain-example.md and 060-newsletters.md", []string{}, []string{"050-domain-example.md and 060-newsletters.md"}},
-		{"Rules: 050", []string{}, []string{"050"}},
+		// A number that is no numbered rule names the file starting with it.
+		{"Rules: 050", []string{domain}, nil},
+		{"Rules: rule 50, #60", []string{domain, news}, nil},
+		{"Rules: rule 1, 51", []string{"rule 1"}, []string{"51"}},
 		{"Rules: instructions", []string{}, []string{"instructions"}},
 		{"Rules: domain-example", []string{}, []string{"domain-example"}},
 		{"Rules: 050-domain-example.md, Client   domains, Client domains", []string{domain}, []string{"Client domains"}},
@@ -134,5 +137,38 @@ func TestMostCited(t *testing.T) {
 	}
 	if got := mostCited(nil, 2); got != nil {
 		t.Errorf("mostCited of nothing = %v", got)
+	}
+}
+
+// A number names a rule file only when no numbered rule has it and exactly
+// one file starts with it; the request offers "rule N" only when it has
+// numbered rules.
+func TestNumberNamesARuleFile(t *testing.T) {
+	files := []string{"files/classifiers/inbox/guide.md", "11-jira.md", "020-news.md", "110-other.md"}
+	for token, want := range map[string]string{"rule 11": "11-jira.md", "Rule #11": "11-jira.md", "11": "11-jira.md", "rule 20": "020-news.md"} {
+		if l, ok := resolveLabel(files, token); !ok || l != want {
+			t.Errorf("resolveLabel(%q) = %q, %v; want %q", token, l, ok, want)
+		}
+	}
+	for _, token := range []string{"rule 1", "rule 2", "rule 12"} {
+		if l, ok := resolveLabel(files, token); ok {
+			t.Errorf("%q resolved to %q", token, l)
+		}
+	}
+	// A numbered rule 11 is "rule 11" itself; two files with the number are ambiguous.
+	if l, ok := resolveLabel(append(files, "rule 11"), "rule 11"); !ok || l != "rule 11" {
+		t.Errorf("with a numbered rule 11: %q, %v", l, ok)
+	}
+	if l, ok := resolveLabel(append(files, "011-twice.md"), "rule 11"); ok {
+		t.Errorf("two files numbered 11 resolved to %q", l)
+	}
+
+	e := newEnv(t)
+	def := definition()
+	delete(obj(def["classify"]), "rules")
+	e.create(def)
+	e.run("inbox-priority")
+	if system := e.model.systems[0]; strings.Contains(system, `"rule N"`) || !strings.Contains(system, "copy it exactly as written there") {
+		t.Errorf("a prompt without numbered rules offers \"rule N\":\n%s", system)
 	}
 }
