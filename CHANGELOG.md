@@ -45,6 +45,16 @@
 
 ### Changed
 
+- **A Fusion tool result over 1 MB is shortened, not refused** (MCPFusion
+  0.4.11). A JSON result larger than the limit used to come back as the
+  text `Response too large (...)`, so one long value, such as the HTML body
+  of an e-mail, made the whole record unreadable to an agent or a classifier.
+  The longest text values are now cut, longest first, until the result fits.
+  The result is still valid JSON with every key, number, list element and
+  object intact; each cut value ends with ` ... [truncated: first N of M
+  characters]`, and an object result has a `_truncated` member naming the cut
+  values. No record is ever dropped: a result that is too large because it
+  lists too many records is still refused with `Response too large`.
 - **A classifier recognises a rule the model cites in a slightly different
   shape.** A cited label was unknown unless it was the rule's label itself
   (in any case, or without `.md`). It is now also accepted with a path
