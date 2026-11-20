@@ -558,6 +558,61 @@ the process-wide `RegisterProvider` list, grant policy (`IsToolAllowed`,
 suites, `shell_exec` never matched by `*`). ClawEh keeps aliases
 (`tools.Tool = toolkit.Tool`, …) so the ~80 tool files need no edits.
 
+### 4.4a Enable and disable, for models and tools
+
+Both objects get an on/off switch per entry, so a host can load everything
+and turn some off, or switch one off for a while, **without a reload and
+without rebuilding the agent.**
+
+```go
+// models: for every agent, or for one agent's set
+c.Disable(names ...string) error      c.Enable(names ...string) error
+s.Disable(names ...string) error      s.Enable(names ...string) error
+c.Enabled(name string) bool           s.Enabled(name string) bool
+
+// toolkit: the same, and by namespace or toolset
+c.Disable(names ...string) error      c.Enable(names ...string) error
+s.Disable(names ...string) error      s.Enable(names ...string) error
+s.DisableGroup(prefixOrToolset string) int
+s.EnableGroup(prefixOrToolset string) int
+```
+
+- **Default is enabled.** Internally the flag is `disabled bool`, so the
+  zero value of a new entry is "on" and nothing has to remember to set it.
+  The API speaks only of enabling and disabling.
+- **The lists are private.** `Catalog` and `Set` have no exported fields.
+  A host holds a pointer and can change state only through methods;
+  `List` and `Get` return copies (each `Entry` carrying `Enabled`), so
+  nothing a caller holds can alter the live list. This applies to every
+  field, not only this flag.
+- **Two levels, both must be on.** An entry is usable by an agent when it
+  is enabled in the catalogue *and* in that agent's set. Disabling in the
+  catalogue is "off for everyone"; in a set, "off for this agent".
+- **A disabled model** is skipped by every chain exactly as a model in
+  cooldown is, and reported that way ("skipped: disabled") in fallback
+  events and in `Current`. A selection pointing at it is kept, so
+  enabling it again restores the choice. If every model for a purpose is
+  disabled the turn fails with `ErrNoModelAvailable`, naming the purpose.
+- **A disabled tool** is not offered to the model, is left out of the
+  discovery index and the MCP host's list, and a call to it returns an
+  ordinary tool error ("tool X is disabled"). It stays registered.
+- **When it takes effect:** at the next model call, including inside a
+  running turn. A call or tool already in flight is not interrupted (that
+  is what cancel is for). This is the one place a pinned turn chain
+  changes mid-turn: it re-reads the flag before each call, because "off"
+  should mean off.
+- **Cost:** enabling or disabling a *listed* tool changes the tool list,
+  so it invalidates that agent's prompt cache, like add and remove.
+- **Across `Adopt`:** the new object's flags are taken as built. A host
+  that wants a run-time switch to outlive a config change sets it on the
+  new object before handing it over.
+- **Not the config switch.** ClawEh's `model_list[].enabled` stays what it
+  is: a model with `enabled: false` is not usable and is pruned from the
+  lists that name it. Whether ClawEh maps that key onto this run-time flag
+  (load every model, disable the ones marked off) or keeps not loading
+  them is a later choice; the first cut keeps today's behaviour. No ClawEh
+  surface uses the run-time switch yet.
+
 ### 4.5 `discovery` — progressive tool discovery
 
 Separate so a host can use it with any registry, or not at all.
@@ -1156,6 +1211,9 @@ Still open:
 - **D19. Tools in the same two levels as models** (4.4): a process-wide
   catalogue plus a per-agent set with `Adopt` (recommended), or keep the
   single registry with a filtered view.
+- Models and tools each have a run-time enable/disable switch, default
+  enabled, with private lists changed only through methods (4.4a).
+  *(settled)*
 - **D2. MCP host split** as in 4.6 (recommended), or leave all of it in
   ClawEh and accept that SDK agents on CLI models have no tools.
 - **D4. Controls that need no typing:** a WebUI Stop button and a dedicated
