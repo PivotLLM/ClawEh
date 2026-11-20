@@ -1,6 +1,6 @@
 # Agent SDK extraction plan
 
-Status: **proposal, nothing implemented.** Revision 5. Written against ClawEh
+Status: **proposal, nothing implemented.** Revision 6. Written against ClawEh
 `dev/0.6.5` (3476109) and `go.bison9.com/agent` branch `dev/0.0.1` (5bbfa3a,
 version 0.2.0 in development).
 
@@ -304,8 +304,19 @@ Moves from ClawEh `config/`:
   validation, `ModelConfig.Validate`, `HasCredentials`, reserved body keys.
 - `config/clis.go`: `CLIAgent`, `CLIArgs`, `CLIEnv`, `BypassArgs`.
 - `CooldownConfig` and defaults.
-- A `Set` (`Providers`, `Models`) with `Lookup(alias)`, `Resolve(names...)`,
-  `Validate()`, `LoadFile`/`Parse`.
+- A versioned **`Document`**: `Version`, `Providers`, `Models`, and
+  optional `Assignments` (agent id → purpose → models in priority order,
+  each with `enabled`), with `Parse`, `LoadFile`, `Marshal` and
+  `Validate()`. It is plain data. A new app can use it as its config
+  format as is; ClawEh does not (see 4.3), but its `providers` and
+  `model_list` sections are the same structs with the same JSON tags, so
+  they already are this format.
+- Secret references: a field such as `api_key` may hold a reference
+  instead of a value. `modelspec.ResolveSecrets(doc, resolver)` returns a
+  resolved copy and leaves the original untouched, so what an app saves
+  never contains a resolved key. ClawEh's `env:NAME` / `file:/path`
+  resolver (`config/secrets.go`) moves here as the default resolver, so
+  other apps get the same syntax.
 - `Limits` (`max_tokens`, `context_window`, `thinking_level`, `no_tools`,
   `vision`, `request_timeout`) computed from a model plus host defaults: the
   generic half of `resolveRunLimits`.
@@ -326,6 +337,34 @@ chain in `agent/context_manager.go`, the per-session `/model` choice in
 places. The `models` package replaces all of the run-time part (and the
 `dispatch` package of earlier revisions). ClawEh's job becomes: populate
 it from config, and ask it questions.
+
+**How a host uses it** (agreed):
+
+1. At start-up the app builds **one catalogue**: every provider and every
+   model, each model naming its provider.
+2. For each agent it states **which models serve which purpose, in
+   priority order** (Alice: chat from `sonnet` then `gpt-fallback`,
+   summarisation from `haiku`).
+3. It passes that per-agent set to `agent.New`.
+
+```go
+doc, _ := modelspec.LoadFile("models.json")                // or built in code, or from the app's own config
+c, _  := models.Build(doc, models.WithSecrets(resolver))   // steps 1 and 2 in one call, when the document has assignments
+alice, _ := agent.New("alice", agent.WithModels(c.Set("alice")))
+```
+
+`models.Build` is a convenience over `New` / `AddProvider` / `Add` /
+`Assign`; a host may use either. The catalogue is always built *from* a
+document, never exported back to one: the live object holds resolved
+keys, cooldowns and per-session choices, none of which belong in a config
+file. The app keeps the document and decides where and when it is stored;
+the SDK never writes it.
+
+For ClawEh: `config.json` stays ClawEh's own released format. ClawEh
+builds the catalogue from its `providers` and `model_list` sections and
+makes the assignments itself from its existing keys
+(`agents.list[].models`, `summarization_models`, `subagents.models`,
+`task_models`).
 
 **Two levels, because the data has two scopes.** A single flat list cannot
 represent ClawEh as it is:
@@ -782,9 +821,10 @@ older packages where a test needs it rather than all at once.
 **One model-caller interface.** `ctxengine.ModelCaller` and
 `cogmem/consolidate.ModelCaller` are two declarations of the same idea,
 both served today by ClawEh's `compressModelCaller`. With `models` in
-place both take a `models.Chain` for their purpose (`Summarize`,
-`Memory`), and the two interfaces and ClawEh's adapter go away. `cogmem`
-may not import `spawnllm` today; whether it may import `models` is D17.
+place there is one small interface, declared once, that a `models.Chain`
+satisfies; both packages take it for their purpose (`Summarize`,
+`Memory`) and ClawEh's adapter goes away. Whether `cogmem` may import
+`models` directly is D17.
 
 **File permissions.** Two spellings of one thing:
 `WithFolderPermissions`/`WithFilePermissions` (ctxengine, cogmem) and
@@ -1188,49 +1228,52 @@ Settled in review:
   all of its tasks (5.4).
 - A cancel sends one message, not one per affected message (5.4).
 
-Still open:
-
-- **D1. Clone spend:** attribute a sub-agent's accounting records to its
-  source agent with the clone label as the name (recommended, 4.1), or to
-  the clone's own id.
-- **D13. No separate runner** (3.1): running and cancelling as methods on
-  the agent (recommended), or keep a `runner` package.
-- **D14. `models` in two levels** (4.3): a process-wide catalogue plus a
-  per-agent set (recommended; shared cooldown with per-agent ordering needs
-  it), or one flat object.
-- **D15. `modelspec` separate from `models`:** keep the definitions in a
-  stdlib-only leaf so ClawEh's `config` does not import run-time machinery
-  (recommended), or fold them into `models`.
-- **D17. `cogmem` importing `models`** (4.9): allow it, so memory
-  consolidation takes a chain like everything else (recommended), or keep
-  `cogmem` free of anything that reaches `spawnllm` and leave it an
-  interface the loop satisfies.
-- **D18. `log/slog` as the logging interface** (4.9), replacing the SDK's
-  global `logger` package (recommended), or keep `logger` and only make it
-  per-instance.
-- **D19. Tools in the same two levels as models** (4.4): a process-wide
-  catalogue plus a per-agent set with `Adopt` (recommended), or keep the
-  single registry with a filtered view.
+- `models` has two levels: a process-wide catalogue and a per-agent set
+  of models by purpose and priority. The app builds the catalogue at
+  start-up and gives each agent its set (4.3).
+- `modelspec` has a versioned document with import, and secret references
+  resolved by a hook; nothing is exported from the live object (4.2, 4.3).
 - Models and tools each have a run-time enable/disable switch, default
   enabled, with private lists changed only through methods (4.4a).
-  *(settled)*
-- **D2. MCP host split** as in 4.6 (recommended), or leave all of it in
-  ClawEh and accept that SDK agents on CLI models have no tools.
-- **D4. Controls that need no typing:** a WebUI Stop button and a dedicated
-  device abort request in phase 1d, or defer them. `/cancel` as text
-  already works in both places, on a device as a second `chat.send`.
-- **D6. Detached `wait` results:** deliver as a background result that
-  starts a new turn (recommended, consistent with `callback`), or store
-  silently for `agent_status`.
-- **D7. `CLAW_COOLDOWN_*` env tags** on a struct that moves to the SDK: keep
-  the tags there (inert for other hosts) or keep a ClawEh-side struct.
-- **D8. Session storage in the SDK:** ctxengine's SQLite store behind an
-  interface, plus an in-memory one for tests and small hosts (recommended).
-- **D9. Memory in the first cut:** include the optional `agent.Memory`
-  interface from the start (recommended; the loop's observe/recall calls
-  are few).
-- **D10. "The package that defines our tool provider interface":** I read
-  this as ClawEh's `tools` core, since `toolspec` is already in the module.
-  Correct me if it meant something else.
-- **D11. Branching:** phase 1 on the current dev branch; each later phase on
-  the dev branch of the version it ships in; no long-lived SDK branch.
+
+Still open, each with my recommendation:
+
+- **D1. Clone spend.** Attribute a sub-agent's accounting records to its
+  source agent's id, with the clone label as the name. *Recommended:* yes;
+  cost should roll up to the agent that caused it.
+- **D2. MCP host split** (4.6). *Recommended:* split, moved last. Without
+  it an SDK agent on a CLI model has no tools.
+- **D4. Stop button and device abort** (5.4). *Recommended:* defer both
+  out of phase 1. `/cancel` works everywhere text does; ship the
+  cancellation semantics first, then add controls once they are proven.
+  Fix the device run-id defect in phase 1 regardless.
+- **D6. Detached `wait` results** (5.2). *Recommended:* deliver as a
+  background result that starts a new turn, as `callback` does. Storing
+  silently means work the user paid for is never mentioned.
+- **D7. `CLAW_COOLDOWN_*` env tags.** *Recommended:* keep a small
+  ClawEh-side struct with the tags and map it onto the SDK's policy; an
+  SDK type should not carry another product's environment names.
+- **D8. Session storage.** *Recommended:* an interface with two
+  implementations, ctxengine's SQLite store and an in-memory one for tests
+  and small hosts.
+- **D9. Memory in the first cut.** *Recommended:* include the optional
+  `Memory` interface from the start; retrofitting it means reopening the
+  loop.
+- **D10. The tool-provider package.** Read as ClawEh's `tools` core;
+  the tools design in 4.4 was agreed on that reading, so I treat it as
+  settled unless told otherwise.
+- **D13. No separate runner** (3.1). *Recommended:* methods on the agent.
+- **D15. `modelspec` separate from `models`.** *Recommended:* separate, so
+  ClawEh's `config` imports only plain data.
+- **D17. `cogmem` importing `models`** (4.9). *Recommended:* no. Keep
+  `cogmem` free of provider code and give it a one-method interface that a
+  `models.Chain` satisfies. The duplicate still disappears (one interface
+  declared once, in `hook`), and memory stays usable without the rest.
+  This reverses my earlier lean.
+- **D18. `log/slog`** (4.9). *Recommended:* yes, and do it early, before
+  more code moves in on the old logger.
+- **D19. Tools in two levels** (4.4). *Recommended:* yes, same shape as
+  models.
+- **D11. Branching.** *Recommended:* phase 1 on the current dev branch;
+  each later phase on the dev branch of the version it ships in; no
+  long-lived SDK branch.
