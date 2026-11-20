@@ -1,6 +1,6 @@
 # Agent SDK extraction plan
 
-Status: **proposal, nothing implemented.** Revision 4. Written against ClawEh
+Status: **proposal, nothing implemented.** Revision 5. Written against ClawEh
 `dev/0.6.5` (3476109) and `go.bison9.com/agent` branch `dev/0.0.1` (5bbfa3a,
 version 0.2.0 in development).
 
@@ -164,19 +164,45 @@ the root package starts no goroutine and has no file other than
 `agent.go`, `options.go`, `aliases.go` and their tests.
 
 ```go
+// Agent is everything a host needs to hold a conversation and stop it.
 type Agent interface {
     ID() string
     Name() string
     Run(ctx context.Context, session string, msg Message, opts ...RunOption) Run
     Interrupt(session string) (running bool, dropped int)
-    Tasks() []TaskInfo
-    CancelTask(taskID string, cause error) error
     Cancel(cause error)            // every turn and task of this agent
-    Tools() *toolkit.Registry
-    Models() *models.Set
     Close(ctx context.Context) error
 }
+
+// Optional capabilities, found by type assertion. Our agent has all three.
+type TaskController interface {
+    Tasks() []TaskInfo
+    CancelTask(taskID string, cause error) error
+}
+type ToolHolder interface{ Tools() *toolkit.Registry }
+type ModelHolder interface{ Models() *models.Set }
 ```
+
+**The interface is the contract; our agent is one implementation of it.**
+A host (ClawEh included) stores and calls `agent.Agent`, never
+`*loop.Agent`, so a rewritten loop, or a different agent altogether, can be
+swapped in behind `agent.New` or supplied by another constructor. Three
+things keep that promise real rather than nominal:
+
+- *The core interface stays small.* In Go, adding a method to an interface
+  breaks every other implementation. Anything beyond running and stopping
+  is a separate capability interface, so the core can stay fixed.
+- *The events are part of the contract.* What a host consumes is the event
+  stream and the callback order, not only the method set. `agent/hook`
+  documents, per event, when it is emitted and what it guarantees (exactly
+  one `TurnFinished`, a `ToolCallFinished` for every `ToolCallStarted`,
+  and so on).
+- *A conformance suite.* `agent/agenttest` exports
+  `agenttest.Run(t, func() agent.Agent)`: the behaviour any implementation
+  must pass (turn outcomes, interrupt, cancel, fallback events, tool
+  errors), driven by the scripted fake provider. Our loop passes it in the
+  SDK gate; a future replacement has to pass the same tests before ClawEh
+  sees it.
 
 **Where the struct lives.** The loop needs the agent's settings, and the
 root needs the loop to build an agent. If the struct were defined in the
@@ -623,6 +649,102 @@ yet, **delete it** when the engine lands rather than keep a wrapper. Check
 Maestro and MCPFusion first: they still use the old `PivotLLM/spawnllm`
 module and I could not see those repositories from this session.
 
+### 4.9 Cross-cutting standards
+
+Things every package does, which should be done one way before more code
+moves in. Findings are from the SDK branch and ClawEh as they stand.
+
+**Logging.** Inside the SDK it is consistent: `spawnllm`, `ctxengine`,
+`cogmem` and `accounting` all log through the one `logger` package
+(component, message, a map of fields) and nothing writes to `log` or
+stderr. Three things are still wrong for an SDK:
+
+- It is a **process-wide global** (`logger.SetBackend`). Two agents in one
+  process cannot log to different places, parallel tests cannot capture
+  their own output, and a library that silently depends on a global is the
+  thing embedders trip on.
+- It takes **no context**, so the turn id and agent id are added by hand at
+  each call site, or missing.
+- Across our code there are **three styles**: this one, ClawEh's own
+  zerolog-backed logger, and the forum's injected `Host.Logger` with
+  `Infof`/`Warnf` strings.
+
+Proposal: no logger of our own, and no interface of our own either. The
+standard library's `log/slog` already is the interface: structured,
+levelled, context-aware, and every logging stack has a handler for it.
+
+- `agent.WithLogger(*slog.Logger)`, `models.WithLogger`, and the same
+  option on `ctxengine`, `cogmem` and `mcphost`. Default: discard.
+- The loop derives a logger carrying `agent`, `session` and `turn` once per
+  turn and passes it down, so every line of a turn is correlated without
+  call sites repeating the fields.
+- "May message content be logged" stops being a logger property and
+  becomes an explicit option (`agent.WithLogContent(bool)`), default off.
+- ClawEh supplies one `slog.Handler` over its existing logger; its log
+  files and format do not change.
+- The `logger` package is removed once its ~36 importing files are
+  converted (a mechanical change). The forum and classifier can take a
+  `*slog.Logger` too when they are next touched.
+
+**Time.** There is no clock seam in the SDK: 42 direct `time.Now()` calls
+across `spawnllm`, `ctxengine` and `cogmem`. ClawEh has `internal/clock`
+(real, fake, fake deadline contexts) and the forum declares its own
+`Clock`. The loop cannot move without a clock, since its retries, turn
+budget, cancel grace and every cancellation test run on a fake one. Move
+ClawEh's `internal/clock` to the SDK as `clock`, use it in the loop,
+`models` (cooldown) from day one, and convert the
+older packages where a test needs it rather than all at once.
+
+**One model-caller interface.** `ctxengine.ModelCaller` and
+`cogmem/consolidate.ModelCaller` are two declarations of the same idea,
+both served today by ClawEh's `compressModelCaller`. With `models` in
+place both take a `models.Chain` for their purpose (`Summarize`,
+`Memory`), and the two interfaces and ClawEh's adapter go away. `cogmem`
+may not import `spawnllm` today; whether it may import `models` is D17.
+
+**File permissions.** Two spellings of one thing:
+`WithFolderPermissions`/`WithFilePermissions` (ctxengine, cogmem) and
+`WithFileModes(dir, file)` (spawnllm). Settle on one small type,
+`fsmode.Modes{Dir, File}`, and one option name, since ClawEh passes its
+permission areas to all of them.
+
+**Identity on the context.** Who a call is for travels three ways today:
+`spawnllm.WithAgentID`, the tool context keys in ClawEh's `tools`
+(channel, chat, session key, reply chat, ask chain) and the spawn depth in
+`tools/agents`. Define one `hook.Scope` (agent id and name, session, turn
+id, depth, project) with one `WithScope`/`ScopeOf` pair; logging,
+accounting, tools and `mcphost` all read it. Host-specific values (reply
+chat, ask chain) stay in ClawEh's own keys.
+
+**Agent ids.** The rule (1–64 characters, case-insensitive identity) exists
+in three copies (`config/agent_id.go`, `forum/agentid.go`,
+`classifier/agentid.go`), plus the WebUI's, plus the accounting limit that
+was just widened to match. Put `ValidID`, `NormalizeID` and `SameID` in the
+SDK (in `hook`, or a tiny `ident` leaf) with the shared test cases;
+ClawEh's `config`, the forum and the classifier call it.
+
+**Errors.** One vocabulary in `hook`: the cancel causes (`ErrInterrupted`,
+`ErrShutdown`, `ErrDeadline`), `ErrNoModelAvailable`, and the `Refusal()`
+marker that ClawEh's `tools`, the forum and the classifier each rely on
+today. Everything else stays a package's own business.
+
+**Redaction.** Secret redaction is hard-wired in ClawEh (`redactSecrets`)
+and re-implemented as `Host.Redact` for the classifier. One
+`agent.WithRedactor(func(string) string)` applied by the loop to tool
+errors, logged content and stored tool output.
+
+**Stability tooling, for the SDK's own gate.** Since other projects will
+depend on it: an exported-API diff against the last tag on every change
+(so a breaking change is a decision, not an accident), runnable examples
+as tests, and a written rule for what a minor version may change. Until
+v1.0.0 the module is allowed to break; the diff makes each break visible.
+
+**Deliberately not moved now.** The forum, classifiers and character cards
+already import nothing from ClawEh and could become SDK packages, but each
+is a product feature with its own tools and on-disk layout; moving them is
+worth doing only when a second host wants one. Channels, routing, cron,
+audit, alerts, backup and the WebUI are ClawEh's.
+
 ## 5. Cancellation (priority; ships first, in ClawEh)
 
 Built in ClawEh now, in the shape the SDK will have, then moved with the
@@ -897,6 +1019,12 @@ dev instance, and a real-device check with the R1 for streaming order.
 CLI model with tools. *Exit:* section 8 of `tests/test_mcpserver.sh` and the
 opt-in real-CLI tests pass.
 
+**Standards (4.9) are not a phase of their own.** `clock`, `hook.Scope`,
+the id rule and the error vocabulary land with phase 6, because the loop
+needs them. The `slog` conversion and the permission type are done on the
+existing SDK packages before phase 6, as a small change of their own. The
+single model-caller follows phase 3.
+
 **Later, if a second host needs them:** `agentreg` and the task store as SDK
 packages; the upstream-MCP client as `toolkit/mcpclient`.
 
@@ -966,6 +1094,8 @@ Settled in review:
   passes it to the agent (4.3).
 - Model updates are a new catalogue handed over with `Adopt`; cooldowns
   are not carried over (4.3).
+- `agent.Agent` is a small interface with optional capability interfaces
+  and a conformance suite, so the implementation can be replaced (3.1).
 - Accounting agent name 64 characters, plus a friendly name.
 - Interrupt leaves sub-agents running; the agent can cancel its own.
 - The registry is live.
@@ -987,6 +1117,13 @@ Still open:
 - **D15. `modelspec` separate from `models`:** keep the definitions in a
   stdlib-only leaf so ClawEh's `config` does not import run-time machinery
   (recommended), or fold them into `models`.
+- **D17. `cogmem` importing `models`** (4.9): allow it, so memory
+  consolidation takes a chain like everything else (recommended), or keep
+  `cogmem` free of anything that reaches `spawnllm` and leave it an
+  interface the loop satisfies.
+- **D18. `log/slog` as the logging interface** (4.9), replacing the SDK's
+  global `logger` package (recommended), or keep `logger` and only make it
+  per-instance.
 - **D2. MCP host split** as in 4.6 (recommended), or leave all of it in
   ClawEh and accept that SDK agents on CLI models have no tools.
 - **D4. Controls that need no typing:** a WebUI Stop button and a dedicated
