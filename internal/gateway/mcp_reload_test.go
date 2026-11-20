@@ -209,3 +209,62 @@ func TestRestartMCPHost_Readiness(t *testing.T) {
 		})
 	}
 }
+
+// TestRestartMCPHost_ReadyAgainAfterFailedRestart: a reload whose MCP host
+// could not start leaves /ready at 503, and the next reload that brings the
+// host back answers 200 again, so the state is not permanent.
+func TestRestartMCPHost_ReadyAgainAfterFailedRestart(t *testing.T) {
+	t.Setenv(global.EnvVarHome, t.TempDir())
+	taken, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	released := false
+	t.Cleanup(func() {
+		if !released {
+			_ = taken.Close()
+		}
+	})
+
+	cfg := config.DefaultConfig()
+	cfg.Agents.BaseDir = t.TempDir()
+	cfg.Agents.Defaults.Models = []string{"test-model"}
+	cfg.Agents.List = []config.AgentConfig{{ID: "alice", Name: "Alice", Default: true}}
+	cfg.MCPHost.Enabled = true
+	cfg.MCPHost.Listen = taken.Addr().String()
+
+	msgBus := bus.NewMessageBus()
+	al, err := agent.NewAgentLoop(cfg, msgBus, providers.NewUnconfiguredProvider(), nil)
+	if err != nil {
+		t.Fatalf("NewAgentLoop: %v", err)
+	}
+	t.Cleanup(func() { al.Close(context.Background()) })
+
+	services := &gatewayServices{fatal: newFatalNotifier(nil), HealthServer: health.NewServer("127.0.0.1", 0)}
+	if err := restartMCPHost(cfg, al, msgBus, services); err == nil {
+		t.Fatal("the restart succeeded on a port already in use")
+	}
+	if got := readyStatus(t, services.HealthServer); got != http.StatusServiceUnavailable {
+		t.Fatalf("/ready after the failed restart = %d, want 503", got)
+	}
+
+	// The next reload: what was stopping the host is gone. The services are
+	// stopped first, as handleConfigReload does, which also covers a host
+	// that never started.
+	if err := taken.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	released = true
+	stopAndCleanupServices(services, al, serviceShutdownTimeout, nil, true)
+	if err := restartMCPHost(cfg, al, msgBus, services); err != nil {
+		t.Fatalf("restart after the port was freed: %v", err)
+	}
+	t.Cleanup(func() {
+		if shutErr := services.MCPServer.Shutdown(context.Background()); shutErr != nil {
+			t.Errorf("shutdown: %v", shutErr)
+		}
+	})
+	if got := readyStatus(t, services.HealthServer); got != http.StatusOK {
+		t.Fatalf("/ready after the host came back = %d, want 200", got)
+	}
+}
