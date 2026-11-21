@@ -1055,16 +1055,22 @@ nothing carries over between calls, not even the working directory.
   memory, with a size cap that keeps the head and the tail. Jobs run in
   their own process group so a stop takes the whole tree. Standard
   library only.
-- the tools, as a `toolspec` provider over it:
+- the tools, as a `toolspec` provider over it. **One new tool, not five.**
+  Every tool is described to the model on every request, so the count is
+  kept down the way Claude Code keeps it: background is a flag on the one
+  execution tool, output is a file read with the ordinary file tools, and
+  finishing is announced rather than polled for.
 
   | Tool | Does |
   | --- | --- |
-  | `shell_exec` | as now, plus `timeout_seconds` and `background`; on timeout the command is kept as a job, not killed; output returned head-and-tail |
-  | `shell_start` | start a job; returns its id |
-  | `shell_output` | new output since the last read, or the last N lines, optionally only lines matching a pattern; can wait up to N seconds for more output, a pattern or exit |
-  | `shell_list` | this agent's jobs and their states |
-  | `shell_input` | write to a job's standard input |
-  | `shell_stop` | stop a job (terminate, then kill after a grace period) |
+  | `shell_exec` (existing, extended) | New arguments `timeout_seconds` and `background`. With `background`, returns a job id and the path of the output file at once. Without it, a command that reaches its timeout is kept as a job instead of being killed. Output is returned head-and-tail, with the file path when it was cut. |
+  | `shell_job` (new) | One tool with an `action`: `list` (this agent's jobs), `wait` (block up to N seconds for exit, new output or a pattern, then return the new output), `input` (write to the job's standard input), `stop`. |
+
+  Reading a job's output needs no tool of its own: the log is a file in
+  the agent's workspace, so `file_read_lines` and `file_search_lines` read
+  and search it like any other file. When a job ends, the agent is told
+  once with a background result (exit code, last lines, the file path),
+  as for a callback sub-agent; `notify: false` on start turns that off.
 
 **How it fits what is already decided:**
 
@@ -1073,12 +1079,9 @@ nothing carries over between calls, not even the working directory.
   shell jobs with no extra mechanism, and a plain `/cancel` leaves them
   running, exactly like sub-agents.
 - **Same permission as `shell_exec`.** An agent granted `shell_exec` gets
-  the job tools (the `agent_spawn` → `agent_cancel` precedent); an agent
-  without it gets none. The deny and allow patterns apply to every start,
+  `shell_job` (the `agent_spawn` → `agent_cancel` precedent); an agent
+  without it gets neither. The deny and allow patterns apply to every start,
   and children get the same allowlisted environment.
-- **Results are pulled, with an optional notice.** By default the agent
-  reads output when it wants it. `notify: true` on start delivers one
-  background result when the job exits, as a callback sub-agent does.
 
 **Things to decide before building it:**
 
