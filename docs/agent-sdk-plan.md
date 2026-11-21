@@ -25,6 +25,89 @@ Changes in revision 2, from the maintainer's review:
 
 Section 11 lists the decisions still open.
 
+## 0. Handover: read this first
+
+This plan was written in a cloud session that could read both repositories
+but could not run a dev instance, push to the SDK repository, or reach a
+device. The implementation is meant to be started in a **new session on a
+Linux machine** that has the checkouts, the toolchain and a dev instance.
+Everything that session needs is in this file; nothing depends on the
+conversation that produced it.
+
+**State when this was written**
+
+- Nothing is implemented. The only change is this file.
+- It is on the branch `claude/agent-sdk-extraction-plan-ex6o4h` of the
+  ClawEh repository. That branch was started from the old `dev/0.6.5` tip;
+  `main` has since received 0.6.5 as a squash merge. Take this one file
+  onto a branch from `main` (cherry-pick or copy); do not merge the branch.
+- ClawEh `main` is 0.6.5, released. There is no dev branch.
+- The SDK is `go.bison9.com/agent`, branch `dev/0.0.1`, version 0.2.0 in
+  development, no tags, consumed by nothing.
+
+**Needed from the maintainer before the first commit**
+
+1. The `agency` repository created and `main` pushed to it with history
+   (section 1a), or a decision to start in the current repository.
+2. A version bump in `app/app.go` and the matching `dev/<version>` branch.
+3. Push access to the SDK repository, and a tag (or agreement to use
+   pseudo-versions) so the host can depend on it.
+4. Where releases will be published and how `claw upgrade` finds them
+   (section 1a).
+
+**Order of work** (section 7 has the detail and exit criteria)
+
+0. Adopt the module: widen the accounting identity and add the friendly
+   name in the SDK (4.1), then switch the host to the one module.
+1. `modelspec`: definitions, the versioned document, secret references.
+2. `models`: catalogue, per-agent sets, fallback, cooldown, `Adopt`,
+   enable/disable.
+3. `toolkit`: tool core and the registry, same shape as `models`.
+4. `discovery`.
+5. The engine: callbacks in place (5a), cancellation (5b), move to
+   `agent/loop` with the small root package (5c), example host (5d).
+6. `mcphost`.
+
+The `slog` conversion and the single permission type (4.9) are small
+changes to the existing SDK packages and go in before phase 5.
+
+**Rules that are easy to lose**
+
+- No config key, tool name or protocol shape changes, except what section
+  5.5 lists for cancellation. `tests/capabilities/testdata/effective.golden`
+  changes exactly once, for `agent_cancel`.
+- The SDK never imports the host. Every new package gets an
+  `imports_test.go` guard.
+- The root `agent` package stays a front door: interface, `New`, options,
+  aliases. The loop is in `agent/loop`.
+- Hosts hold `agent.Agent` (the interface), never the concrete struct.
+- Model and tool lists are private; state changes only through methods.
+- Follow the repository's own `CLAUDE.md` for the test gate, changelog,
+  alerts table and the browser suite.
+
+**Stated here but not verified; check before relying on them**
+
+- What a Maestro dispatch (`RunSync`) does when its calling turn is
+  cancelled.
+- Whether Maestro or MCPFusion use `spawnllm.Worker` (they still depend on
+  the old `PivotLLM/spawnllm` module), which this plan deletes.
+- The name and payload of an abort request in the OpenClaw Gateway
+  protocol, and whether the R1 or the Android app would send one.
+- That a model-parked alert would repeat if cooldowns were cleared on every
+  save (the reason `Adopt` is called only when model settings changed).
+- The device listener's run-id defect on a `/cancel` sent during a run was
+  found by reading the code, not reproduced on a device.
+- Name availability: "Agency" was checked with a web search only. Two Go
+  libraries and one Python framework use the word; no trademark search was
+  done.
+
+**Starting the new session**
+
+Open the session in the host repository checkout and say: "Read
+`docs/agent-sdk-plan.md`, section 0 first. Confirm the four maintainer
+items, then start phase 0." Section 1b describes how to split work across
+sub-agents.
+
 ## 1. Goal
 
 A new project that needs a custom agent writes roughly this and nothing more:
