@@ -1025,106 +1025,22 @@ merits:
   small interfaces.** That is what lets the conformance suite and the
   loop's own tests run on fakes.
 
-### 4.11 A proper shell: background commands (separate package)
+### 4.11 Background shell (separate package, separate phase)
 
-**Today** (`tools/shell`, ~470 lines): `shell_exec` runs one command with
-`sh -c` and waits. It is killed at `tools.exec.timeout_seconds` (60 s by
-default) or the per-tool budget, whichever is first; output is held in
-memory and cut to the first 10,000 characters, so the *end* of a long
-build log, where the error is, is what gets lost. There is no way to
-start something and come back to it, no input to a running program, and
-nothing carries over between calls, not even the working directory.
+`shell_exec` today runs one command and waits; it cannot start something
+and come back to it. The fix is designed in **`docs/bash.md`**, written to
+be picked up by another worker in a later phase. In short:
 
-**What other toolchains have, in order of value:**
-
-1. **Background jobs.** Start a command, get an id back at once, read its
-   output later, wait for it, stop it. This is the gap that matters: dev
-   servers, long builds and test runs, watchers, log tailing.
-2. **A command that outlives its timeout** becomes a background job
-   instead of being killed ("still running as job 3").
-3. **A working directory that persists** between calls.
-4. **Input to a running program** (answer a prompt, send a line).
-5. **A terminal (PTY)** for programs that insist on one.
-
-**Proposed package.** Two layers, neither of which knows about agents:
-
-- `proc`: a process manager. `Start(spec) (*Job, error)`, `Get`, `List`,
-  `Stop(id, signal, grace)`, `Write(id, bytes)`, and for each job its
-  state, exit code, start and end times and a `Reader` over its output
-  from any offset. Output goes to a file as it is produced, never to
-  memory, with a size cap that keeps the head and the tail. Jobs run in
-  their own process group so a stop takes the whole tree. Standard
-  library only.
-- the tools, as a `toolspec` provider over it. **One new tool, not five.**
-  Every tool is described to the model on every request, so the count is
-  kept down the way Claude Code keeps it: background is a flag on the one
-  execution tool, output is a file read with the ordinary file tools, and
-  finishing is announced rather than polled for.
-
-  | Tool | Does |
-  | --- | --- |
-  | `shell_exec` (existing, extended) | New arguments `timeout_seconds` and `background`. With `background`, returns a job id and the path of the output file at once. Without it, a command that reaches its timeout is kept as a job instead of being killed. Output is returned head-and-tail, with the file path when it was cut. |
-  | `shell_job` (new) | One tool with an `action`: `list` (this agent's jobs), `wait` (block up to N seconds for exit, new output or a pattern, then return the new output), `input` (write to the job's standard input), `stop`. |
-
-  Reading a job's output needs no tool of its own: the log is a file in
-  the agent's workspace, so `file_read_lines` and `file_search_lines` read
-  and search it like any other file. When a job ends, the agent is told
-  once with a background result (exit code, last lines, the file path),
-  as for a callback sub-agent; `notify: false` on start turns that off.
-
-**How it fits what is already decided:**
-
-- **A job is a task.** It registers with the agent's task list (section
-  5), so `Tasks()`, `CancelTask`, `agent_cancel` and `/cancel all` cover
-  shell jobs with no extra mechanism, and a plain `/cancel` leaves them
-  running, exactly like sub-agents.
-- **Same permission as `shell_exec`.** An agent granted `shell_exec` gets
-  `shell_job` (the `agent_spawn` → `agent_cancel` precedent); an agent
-  without it gets neither. The deny and allow patterns apply to every start,
-  and children get the same allowlisted environment.
-
-**Things to decide before building it:**
-
-- *Limits.* Jobs per agent, maximum run time, output size per job, and
-  reaping of finished jobs' logs. Without them a forgetful model fills
-  the disk or leaves servers running for weeks.
-- *Service restart.* Under systemd the children die with the service.
-  On start, jobs recorded as running are marked "lost"; they are never
-  relaunched (a command is not safe to repeat blindly).
-- *Where logs live.* In the agent's workspace under `state/`, agents-area
-  modes, left out of backups.
-- *Visibility.* A Check Up row and a WebUI list of running jobs with a
-  stop button; an audit row for every start, input and stop.
-- *Windows.* Process groups and signals differ; build Unix first and
-  refuse the job tools elsewhere rather than half-work.
-
-**What I would leave out at first:**
-
-- *A persistent interactive shell* (one long-lived `sh` fed command after
-  command). Detecting where each command's output ends is fragile and
-  hangs on anything that reads input. Persisting only the working
-  directory gives most of the benefit for a few lines.
-- *PTY support.* It needs a third-party library, is Unix-only, and
-  produces terminal control codes the model reads badly. Add it as an
-  option on `shell_start` if a real case appears (a program that refuses
-  to run without a terminal).
-
-**Where it belongs.** Not in the agent core, and not in the host. It
-depends on `toolspec` and the standard library only, and any host that
-wants a coding agent needs it, so it goes in the SDK repository as the
-first of a group of reusable tool packages: `toolbox/shell` (with `proc`
-beside or inside it). The loop never imports it; a host adds it to its
-tool catalogue like any other provider. ClawEh's `tools/shell` becomes a
-thin mount of it that supplies the config (patterns, limits, working
-directory rule). The file tools are the obvious next candidates for
-`toolbox`, but they are tied to ClawEh's permission and allowed-folder
-rules and are a separate decision.
-
-**When.** It has no dependency on the refactoring except the task list
-(section 5). It can be built any time after phase 5b, or before it with
-its own job list that is folded into the task list later. Operator-visible
-changes (new tools, a new `shell_exec` argument, the timeout behaviour)
-need changelog entries, MCP probes and a golden-file update.
+- two tools in total: `shell_exec` gains `timeout_seconds` and
+  `background`, and one new tool, `shell_job`, lists, waits on, sends
+  input to and stops background jobs;
+- a job's output is a file read with the ordinary file tools, and the
+  agent is told when a job ends;
+- a job is a task, so `/cancel` leaves it running and `/cancel all`,
+  `agent_cancel` and `CancelTask` stop it (section 5);
+- it is not part of the agent core: a process manager plus a tool
+  provider, in the SDK repository as `toolbox/shell`, depending only on
+  `toolspec` and the standard library.
 
 ## 5. Cancellation
 
@@ -1500,9 +1416,9 @@ Settled in review:
 
 Still open, each with my recommendation:
 
-- **D21. Background shell** (4.11): build `toolbox/shell` with background
-  jobs as described (*recommended*), leaving out the persistent shell and
-  PTY at first; and whether it goes before or after phase 5b.
+- **D21. Background shell** (4.11, `docs/bash.md`): two tools agreed. Its
+  own open points (the tool's name, timeout behaviour, config keys, when
+  to build it) are listed in that file.
 - **D1. Clone spend.** Attribute a sub-agent's accounting records to its
   source agent's id, with the clone label as the name. *Recommended:* yes;
   cost should roll up to the agent that caused it.
