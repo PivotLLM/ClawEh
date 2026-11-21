@@ -276,8 +276,8 @@ func (b *BrowserSetup) shutdownGracefully(parent context.Context) {
 	})
 }
 
-// ServeHTTP checks every request (Host, Origin, code) and serves the form,
-// the progress view and the status.
+// ServeHTTP checks every request (Host, code) and serves the form, the
+// progress view and the status.
 func (b *BrowserSetup) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	nonce, err := randomToken(16)
 	if err != nil {
@@ -341,11 +341,11 @@ func (b *BrowserSetup) servePage(w http.ResponseWriter, nonce string) {
 	b.render(w, http.StatusOK, b.pageData(nonce, pageForm, nil))
 }
 
+// serveSubmit takes the form. The one-time code in it is what proves the
+// request comes from this page: another site cannot read it. The Origin
+// header is not checked, because the page's no-referrer policy makes a
+// browser send "Origin: null" with the form.
 func (b *BrowserSetup) serveSubmit(w http.ResponseWriter, r *http.Request, nonce string) {
-	if origin := r.Header.Get("Origin"); origin != "" && origin != "http://"+b.host {
-		http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
-		return
-	}
 	r.Body = http.MaxBytesReader(w, r.Body, browserBodyLimit)
 	if err := r.ParseForm(); err != nil {
 		if _, tooLarge := errors.AsType[*http.MaxBytesError](err); tooLarge {
