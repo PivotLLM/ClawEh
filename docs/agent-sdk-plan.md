@@ -82,9 +82,6 @@ changes to the existing SDK packages and go in before phase 5.
   aliases. The loop is in `agent/loop`.
 - Hosts hold `agent.Agent` (the interface), never the concrete struct.
 - Model and tool lists are private; state changes only through methods.
-- Everything crossing the `Agent` interface is plain, serializable data,
-  and the host adds no new code that opens an agent's files directly
-  (4.10).
 - Follow the repository's own `CLAUDE.md` for the test gate, changelog,
   alerts table and the browser suite.
 
@@ -868,7 +865,7 @@ and no fallback rule, or a duplicate tool name, so a wrong setup is refused
 at construction rather than on the first turn.
 
 **Callbacks.** Only for code that must *change* a step; anything that only
-watches is an event consumer (see 4.10, point 3). A non-nil replacement
+watches is an event consumer (see 4.10). A non-nil replacement
 skips the step (as in Google's kit). The
 right column is the ClawEh behaviour that becomes an implementation of the
 hook.
@@ -1006,124 +1003,125 @@ is a product feature with its own tools and on-disk layout; moving them is
 worth doing only when a second host wants one. Channels, routing, cron,
 audit, alerts, backup and the WebUI are ClawEh's.
 
-### 4.10 Designing for isolated execution
+### 4.10 Isolation: not a requirement
 
-A stated near-term goal: run an agent somewhere else, in a container,
-under another Linux account, or on another machine, with all its files and
-everything it executes contained there, while it still talks to people
-through the host. Nothing below builds that. It lists what must be true of
-the SDK so that it can be built later **without changing the SDK's public
-shape**, and each item changes something in this plan now.
+Decided: running an agent in a container, under another account or on
+another machine while it is managed from one host is **not a requirement**
+of this work. Someone who needs an assistant kept apart from the others
+runs a second instance, under its own user account or on its own machine.
+Nothing in this plan is shaped for a remote agent, and no link, worker
+mode or remote implementation is planned.
 
-**The picture.** Two roles that today share one process:
+Two choices made while that was being considered stay, on their own
+merits:
 
-- the **host** (today ClawEh, tomorrow Agency): channels, routing, config,
-  the WebUI, audit, alerts, the model catalogue and its keys;
-- the **agent worker**: the loop, the tools that touch files and run
-  commands, the workspace, the conversation and memory stores.
+- **Watching is done with events, changing with callbacks.** A callback
+  exists only for code that must alter a step (redaction, approvals, depth
+  limits, the low-steps note). Audit rows, breadcrumbs, user-facing output,
+  the fallback and compaction notices and spend tracking consume events.
+  An observer then cannot break or reorder a turn, and the ordering rules
+  between callbacks shrink to the few that really intercept.
+- **The loop reaches models, sessions, memory and host services through
+  small interfaces.** That is what lets the conformance suite and the
+  loop's own tests run on fakes.
 
-Isolation is a worker in another place, and the host holding a remote
-implementation of `agent.Agent`. The interface decision (3.1) is what
-makes that possible. The same design covers all three cases; a second
-Linux account on the same machine over a local socket is the natural
-first step.
+### 4.11 A proper shell: background commands (separate package)
 
-**1. Everything that crosses the `Agent` interface is plain data.**
-Messages, run options, events, outcomes, task info, and cancel causes must
-be serializable: no Go pointers, functions, channels or bare `error`
-values. Cancel causes and outcomes are enumerated codes with a message.
-This is now a rule of `agent/hook`, with a test that round-trips every
-event type through JSON. `Tools()` and `Models()` return live in-process
-handles, which is why they are optional capability interfaces: a remote
-agent simply does not offer them.
+**Today** (`tools/shell`, ~470 lines): `shell_exec` runs one command with
+`sh -c` and waits. It is killed at `tools.exec.timeout_seconds` (60 s by
+default) or the per-tool budget, whichever is first; output is held in
+memory and cut to the first 10,000 characters, so the *end* of a long
+build log, where the error is, is what gets lost. There is no way to
+start something and come back to it, no input to a running program, and
+nothing carries over between calls, not even the working directory.
 
-**2. An agent is described by a document, built with code.** Split what
-`agent.New` receives into:
+**What other toolchains have, in order of value:**
 
-- an **`AgentSpec`**: id, name, instruction, model assignments by name,
-  tool grants by name, limits, switches. Data only, versioned like the
-  model document, so the host can send it to a worker and send a new one
-  on a config change;
-- **local wiring**: tool handlers, intercepting callbacks, stores. Code,
-  which exists only where the agent runs.
+1. **Background jobs.** Start a command, get an id back at once, read its
+   output later, wait for it, stop it. This is the gap that matters: dev
+   servers, long builds and test runs, watchers, log tailing.
+2. **A command that outlives its timeout** becomes a background job
+   instead of being killed ("still running as job 3").
+3. **A working directory that persists** between calls.
+4. **Input to a running program** (answer a prompt, send a line).
+5. **A terminal (PTY)** for programs that insist on one.
 
-The functional options stay; they fill one or the other. A worker starts
-an agent from a spec it was sent plus its own wiring.
+**Proposed package.** Two layers, neither of which knows about agents:
 
-**3. Observing and intercepting are different things.** This revises the
-callback table in 4.7. A callback that *changes* a step (`BeforeTool`
-refusing a call, `AfterTool` redacting a result) must run beside the loop;
-calling back across a network for every tool call is slow and has no good
-answer when the link drops. A callback that only *watches* needs no
-round trip: it is an event.
+- `proc`: a process manager. `Start(spec) (*Job, error)`, `Get`, `List`,
+  `Stop(id, signal, grace)`, `Write(id, bytes)`, and for each job its
+  state, exit code, start and end times and a `Reader` over its output
+  from any offset. Output goes to a file as it is produced, never to
+  memory, with a size cap that keeps the head and the tail. Jobs run in
+  their own process group so a stop takes the whole tree. Standard
+  library only.
+- the tools, as a `toolspec` provider over it:
 
-- Everything the host needs to know is in the event stream: tool calls
-  with arguments and outcomes, fallbacks, compaction, text for the user,
-  files to send, usage and cost.
-- In phase 5a, ClawEh's audit rows, breadcrumbs, ForUser and media
-  publishing, the fallback notice, the compaction notice and spend
-  tracking are written as **event consumers**. Only what must alter the
-  step (secret redaction, approvals, depth limits, the low-steps note)
-  is an intercepting callback, and those would move with the worker.
-- If a remote approval is ever wanted ("ask the host before running
-  this"), it is one explicit, slow, time-limited call, not the general
-  mechanism.
+  | Tool | Does |
+  | --- | --- |
+  | `shell_exec` | as now, plus `timeout_seconds` and `background`; on timeout the command is kept as a job, not killed; output returned head-and-tail |
+  | `shell_start` | start a job; returns its id |
+  | `shell_output` | new output since the last read, or the last N lines, optionally only lines matching a pattern; can wait up to N seconds for more output, a pattern or exit |
+  | `shell_list` | this agent's jobs and their states |
+  | `shell_input` | write to a job's standard input |
+  | `shell_stop` | stop a job (terminate, then kill after a grace period) |
 
-**4. The loop depends on interfaces, not on local objects.** It already
-takes sessions and memory through interfaces. Add:
+**How it fits what is already decided:**
 
-- **models:** the loop uses a small `ModelSource` interface (begin a
-  chain, call through it, read limits) that `*models.Set` satisfies. A
-  contained agent should not hold provider keys, so later a worker's
-  `ModelSource` can be a client that sends each model call to the host,
-  where the catalogue, keys, cooldown and accounting stay. Shared cooldown
-  and one accounting log come for free.
-- **host services:** what a tool needs from outside the agent (send a
-  message or file to a chat, ask another agent, schedule a job) goes
-  through one `HostServices` interface in the tool dependencies, never a
-  direct call into a host package. ClawEh's `ToolDeps` is most of the way
-  there (`Messenger`, `FileSender`, `AgentServices`); this makes it the
-  rule.
-- **media:** attachments are passed by reference with a fetch call, not
-  as paths or in-memory handles that only mean something in one process.
+- **A job is a task.** It registers with the agent's task list (section
+  5), so `Tasks()`, `CancelTask`, `agent_cancel` and `/cancel all` cover
+  shell jobs with no extra mechanism, and a plain `/cancel` leaves them
+  running, exactly like sub-agents.
+- **Same permission as `shell_exec`.** An agent granted `shell_exec` gets
+  the job tools (the `agent_spawn` → `agent_cancel` precedent); an agent
+  without it gets none. The deny and allow patterns apply to every start,
+  and children get the same allowlisted environment.
+- **Results are pulled, with an optional notice.** By default the agent
+  reads output when it wants it. `notify: true` on start delivers one
+  background result when the job exits, as a callback sub-agent does.
 
-**5. Tools already have a cross-process form: MCP.** A worker's tools run
-where the worker is. Tools that belong to the host can be offered to the
-worker as a toolset over MCP, and `mcphost` is the other direction. So
-`mcphost` (4.6) and the MCP client toolset (4.4) are the tool transport
-for isolation, not only a convenience for CLI models; the client moves
-into the SDK with phase 6 instead of "later".
+**Things to decide before building it:**
 
-**6. The worker is not trusted.** Containment only means something if a
-compromised agent gains nothing by asking. Every request a worker makes
-(a model call, a host tool, a message to a chat, an ask to another agent)
-is authorized by the host against that agent's current grants, per call,
-the way the forum host already re-checks everything read from an agent's
-folder. The per-session and service tokens of the MCP host are the
-existing precedent.
+- *Limits.* Jobs per agent, maximum run time, output size per job, and
+  reaping of finished jobs' logs. Without them a forgetful model fills
+  the disk or leaves servers running for weeks.
+- *Service restart.* Under systemd the children die with the service.
+  On start, jobs recorded as running are marked "lost"; they are never
+  relaunched (a command is not safe to repeat blindly).
+- *Where logs live.* In the agent's workspace under `state/`, agents-area
+  modes, left out of backups.
+- *Visibility.* A Check Up row and a WebUI list of running jobs with a
+  stop button; an audit row for every start, input and stop.
+- *Windows.* Process groups and signals differ; build Unix first and
+  refuse the job tools elsewhere rather than half-work.
 
-**What this does not solve, and is host work.** Today the host reads
-agents' files directly, and that is the larger job:
+**What I would leave out at first:**
 
-- the session API and device history read the conversation store;
-- the Memory page and `claw memory` open the agent's memory database;
-- backup, permission enforcement and Check Up walk every workspace;
-- the context builder reads prompt files and skills from the workspace;
-- the forum, classifiers, folder watching and generated-image sending
-  work on workspace paths.
+- *A persistent interactive shell* (one long-lived `sh` fed command after
+  command). Detecting where each command's output ends is fragile and
+  hangs on anything that reads input. Persisting only the working
+  directory gives most of the benefit for a few lines.
+- *PTY support.* It needs a third-party library, is Unix-only, and
+  produces terminal control codes the model reads badly. Add it as an
+  option on `shell_start` if a real case appears (a program that refuses
+  to run without a terminal).
 
-For a remote agent each of these becomes a request to the agent
-(history, memory, export for backup, a file by reference). The SDK side
-is to give `agent.Agent` optional capability interfaces for them
-(`HistoryReader`, `Exporter`), so the host has one way to ask whether the
-agent is local or not. Converting the host's call sites is a project of
-its own, after this plan; the rule until then is **add no new code in the
-host that opens an agent's files directly**.
+**Where it belongs.** Not in the agent core, and not in the host. It
+depends on `toolspec` and the standard library only, and any host that
+wants a coding agent needs it, so it goes in the SDK repository as the
+first of a group of reusable tool packages: `toolbox/shell` (with `proc`
+beside or inside it). The loop never imports it; a host adds it to its
+tool catalogue like any other provider. ClawEh's `tools/shell` becomes a
+thin mount of it that supplies the config (patterns, limits, working
+directory rule). The file tools are the obvious next candidates for
+`toolbox`, but they are tied to ClawEh's permission and allowed-folder
+rules and are a separate decision.
 
-**Also true but outside the SDK:** a CLI model runs as a subprocess of the
-worker and brings its own login with it, so those credentials sit inside
-the sandbox; and `shell_exec` today runs as the service account, which a
-worker under its own account fixes without any further design.
+**When.** It has no dependency on the refactoring except the task list
+(section 5). It can be built any time after phase 5b, or before it with
+its own job list that is folded into the task list later. Operator-visible
+changes (new tools, a new `shell_exec` argument, the timeout behaviour)
+need changelog entries, MCP probes and a golden-file update.
 
 ## 5. Cancellation
 
@@ -1404,10 +1402,8 @@ needs them. The `slog` conversion and the permission type are done on the
 existing SDK packages before phase 5, as a small change of their own. The
 single model-caller follows phase 2.
 
-**After this plan — isolation (4.10):** a worker mode for the host binary,
-the link between host and worker, a remote `agent.Agent`, and converting
-the host's direct reads of agent files. Phases 0–6 are shaped so that none
-of it changes the SDK's public interface.
+**Alongside or after — background shell (4.11):** `toolbox/shell`, a
+separate package, any time after phase 5b.
 
 **Later, if a second host needs them:** `agentreg` and the task store as SDK
 packages; the upstream-MCP client as `toolkit/mcpclient`.
@@ -1496,17 +1492,14 @@ Settled in review:
 - Models and tools each have a run-time enable/disable switch, default
   enabled, with private lists changed only through methods (4.4a).
 
-- The SDK is shaped for isolated execution later: plain data across the
-  `Agent` interface, an agent spec document, events for observing and
-  callbacks only for intercepting, and interfaces for models and host
-  services (4.10).
+- Isolation is not a requirement; a separate instance is the answer for
+  an assistant that must be kept apart (4.10).
 
 Still open, each with my recommendation:
 
-- **D20. Model calls for a contained agent** (4.10): proxied through the
-  host so the worker holds no provider keys (*recommended*), or the worker
-  holds keys for its own models. Only the `ModelSource` interface is
-  needed now; the choice can wait.
+- **D21. Background shell** (4.11): build `toolbox/shell` with background
+  jobs as described (*recommended*), leaving out the persistent shell and
+  PTY at first; and whether it goes before or after phase 5b.
 - **D1. Clone spend.** Attribute a sub-agent's accounting records to its
   source agent's id, with the clone label as the name. *Recommended:* yes;
   cost should roll up to the agent that caused it.
