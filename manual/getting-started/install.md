@@ -2,15 +2,36 @@
 
 This page installs ClawEh as a background service and creates the admin account you sign in with.
 
-There are three ways to install. All three end with the same command, `claw install`, which copies the binary, registers the service, creates the admin account and starts ClawEh.
+There are three ways to install from a terminal, and an installer package for a Mac. All of them end with the same command, `claw install`, which copies the binary, registers the service, creates the admin account and starts ClawEh.
 
 ## Before you start
 
 - A Linux or macOS machine on amd64 or arm64 (Linux 386 is also available).
-- A terminal on that machine.
+- A terminal on that machine (not needed for the Mac installer package).
 - Decide who runs the service:
   - **As your user** (no `sudo`): ClawEh starts when you log in. The data directory is `~/.claw`.
   - **As a system service** (with `sudo`): ClawEh starts at boot without anyone logging in. It still runs as your user, never as root.
+
+## On a Mac: the installer package
+
+No terminal is needed.
+
+1. Download [`bison9-agency-macos.pkg`](https://github.com/PivotLLM/ClawEh/releases/latest/download/bison9-agency-macos.pkg) and open it. It works on Apple silicon and Intel Macs.
+2. Follow the installer. It asks for your Mac's administrator password.
+3. Your browser opens a page that asks for a username and a password. This is the admin account you sign in to ClawEh with. The page waits 5 minutes.
+4. The page takes you to the WebUI. Sign in with the account you just created.
+
+ClawEh is installed as a system service: it starts when the Mac starts, without anyone logging in, and runs as the Mac account that ran the installer, never as root. The data directory is `~/.claw` in that account.
+
+If the account is not created within 5 minutes, the installer says the installation failed. Open the package again.
+
+To upgrade, open a newer package. It keeps your account and data and does not show the page. A Mac where ClawEh was installed without `sudo` (a user service) is refused: remove that one first with `claw uninstall`.
+
+To remove ClawEh, see [Removing the service](#removing-the-service).
+
+::: tip Running all the time
+A Mac that is asleep does not run ClawEh. With FileVault on, nothing starts after a restart until someone unlocks the disk.
+:::
 
 ## Option 1: the one-line installer
 
@@ -59,6 +80,18 @@ The WebUI requires a login, and there is no default account. When none exists, `
 This works under `curl … | bash` too: the installer reads from your terminal, not from the pipe.
 
 An existing account is kept. To replace it later, run `claw admin` on the server. See [Signing in](../admin/login.md).
+
+### Creating the account in the browser
+
+With `--browser-setup`, the installer asks for the account on a one-time web page instead of the terminal:
+
+```bash
+./claw install --browser-setup
+```
+
+On macOS it opens the page in your default browser. On Linux, open the link it shows in the terminal, in a browser on that machine. The page is served only on this machine, works once, and waits 5 minutes. Enter the username and the password twice; the page then shows the service starting and takes you to the WebUI. If nobody creates the account in time, the installer stops without starting the service; run it again. Without a terminal and without a browser to open, it stops at once.
+
+`CLAW_ADMIN_USER` and `CLAW_ADMIN_PASSWORD`, when both are set, still win, and an existing account is kept without showing the page.
 
 ### Unattended install
 

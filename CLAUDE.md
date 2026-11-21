@@ -90,7 +90,13 @@ ClawEh is an independent Go project forked from sipeed/picoclaw on 2026-03-20.
   `claw admin` (`internal/admincmd`; credentials, argon2id, the file format and
   the shared prompt/`CLAW_ADMIN_USER`+`CLAW_ADMIN_PASSWORD` logic,
   `admin.EnsureAccount`, in `internal/admin`; sessions and the middleware in
-  `web/backend/middleware/auth*.go`). Loopback is not exempt. `<CLAW_HOME>/credentials.json`
+  `web/backend/middleware/auth*.go`). `claw install --browser-setup` asks for the
+  account on a one-time page the installer itself serves on 127.0.0.1 instead of
+  the terminal (`admin.BrowserSetup`, `internal/admin/browser.go`, wired in
+  `internal/install/browser.go`: on macOS opened in the default browser by
+  `osascript` reading `open location` on stdin, so the link is never an argument;
+  link printed only to a terminal; 5-minute limit), still before the
+  service is registered. Loopback is not exempt. `<CLAW_HOME>/credentials.json`
   is the only account; there is no default and no WebUI path to create one. See
   `manual/admin/login.md`. The handler chain on the listener is IP allowlist → Host
   check (421) → cross-origin protection → security headers → login → body limit → mux.
@@ -307,6 +313,20 @@ names, ports and deploy procedure for a given machine belong in
 production instance directly; test against a dev instance.
 
 **Release artefacts (cut by the release maintainer with b9):** `b9 release <repo>` builds every target in `b9.yaml`, signs and notarizes the macOS binaries, packages the archives, writes `checksums.txt` and signs it with minisign (`signing.minisign` in `b9.yaml` names the public key; the secret key lives on the release host), verifies that signature against the same public key, then tags and uploads everything. The Makefile's `release-checksums` and `release-sign` targets are the manual fallback for a hand-built release. `claw upgrade` refuses a release without a valid `checksums.txt.minisig`, verified against the two minisign public keys in `app/keys.go` (`app.ReleasePublicKeys()`: a current and a next key, so a key can be rolled; the rotation steps are in that file). Both slots are filled.
+
+**macOS installer package:** a release also carries `bison9-agency-macos.pkg`
+(`package.macos_pkg` in `b9.yaml`; the name is a contract, the manual and
+README link to it). It has no payload: it holds one universal `claw` beside
+`packaging/macos/scripts/postinstall`, which runs as root and calls
+`claw install --yes --browser-setup --user <the person at the screen>`, so
+everything the package does is what `claw install` does. Every file in
+`packaging/macos/scripts` must be committed, a regular file, and free of
+secrets; the script's output goes to the Mac's install log, which other
+accounts can read. macOS kills a package's script after 10 minutes, which is
+why `admin.BrowserSetupLimit` is 5 minutes: do not raise it past what leaves
+room for the service to start. `claw-auth` is not in the package
+(`packages: [per_platform]`). The package can only be tested by opening it on
+a Mac; see `manual/getting-started/install.md`.
 
 **Vulnerability gate and `b9.yaml`:** `make govulncheck` (part of `make test`)
 is `go run go.bison9.com/vulncheck/cmd/vulncheck@latest .` (`VULNCHECK` in

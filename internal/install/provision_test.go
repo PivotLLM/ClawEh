@@ -41,7 +41,7 @@ func TestProvisionAndRegister_NoAccountNoTerminalStopsBeforeService(t *testing.T
 	clawHome := filepath.Join(t.TempDir(), "claw")
 	tu := &TargetUser{Username: "tester"}
 
-	_, err := provisionAndRegister(tu, "/nonexistent/claw", "/nonexistent", clawHome, false)
+	_, _, err := provisionAndRegister(tu, "/nonexistent/claw", "/nonexistent", clawHome, false, nil)
 	if !errors.Is(err, admin.ErrNoAccountNoTerminal) {
 		t.Fatalf("provisionAndRegister = %v; want ErrNoAccountNoTerminal", err)
 	}
@@ -67,7 +67,7 @@ func TestProvisionAndRegister_EnvAccountThenService(t *testing.T) {
 	})
 	clawHome := filepath.Join(t.TempDir(), "claw")
 
-	user, err := provisionAndRegister(&TargetUser{Username: "tester"}, "/nonexistent/claw", "/nonexistent", clawHome, false)
+	user, _, err := provisionAndRegister(&TargetUser{Username: "tester"}, "/nonexistent/claw", "/nonexistent", clawHome, false, nil)
 	if err != nil || user != "jane" {
 		t.Fatalf("provisionAndRegister = %q, %v; want jane, nil", user, err)
 	}
@@ -93,7 +93,7 @@ func TestProvisionAndRegister_ExistingAccountKept(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	user, err := provisionAndRegister(&TargetUser{Username: "tester"}, "/nonexistent/claw", "/nonexistent", clawHome, true)
+	user, _, err := provisionAndRegister(&TargetUser{Username: "tester"}, "/nonexistent/claw", "/nonexistent", clawHome, true, nil)
 	if err != nil || user != "kim" || *calls != 1 {
 		t.Fatalf("provisionAndRegister = %q, %v, registrations %d; want kim, nil, 1", user, err, *calls)
 	}
@@ -109,7 +109,7 @@ func TestProvisionAndRegister_RootChownsToServiceAccount(t *testing.T) {
 	clawHome := filepath.Join(t.TempDir(), "claw")
 	tu := &TargetUser{Username: "nobody", UID: "65534", GID: "65534", IsRoot: true}
 
-	if _, err := provisionAndRegister(tu, "/nonexistent/claw", "/nonexistent", clawHome, false); err != nil {
+	if _, _, err := provisionAndRegister(tu, "/nonexistent/claw", "/nonexistent", clawHome, false, nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, p := range []string{clawHome, admin.Path(clawHome)} {

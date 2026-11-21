@@ -48,6 +48,7 @@ artifacts:
   - name: claw-auth
     from: 'build/claw-auth-{os}-{arch}'
     macos_bundle_id: com.tenebris.claweh
+    packages: [per_platform]
 
 package:
   extra_files:
@@ -59,6 +60,12 @@ package:
     asset: 'claw-{os}-{arch}.tar.gz'
   bundle:
     enabled: false
+  macos_pkg:
+    enabled: true
+    # CONTRACT: the manual links to this name.
+    asset: 'bison9-agency-macos.pkg'
+    identifier: com.tenebris.claweh.pkg
+    scripts: packaging/macos/scripts
 
 release:
   tag:   '{version}'
