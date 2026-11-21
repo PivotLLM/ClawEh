@@ -197,6 +197,10 @@ type EnsureOptions struct {
 	OpenTerminal func(out io.Writer) (*Terminal, error)
 	// Out receives prompts when stdin is the terminal; nil means os.Stdout.
 	Out io.Writer
+	// Ask, when set, replaces the terminal prompt: it is called only when
+	// no account exists and the environment does not supply one, and
+	// returns the new account (see BrowserSetup).
+	Ask func() (username, password string, err error)
 	// FileMode is security.permissions.secrets.file_mode, which the
 	// credentials file is written with and checked against; zero means
 	// DefaultFileMode.
@@ -211,8 +215,8 @@ type EnsureOptions struct {
 // returns its username. An existing file that loads is left untouched
 // (created is false); one that exists but does not load is an error, never
 // overwritten. Otherwise the account comes from EnvUser and EnvPassword when
-// both are set, else from an interactive prompt. With neither it returns
-// ErrNoAccountNoTerminal.
+// both are set, else from Ask when set, else from an interactive prompt.
+// Without a terminal it returns ErrNoAccountNoTerminal.
 func EnsureAccount(opts EnsureOptions) (username string, created bool, err error) {
 	if opts.Home == "" {
 		return "", false, errors.New("admin account: CLAW_HOME is empty")
@@ -257,6 +261,10 @@ func EnsureAccount(opts EnsureOptions) (username string, created bool, err error
 		password = envPass
 	case envUser != "" || envPass != "":
 		return "", false, fmt.Errorf("set both %s and %s, or neither to be prompted", EnvUser, EnvPassword)
+	case opts.Ask != nil:
+		if username, password, err = opts.Ask(); err != nil {
+			return "", false, err
+		}
 	default:
 		if username, password, err = promptOnTerminal(open, out, path); err != nil {
 			return "", false, err
