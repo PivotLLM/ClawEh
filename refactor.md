@@ -1,112 +1,187 @@
-# Agent SDK extraction plan
+# Refactoring plan: the Bison9 agent SDK and Bison9 Agency
 
-Status: **proposal, nothing implemented.** Revision 7. Written against ClawEh
-0.6.5 as released (`main`, ee944b3; the code was read at the `dev/0.6.5` tip
-it was cut from) and `go.bison9.com/agent` branch `dev/0.0.1` (5bbfa3a,
-version 0.2.0 in development).
+**If you are a new session: this file is your brief.** Read section 0 in
+full, then the sections it points to as you reach each phase. Nothing here
+depends on the conversation that produced it.
 
-Changes in revision 2, from the maintainer's review:
+Status: **nothing is implemented.** This file and `docs/bash.md` are the
+only output so far. Written against ClawEh 0.6.5 as released (`main`,
+ee944b3) and the SDK `go.bison9.com/agent`, branch `dev/0.0.1` (5bbfa3a,
+version 0.2.0 in development, no tags).
 
-- The SDK repository keeps its name, `agent`. The module's root package is
-  a deliberately small front door: the `Agent` interface, `agent.New` and
-  functional options. The loop lives in a sub-package (section 3.1).
-- A `models` package owns everything about models at run time: the list,
-  purposes, priorities, selection, fallback, cooldown and what is serving
-  now. ClawEh populates it and hands it to the agent (section 4.3).
-- The accounting agent name grows to 64 characters and records gain the
-  agent's friendly name (section 4.1).
-- Cancellation is the first deliverable and is redesigned: a user interrupt
-  stops the agent being talked to and **leaves its sub-agents running**; the
-  agent gets a tool to cancel its own sub-agents (section 5; built as part of the engine work, phase 5b).
-- The tool registry is a live object the host adds to and removes from at any
-  time (section 4.4).
-- The MCP host is split: a generic core moves to the SDK, ClawEh's policy
-  stays (section 4.6).
+## 0. Handover
 
-Section 11 lists the decisions still open.
+### 0.1 What this is
 
-## 0. Handover: read this first
+ClawEh has grown into a business product. Three things are being done
+together:
 
-This plan was written in a cloud session that could read both repositories
-but could not run a dev instance, push to the SDK repository, or reach a
-device. The implementation is meant to be started in a **new session on a
-Linux machine** that has the checkouts, the toolchain and a dev instance.
-Everything that session needs is in this file; nothing depends on the
-conversation that produced it.
+1. **Extract the agent core into an SDK** (`go.bison9.com/agent`,
+   repository `BisonNine/agent`) so a new project can build an agent by
+   loading a model list, a tool list and a logger, and then just moving
+   messages between the agent and the user (section 1).
+2. **Make ClawEh the first host of that SDK**, without reducing what it
+   does and without changing its config, tool names or protocols, except
+   for the cancellation changes listed in 5.5.
+3. **Move the product to a new home**, Bison9 Agency, repository `agency`,
+   module `go.bison9.com/agency` (section 1a).
 
-**State when this was written**
+A related, independent piece of work is the background shell
+(`docs/bash.md`, summarised in 4.11).
 
-- Nothing is implemented. The only change is this file.
-- It is on the branch `claude/agent-sdk-extraction-plan-ex6o4h` of the
-  ClawEh repository. That branch was started from the old `dev/0.6.5` tip;
-  `main` has since received 0.6.5 as a squash merge. Take this one file
-  onto a branch from `main` (cherry-pick or copy); do not merge the branch.
-- ClawEh `main` is 0.6.5, released. There is no dev branch.
-- The SDK is `go.bison9.com/agent`, branch `dev/0.0.1`, version 0.2.0 in
-  development, no tags, consumed by nothing.
+The objectives, in the maintainer's words: stability, well-architected
+code, and the ability to use the agent elsewhere.
 
-**Needed from the maintainer before the first commit**
+### 0.2 Where things are
 
-1. The `agency` repository created and `main` pushed to it with history
-   (section 1a), or a decision to start in the current repository.
-2. A version bump in `app/app.go` and the matching `dev/<version>` branch.
-3. Push access to the SDK repository, and a tag (or agreement to use
-   pseudo-versions) so the host can depend on it.
-4. Where releases will be published and how `claw upgrade` finds them
-   (section 1a).
+| Thing | Where | State |
+| --- | --- | --- |
+| This plan | `refactor.md` (repository root) | current |
+| Shell design | `docs/bash.md` | current |
+| Both files | branch `claude/agent-sdk-extraction-plan-ex6o4h` of the ClawEh repository | **not on `main`**; that branch was started from the old dev tip, so take only these two files onto a branch from `main` (`git checkout origin/claude/agent-sdk-extraction-plan-ex6o4h -- refactor.md docs/bash.md`); do not merge the branch |
+| Host code | ClawEh `main`, 0.6.5, released; no dev branch exists | unchanged |
+| SDK code | `BisonNine/agent`, branch `dev/0.0.1`: `toolspec`, `logger`, `accounting`, `spawnllm`, `ctxengine`, `cogmem` | unreleased, nothing depends on it |
+| Old modules | `github.com/PivotLLM/{toolspec,spawnllm,ctxengine,cogmem}` | still what ClawEh's `go.mod` requires |
+| Agency repository | to be created by the maintainer | does not exist yet |
 
-**Order of work** (section 7 has the detail and exit criteria)
+### 0.3 Before the first commit: ask the maintainer
 
-0. Adopt the module: widen the accounting identity and add the friendly
-   name in the SDK (4.1), then switch the host to the one module.
-1. `modelspec`: definitions, the versioned document, secret references.
-2. `models`: catalogue, per-agent sets, fallback, cooldown, `Adopt`,
-   enable/disable.
-3. `toolkit`: tool core and the registry, same shape as `models`.
-4. `discovery`.
-5. The engine: callbacks in place (5a), cancellation (5b), move to
-   `agent/loop` with the small root package (5c), example host (5d).
-6. `mcphost`.
+Do not start phase 0 until these are answered. They are the maintainer's
+to decide, not the session's.
 
-The `slog` conversion and the single permission type (4.9) are small
-changes to the existing SDK packages and go in before phase 5.
+1. **Repository.** Has `agency` been created and ClawEh's `main` pushed to
+   it with history (section 1a)? A few changes were expected on `main`
+   first. If not yet, work in whichever repository the maintainer names.
+2. **Version and branch.** 0.6.5 is released. The project rule is that
+   work lands on `dev/<version>` and a released version must be bumped
+   before any changelog entry. Ask for the number; then bump `app/app.go`
+   and create the branch.
+3. **SDK access and versioning.** Push access to `BisonNine/agent`, and
+   whether the host depends on a tag (the maintainer cuts tags; never
+   create one) or on pseudo-versions during development. `main` must
+   never carry a `replace` directive.
+4. **Releases.** Where Agency's releases are published and how existing
+   installs' `claw upgrade` finds them (section 1a). Not needed to start,
+   needed before the first release from the new repository.
+5. **A dev instance.** Its service name, port and install path belong in
+   `CLAUDE.local.md`. Phase 5 cannot finish without it (the browser suite
+   and a device check).
 
-**Rules that are easy to lose**
+### 0.4 First session checklist
 
-- No config key, tool name or protocol shape changes, except what section
-  5.5 lists for cancellation. `tests/capabilities/testdata/effective.golden`
-  changes exactly once, for `agent_cancel`.
-- The SDK never imports the host. Every new package gets an
-  `imports_test.go` guard.
-- The root `agent` package stays a front door: interface, `New`, options,
-  aliases. The loop is in `agent/loop`.
-- Hosts hold `agent.Agent` (the interface), never the concrete struct.
-- Model and tool lists are private; state changes only through methods.
-- Follow the repository's own `CLAUDE.md` for the test gate, changelog,
-  alerts table and the browser suite.
+1. Read the repository's `CLAUDE.md` (and `CLAUDE.local.md`). Its rules
+   on the test gate, changelog, alerts table, product name, capability
+   golden file and browser suite all apply to this work and override
+   anything here that conflicts.
+2. Run `make test` on an untouched checkout of both repositories and
+   record the result. Every phase's "no behaviour change" claim is
+   measured against that baseline.
+3. Confirm the facts in section 2 still hold (`go.mod` requirements, the
+   two tool loops, the accounting limit of 16). `main` may have moved.
+4. Check the items listed in 0.8 as unverified before relying on them.
+5. Get the answers in 0.3. Then start phase 0.
 
-**Stated here but not verified; check before relying on them**
+### 0.5 The work, in order
+
+Section 7 has each phase's detail and exit criteria. Sections 3–5 are the
+designs.
+
+| # | Phase | Design | Operator-visible? |
+| --- | --- | --- | --- |
+| 0 | Adopt the consolidated module: widen the accounting identity to 64 characters and add the friendly name (SDK), then switch the host from the four old modules to the one | 4.1 | only if accounting output is turned on |
+| pre-5 | Standards on the existing SDK packages: `log/slog` in place of the global logger; one file-permission type | 4.9 | no |
+| 1 | `modelspec`: provider and model definitions, the versioned document, secret references | 4.2 | no |
+| 2 | `models`: catalogue, per-agent sets by purpose and priority, fallback, cooldown, `Adopt`, enable/disable; then one model-caller interface | 4.3, 4.4a | no |
+| 3 | `toolkit`: tool core and registry, catalogue plus per-agent set, enable/disable | 4.4, 4.4a | no |
+| 4 | `discovery`: hidden-tool index, search, deferred loading | 4.5 | no |
+| 5a | The engine, in place: callbacks for changing a step, events for watching; cut the host imports out of the loop | 4.7, 4.10 | no |
+| 5b | Cancellation: task contexts, interrupt, `agent_cancel`, `/cancel all`, one reply per cancel, device run ids | 5 | **yes** (5.5) |
+| 5c | Move the engine to `agent/loop`; `agent/hook`; the small root package; conformance suite; delete `spawnllm.Worker`; `clock`, scope, id rule, errors | 3.1, 4.7, 4.8, 4.9 | no |
+| 5d | Example host in the SDK, under ~100 lines | 1 | no |
+| 6 | `mcphost`: split the MCP server | 4.6 | no |
+| any time after phase 0 | Background shell as its own package, then swap it in and remove the old tool | `docs/bash.md` | **yes** |
+| after | Replace aliases with direct imports; a named second instance in the installer, if wanted | 10 | no |
+
+Phases are sequential; each builds on the one before. The shell package
+is the exception: it depends only on `toolspec`.
+
+### 0.6 How to run it
+
+- **One coordinator, many workers.** The maintainer wants the coordinating
+  session to hand work to sub-agents on a cheaper model (Opus) and to say
+  roughly how many a step will use before launching them. Section 1b says
+  what splits well and what does not.
+- **One worktree per worker**, started from the dev branch tip. Each
+  brief names its files, its exit test and what it must not touch.
+- **The coordinator verifies.** A worker's report is a summary, not
+  proof: read the diff and run the gate yourself before anything lands.
+  Run the integration scripts one at a time; they bind ports.
+- **Land small.** Each phase, and each step inside phase 5, lands on the
+  dev branch as soon as it passes, with its tests, its documentation and,
+  where 5.5 or `docs/bash.md` says so, its changelog entry in the same
+  commit.
+- **Keep this file current.** Tick the phase off in section 12 when it
+  lands, and correct any section the code has overtaken.
+
+### 0.7 Rules that are easy to lose
+
+- No config key, tool name or protocol shape changes except those listed
+  in 5.5 and `docs/bash.md`. Anything else that would break an install:
+  stop and ask.
+- `tests/capabilities/testdata/effective.golden` changes exactly twice:
+  once for `agent_cancel`, once for `shell_job`. Never regenerate it to
+  make the gate pass.
+- The SDK never imports a host. Every SDK package has an
+  `imports_test.go` guard, and a new dependency is added to it on purpose.
+- The root `agent` package is a front door only: the interface, `New`,
+  functional options, aliases. The loop is in `agent/loop`.
+- Hosts hold `agent.Agent`, the interface, never the concrete struct.
+- Model and tool lists are private. State changes only through methods;
+  lists are returned as copies.
+- Watching is done with events; a callback exists only to change a step.
+- Fixed identifiers stay fixed: the `claw` binary, `CLAW_*`, `.claw`, the
+  service name, `mcp__claw__` and the rest of `global/identifiers.go`.
+  The product name changes only in `app/app.go`.
+- Never create, move or delete a git tag. Never push to `main`.
+- Every alert stays at normal priority; add a row to `ALERTS.md` for any
+  new one.
+
+### 0.8 Stated here but not verified
+
+Check each before relying on it.
 
 - What a Maestro dispatch (`RunSync`) does when its calling turn is
   cancelled.
 - Whether Maestro or MCPFusion use `spawnllm.Worker` (they still depend on
   the old `PivotLLM/spawnllm` module), which this plan deletes.
-- The name and payload of an abort request in the OpenClaw Gateway
-  protocol, and whether the R1 or the Android app would send one.
-- That a model-parked alert would repeat if cooldowns were cleared on every
-  save (the reason `Adopt` is called only when model settings changed).
-- The device listener's run-id defect on a `/cancel` sent during a run was
+- That clearing cooldowns on every config save would repeat the
+  model-parked alert (the reason `Adopt` is called only when model
+  settings changed).
+- The device listener's run-id defect on a `/cancel` sent during a run:
   found by reading the code, not reproduced on a device.
-- Name availability: "Agency" was checked with a web search only. Two Go
-  libraries and one Python framework use the word; no trademark search was
-  done.
+- That a second instance on one machine must be set up by hand (the
+  installer registers one fixed service name; not tried).
+- Name availability: "Agency" was checked by web search only. Two Go
+  libraries and one Python framework use the word. No trademark search.
 
-**Starting the new session**
+### 0.9 Decisions already made
 
-Open the session in the host repository checkout and say: "Read
-`docs/agent-sdk-plan.md`, section 0 first. Confirm the four maintainer
-items, then start phase 0." Section 1b describes how to split work across
-sub-agents.
+Section 11 has the full list. The ones that shape everything:
+
+- The SDK stays `go.bison9.com/agent`; "ADK" is not used.
+- `agent.New(id, opts...)` with functional options; a small `Agent`
+  interface with optional capability interfaces and a conformance suite.
+- `models`: one catalogue per process, one set per agent; the app builds
+  the catalogue at start-up and gives each agent its models by purpose
+  and priority; updates are a new catalogue handed over; cooldowns are
+  not carried over.
+- `toolkit`: the same shape for tools.
+- `/cancel` stops only the agent being talked to and leaves sub-agents
+  running; `/cancel all` stops everything under it; an agent with
+  `agent_spawn` gets `agent_cancel`; one reply per cancel.
+- Isolation of agents is not a requirement; a separate instance is the
+  answer.
+- The product becomes Bison9 Agency.
 
 ## 1. Goal
 
@@ -1029,7 +1104,8 @@ merits:
 
 `shell_exec` today runs one command and waits; it cannot start something
 and come back to it. The fix is designed in **`docs/bash.md`**, written to
-be picked up by another worker in a later phase. In short:
+be picked up by another worker at any time after the refactoring starts,
+since it depends only on `toolspec`. In short:
 
 - two tools in total: `shell_exec` gains `timeout_seconds` and
   `background`, and one new tool, `shell_job`, lists, waits on, sends
@@ -1321,8 +1397,9 @@ needs them. The `slog` conversion and the permission type are done on the
 existing SDK packages before phase 5, as a small change of their own. The
 single model-caller follows phase 2.
 
-**Alongside or after — background shell (4.11):** `toolbox/shell`, a
-separate package, any time after phase 5b.
+**Any time after phase 0 — background shell (4.11, `docs/bash.md`):**
+`toolbox/shell`, a separate package built against `toolspec`, then
+swapped in for the existing tool, which is removed.
 
 **Later, if a second host needs them:** `agentreg` and the task store as SDK
 packages; the upstream-MCP client as `toolkit/mcpclient`.
@@ -1416,9 +1493,9 @@ Settled in review:
 
 Still open, each with my recommendation:
 
-- **D21. Background shell** (4.11, `docs/bash.md`): two tools agreed. Its
-  own open points (the tool's name, timeout behaviour, config keys, when
-  to build it) are listed in that file.
+- Background shell (4.11, `docs/bash.md`): two tools, the config keys and
+  the timeout behaviour are agreed; it is built as its own package any
+  time after the refactoring starts. *(settled)*
 - **D1. Clone spend.** Attribute a sub-agent's accounting records to its
   source agent's id, with the clone label as the name. *Recommended:* yes;
   cost should roll up to the agent that caused it.
@@ -1461,3 +1538,25 @@ Still open, each with my recommendation:
   changelog entry (phase 5b certainly has entries; phase 0 may). Every
   phase lands on that branch as it passes. The maintainer picks the
   version number.
+
+## 12. Progress
+
+Update this as work lands. One line per item: the commit, and anything the
+next session must know.
+
+- [ ] 0.3 maintainer answers recorded here (repository, version, SDK
+      versioning, releases, dev instance)
+- [ ] Baseline `make test` recorded for both repositories
+- [ ] Phase 0: adopt the module
+- [ ] Standards: `slog`, file-permission type
+- [ ] Phase 1: `modelspec`
+- [ ] Phase 2: `models`
+- [ ] Phase 3: `toolkit`
+- [ ] Phase 4: `discovery`
+- [ ] Phase 5a: callbacks and events in place
+- [ ] Phase 5b: cancellation
+- [ ] Phase 5c: engine moved, root package, conformance suite
+- [ ] Phase 5d: example host
+- [ ] Phase 6: `mcphost`
+- [ ] Background shell (`docs/bash.md`)
+- [ ] Alias cleanup

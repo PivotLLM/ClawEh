@@ -1,7 +1,7 @@
 # Background shell: design for a later phase
 
-Status: **design only, nothing implemented.** Written with
-`docs/agent-sdk-plan.md` (section 4.11 points here). It is self-contained:
+Status: **design agreed, nothing implemented.** Written with
+`refactor.md` in the repository root (its section 4.11 points here). It is self-contained:
 a worker can build from this file without the conversation behind it.
 Verified against ClawEh 0.6.5.
 
@@ -43,11 +43,12 @@ execution tool: background is a flag on the one tool, output is a file read
 with the ordinary file tools, and the end of a job is announced to the
 agent, not polled for.
 
-The name `shell_job` is the working choice: it names the thing the tool
-acts on. `shell_control` and `shell_status` were considered; `status`
+Agreed with the maintainer: `shell_exec` and exactly one other `shell_`
+tool. Its name, `shell_job`, is the working choice: it names the thing the
+tool acts on. `shell_control` and `shell_status` were considered; `status`
 undersells a tool that also stops jobs and sends input, and `control` hides
-that it is also how you look at them. The maintainer may still rename it;
-it is one constant.
+that it is also how you look at them. Confirm the name before the first
+release that includes it; it is one constant.
 
 Out of scope for the first version (section 8): a persistent interactive
 shell, and a terminal (PTY).
@@ -75,8 +76,8 @@ Results:
 - **Foreground, reached its timeout:** the command is **not killed**. It is
   kept as a job, and the result says so: the job id, the output so far
   (head and tail), the output file, and that `shell_job` can wait on it or
-  stop it. This replaces today's "Command timed out after 60s" for an
-  agent that has the job tool. See 7.2 for the compatibility question.
+  stop it. This replaces today's "Command timed out after 60s" (decided,
+  see 7.2).
 - **Background:** returns immediately with the job id and the path of the
   output file.
 
@@ -132,8 +133,10 @@ Each of these needs a test.
    - `/cancel all`, `agent_cancel {"all": true}` and the host's
      `CancelTask` stop them;
    - `shell_job stop` is the shell-specific way to do the same thing.
-   If this is built before the task list exists, it keeps its own job list
-   behind the same interface and is folded in later.
+   If this is built before the task list exists (refactoring phase 5b), it
+   keeps its own job list behind the same interface and is folded in then;
+   until that point `shell_job stop` and shutdown are the only ways a job
+   is stopped.
 3. **Ownership.** A job belongs to the agent that started it; a clone acts
    as its source, as for sub-agent tasks. Another agent's job id is
    "unknown".
@@ -191,14 +194,16 @@ ClawEh's `tools/shell` becomes a thin mount that supplies the config
 (patterns, limits, the working-directory rule, the child environment) and
 the notice delivery.
 
-If it is built before the SDK refactoring reaches that point, build it in
-ClawEh's `tools/shell` with the same two-layer split and no ClawEh imports
-in `proc`, so the later move is a file move.
+**How it is delivered (decided).** Because it depends only on `toolspec`,
+it is built as its own package, independently of the refactoring's
+phases, any time after the refactoring starts (the host must be on the
+consolidated module, phase 0). When it is ready the host mounts it in
+place of the current tool and **the existing `tools/shell` implementation
+is removed**; the two are not kept side by side.
 
 ## 6. Limits and configuration
 
-New keys are a released-config change and need the maintainer's approval
-before they are added. Proposed, all under `tools.exec`, each `0`/absent =
+These keys are **approved by the maintainer**. All are under `tools.exec`, each `0`/absent =
 default, negative refused at load and by `Store.Update`:
 
 | Key | Default | Meaning |
@@ -231,20 +236,15 @@ Up's per-agent tool list and in the capabilities golden file. The existing
 rule that `*` and prefix entries never include `shell_exec` covers
 `shell_job` with it.
 
-### 7.2 A behaviour change to decide
+### 7.2 Timeout behaviour (decided)
 
-Today a foreground command that runs past its timeout is killed. Under
-this design it is kept as a job. That is better for a build that needed
-ten more seconds, and worse for an operator who set a short timeout
-precisely to stop runaway commands. Options:
-
-- keep-as-job is the new default (recommended), with `max_job_seconds`
-  and `max_jobs` as the backstop, and a changelog entry saying so; or
-- a config switch `tools.exec.on_timeout` = `background` | `kill`,
-  defaulting to `kill` so nothing changes on upgrade.
-
-The maintainer decides. Either way an agent **without** `shell_job`
-(denied by `deny_tools`) keeps today's kill.
+Today a foreground command that runs past its timeout is killed. **Decided:
+it is kept as a background job instead**, with no switch to restore the
+kill. `max_job_seconds` and `max_jobs` are the backstop against runaway
+commands. This is a change on upgrade and gets a `Changed` changelog entry
+that says so and names those two keys. An agent **without** `shell_job`
+(removed by `deny_tools`) keeps today's kill, since it could never collect
+the job.
 
 ### 7.3 Visibility and records
 
@@ -254,8 +254,9 @@ The maintainer decides. Either way an agent **without** `shell_job`
   `shell_job_input`, `shell_job_stop`.
 - **Check Up:** a per-agent row for the job tool with the limits, and a
   Data row for the log folders.
-- **WebUI:** a list of running jobs per agent with a Stop button. Useful,
-  not required for the first version.
+- **WebUI:** none (decided). The agent starts a job and the agent
+  controls it; there is no operator job list or Stop button. `/cancel all`
+  remains the person's way to stop everything an agent has running.
 - **Alerts:** none. A job failing is not an outage.
 - **MCP host:** both tools are published like any other, so CLI models
   get them; `shell_job wait` must respect the MCP call's deadline.
@@ -297,12 +298,17 @@ output; the timeout behaviour per 7.2; `shell_exec` now implies
   elsewhere `shell_exec` keeps today's behaviour, and `background` and
   `shell_job` are refused with a clear message, not half-working.
 
-## 9. Open decisions
+## 9. Decisions
 
-1. The name `shell_job` (working choice) versus `shell_control` or
-   `shell_status`.
-2. Timeout behaviour: keep-as-job by default, or behind a switch (7.2).
-3. The config keys and defaults in section 6.
-4. Whether the WebUI job list is in the first version.
-5. When to build it: after the cancellation step of the refactoring (the
-   task list exists), or earlier with its own job list.
+Settled:
+
+- Two tools: `shell_exec` extended, and one new `shell_` tool.
+- A foreground command that reaches its timeout becomes a job (7.2).
+- The config keys and defaults in section 6.
+- No WebUI job list (7.3).
+- Built as an independent package against `toolspec`, any time after the
+  refactoring starts, then swapped in and the old tool removed (section 5).
+
+Open:
+
+- The new tool's final name (`shell_job` is the working choice).
