@@ -113,7 +113,9 @@ func (h *pageHarness) post(form url.Values, edit func(*http.Request)) (reply, st
 		h.t.Fatal(err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Origin", h.base)
+	// What a browser sends with this page's form: the no-referrer policy
+	// turns the Origin of a form POST into null.
+	req.Header.Set("Origin", "null")
 	if edit != nil {
 		edit(req)
 	}
@@ -186,18 +188,39 @@ func TestBrowserSetup_RefusesWrongHost(t *testing.T) {
 	}
 }
 
-func TestBrowserSetup_RefusesCrossOriginPost(t *testing.T) {
+// A browser sends "Origin: null" with this page's form, because the page's
+// referrer policy is no-referrer. Refusing it made the form unusable.
+func TestBrowserSetup_AcceptsTheFormAsABrowserSendsIt(t *testing.T) {
 	h := startPage(t)
-	for _, origin := range []string{"http://evil.example", "null", "http://localhost" + strings.TrimPrefix(h.base, "http://127.0.0.1")} {
-		resp, _ := h.post(h.form("alice", "alice's long password", "alice's long password"), func(r *http.Request) {
-			r.Header.Set("Origin", origin)
+	if resp, _ := h.get("/?code=" + url.QueryEscape(h.code)); resp.Header.Get("Referrer-Policy") != "no-referrer" {
+		t.Fatalf("Referrer-Policy = %q; this test assumes no-referrer", resp.Header.Get("Referrer-Policy"))
+	}
+	resp, body := h.post(h.form("alice", "alice's long password", "alice's long password"), func(r *http.Request) {
+		r.Header.Set("Origin", "null")
+	})
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("form with Origin null = %d %q; want 303", resp.StatusCode, body)
+	}
+	if s := h.status(); s.State != stateWorking {
+		t.Fatalf("state = %q after the form; want %q", s.State, stateWorking)
+	}
+}
+
+// Another site cannot read the page, so it cannot send the one-time code.
+func TestBrowserSetup_RefusesPostWithoutTheCode(t *testing.T) {
+	h := startPage(t)
+	for _, code := range []string{"", "wrong", h.code + "x"} {
+		form := h.form("alice", "alice's long password", "alice's long password")
+		form.Set("code", code)
+		resp, body := h.post(form, func(r *http.Request) {
+			r.Header.Set("Origin", "http://evil.example")
 		})
-		if resp.StatusCode != http.StatusForbidden {
-			t.Errorf("Origin %q = %d; want 403", origin, resp.StatusCode)
+		if resp.StatusCode != http.StatusNotFound || strings.Contains(body, "Create account") {
+			t.Errorf("POST with code %q = %d %q; want 404 without the page", code, resp.StatusCode, body)
 		}
 	}
 	if s := h.status(); s.State != stateWaiting {
-		t.Fatalf("state = %q after cross-origin POSTs; want waiting", s.State)
+		t.Fatalf("state = %q after POSTs without the code; want waiting", s.State)
 	}
 }
 
