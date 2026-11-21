@@ -66,6 +66,7 @@ package:
     asset: 'bison9-agency-macos.pkg'
     identifier: com.tenebris.claweh.pkg
     scripts: packaging/macos/scripts
+    allow_user_install: true
 
 release:
   tag:   '{version}'

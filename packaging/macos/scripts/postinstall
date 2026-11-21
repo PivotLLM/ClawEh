@@ -1,12 +1,19 @@
 #!/bin/sh
-# Runs as root from the macOS installer package. The binary sits beside this
-# script. It installs the system service for the person at the screen, who
-# creates the admin account in their browser before the service starts.
+# Runs from the macOS installer package, with the binary beside it. It
+# installs the service for the person at the screen, who creates the admin
+# account in their browser before the service starts.
 set -eu
 
 dir="$(cd "$(dirname "$0")" && pwd)"
 
-# The account the service runs as: whoever is logged in at the screen.
+# "Install for me only": Installer runs this as that person, not as root. The
+# service is theirs and runs while they are logged in.
+if [ "$(/usr/bin/id -u)" -ne 0 ]; then
+    exec "$dir/claw" install --yes --browser-setup
+fi
+
+# "Install for all users": this runs as root. The service starts with the Mac
+# and runs as whoever is logged in at the screen.
 user="$(/usr/bin/stat -f %Su /dev/console)"
 case "$user" in
     "" | root | loginwindow | _mbsetupuser)
