@@ -82,6 +82,9 @@ changes to the existing SDK packages and go in before phase 5.
   aliases. The loop is in `agent/loop`.
 - Hosts hold `agent.Agent` (the interface), never the concrete struct.
 - Model and tool lists are private; state changes only through methods.
+- Everything crossing the `Agent` interface is plain, serializable data,
+  and the host adds no new code that opens an agent's files directly
+  (4.10).
 - Follow the repository's own `CLAUDE.md` for the test gate, changelog,
   alerts table and the browser suite.
 
@@ -864,7 +867,9 @@ given. `agent.New` fails on a missing model set, a purpose with no models
 and no fallback rule, or a duplicate tool name, so a wrong setup is refused
 at construction rather than on the first turn.
 
-**Callbacks.** A non-nil replacement skips the step (as in Google's kit). The
+**Callbacks.** Only for code that must *change* a step; anything that only
+watches is an event consumer (see 4.10, point 3). A non-nil replacement
+skips the step (as in Google's kit). The
 right column is the ClawEh behaviour that becomes an implementation of the
 hook.
 
@@ -1000,6 +1005,125 @@ already import nothing from ClawEh and could become SDK packages, but each
 is a product feature with its own tools and on-disk layout; moving them is
 worth doing only when a second host wants one. Channels, routing, cron,
 audit, alerts, backup and the WebUI are ClawEh's.
+
+### 4.10 Designing for isolated execution
+
+A stated near-term goal: run an agent somewhere else, in a container,
+under another Linux account, or on another machine, with all its files and
+everything it executes contained there, while it still talks to people
+through the host. Nothing below builds that. It lists what must be true of
+the SDK so that it can be built later **without changing the SDK's public
+shape**, and each item changes something in this plan now.
+
+**The picture.** Two roles that today share one process:
+
+- the **host** (today ClawEh, tomorrow Agency): channels, routing, config,
+  the WebUI, audit, alerts, the model catalogue and its keys;
+- the **agent worker**: the loop, the tools that touch files and run
+  commands, the workspace, the conversation and memory stores.
+
+Isolation is a worker in another place, and the host holding a remote
+implementation of `agent.Agent`. The interface decision (3.1) is what
+makes that possible. The same design covers all three cases; a second
+Linux account on the same machine over a local socket is the natural
+first step.
+
+**1. Everything that crosses the `Agent` interface is plain data.**
+Messages, run options, events, outcomes, task info, and cancel causes must
+be serializable: no Go pointers, functions, channels or bare `error`
+values. Cancel causes and outcomes are enumerated codes with a message.
+This is now a rule of `agent/hook`, with a test that round-trips every
+event type through JSON. `Tools()` and `Models()` return live in-process
+handles, which is why they are optional capability interfaces: a remote
+agent simply does not offer them.
+
+**2. An agent is described by a document, built with code.** Split what
+`agent.New` receives into:
+
+- an **`AgentSpec`**: id, name, instruction, model assignments by name,
+  tool grants by name, limits, switches. Data only, versioned like the
+  model document, so the host can send it to a worker and send a new one
+  on a config change;
+- **local wiring**: tool handlers, intercepting callbacks, stores. Code,
+  which exists only where the agent runs.
+
+The functional options stay; they fill one or the other. A worker starts
+an agent from a spec it was sent plus its own wiring.
+
+**3. Observing and intercepting are different things.** This revises the
+callback table in 4.7. A callback that *changes* a step (`BeforeTool`
+refusing a call, `AfterTool` redacting a result) must run beside the loop;
+calling back across a network for every tool call is slow and has no good
+answer when the link drops. A callback that only *watches* needs no
+round trip: it is an event.
+
+- Everything the host needs to know is in the event stream: tool calls
+  with arguments and outcomes, fallbacks, compaction, text for the user,
+  files to send, usage and cost.
+- In phase 5a, ClawEh's audit rows, breadcrumbs, ForUser and media
+  publishing, the fallback notice, the compaction notice and spend
+  tracking are written as **event consumers**. Only what must alter the
+  step (secret redaction, approvals, depth limits, the low-steps note)
+  is an intercepting callback, and those would move with the worker.
+- If a remote approval is ever wanted ("ask the host before running
+  this"), it is one explicit, slow, time-limited call, not the general
+  mechanism.
+
+**4. The loop depends on interfaces, not on local objects.** It already
+takes sessions and memory through interfaces. Add:
+
+- **models:** the loop uses a small `ModelSource` interface (begin a
+  chain, call through it, read limits) that `*models.Set` satisfies. A
+  contained agent should not hold provider keys, so later a worker's
+  `ModelSource` can be a client that sends each model call to the host,
+  where the catalogue, keys, cooldown and accounting stay. Shared cooldown
+  and one accounting log come for free.
+- **host services:** what a tool needs from outside the agent (send a
+  message or file to a chat, ask another agent, schedule a job) goes
+  through one `HostServices` interface in the tool dependencies, never a
+  direct call into a host package. ClawEh's `ToolDeps` is most of the way
+  there (`Messenger`, `FileSender`, `AgentServices`); this makes it the
+  rule.
+- **media:** attachments are passed by reference with a fetch call, not
+  as paths or in-memory handles that only mean something in one process.
+
+**5. Tools already have a cross-process form: MCP.** A worker's tools run
+where the worker is. Tools that belong to the host can be offered to the
+worker as a toolset over MCP, and `mcphost` is the other direction. So
+`mcphost` (4.6) and the MCP client toolset (4.4) are the tool transport
+for isolation, not only a convenience for CLI models; the client moves
+into the SDK with phase 6 instead of "later".
+
+**6. The worker is not trusted.** Containment only means something if a
+compromised agent gains nothing by asking. Every request a worker makes
+(a model call, a host tool, a message to a chat, an ask to another agent)
+is authorized by the host against that agent's current grants, per call,
+the way the forum host already re-checks everything read from an agent's
+folder. The per-session and service tokens of the MCP host are the
+existing precedent.
+
+**What this does not solve, and is host work.** Today the host reads
+agents' files directly, and that is the larger job:
+
+- the session API and device history read the conversation store;
+- the Memory page and `claw memory` open the agent's memory database;
+- backup, permission enforcement and Check Up walk every workspace;
+- the context builder reads prompt files and skills from the workspace;
+- the forum, classifiers, folder watching and generated-image sending
+  work on workspace paths.
+
+For a remote agent each of these becomes a request to the agent
+(history, memory, export for backup, a file by reference). The SDK side
+is to give `agent.Agent` optional capability interfaces for them
+(`HistoryReader`, `Exporter`), so the host has one way to ask whether the
+agent is local or not. Converting the host's call sites is a project of
+its own, after this plan; the rule until then is **add no new code in the
+host that opens an agent's files directly**.
+
+**Also true but outside the SDK:** a CLI model runs as a subprocess of the
+worker and brings its own login with it, so those credentials sit inside
+the sandbox; and `shell_exec` today runs as the service account, which a
+worker under its own account fixes without any further design.
 
 ## 5. Cancellation
 
@@ -1280,6 +1404,11 @@ needs them. The `slog` conversion and the permission type are done on the
 existing SDK packages before phase 5, as a small change of their own. The
 single model-caller follows phase 2.
 
+**After this plan — isolation (4.10):** a worker mode for the host binary,
+the link between host and worker, a remote `agent.Agent`, and converting
+the host's direct reads of agent files. Phases 0–6 are shaped so that none
+of it changes the SDK's public interface.
+
 **Later, if a second host needs them:** `agentreg` and the task store as SDK
 packages; the upstream-MCP client as `toolkit/mcpclient`.
 
@@ -1367,8 +1496,17 @@ Settled in review:
 - Models and tools each have a run-time enable/disable switch, default
   enabled, with private lists changed only through methods (4.4a).
 
+- The SDK is shaped for isolated execution later: plain data across the
+  `Agent` interface, an agent spec document, events for observing and
+  callbacks only for intercepting, and interfaces for models and host
+  services (4.10).
+
 Still open, each with my recommendation:
 
+- **D20. Model calls for a contained agent** (4.10): proxied through the
+  host so the worker holds no provider keys (*recommended*), or the worker
+  holds keys for its own models. Only the `ModelSource` interface is
+  needed now; the choice can wait.
 - **D1. Clone spend.** Attribute a sub-agent's accounting records to its
   source agent's id, with the clone label as the name. *Recommended:* yes;
   cost should roll up to the agent that caused it.
