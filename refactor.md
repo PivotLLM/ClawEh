@@ -129,7 +129,7 @@ is the exception: it depends only on `toolspec`.
   in 5.5 and `docs/bash.md`. Anything else that would break an install:
   stop and ask.
 - `tests/capabilities/testdata/effective.golden` changes exactly twice:
-  once for `agent_cancel`, once for `shell_job`. Never regenerate it to
+  once for `agent_cancel`, once for `shell_ctrl`. Never regenerate it to
   make the gate pass.
 - The SDK never imports a host. Every SDK package has an
   `imports_test.go` guard, and a new dependency is added to it on purpose.
@@ -1108,12 +1108,14 @@ be picked up by another worker at any time after the refactoring starts,
 since it depends only on `toolspec`. In short:
 
 - two tools in total: `shell_exec` gains `timeout_seconds` and
-  `background`, and one new tool, `shell_job`, lists, waits on, sends
+  `background`, and one new tool, `shell_ctrl`, lists, waits on, sends
   input to and stops background jobs;
 - a job's output is a file read with the ordinary file tools, and the
   agent is told when a job ends;
-- a job is a task, so `/cancel` leaves it running and `/cancel all`,
-  `agent_cancel` and `CancelTask` stop it (section 5);
+- the host tracks a job in the agent's task list, so `/cancel` leaves it
+  running and `/cancel all` and `CancelTask` stop it (section 5); the
+  agent manages its jobs only with `shell_ctrl`, and the sub-agent tools
+  (`agent_status`, `agent_list`, `agent_cancel`) never show or stop one;
 - it is not part of the agent core: a process manager plus a tool
   provider, in the SDK repository as `toolbox/shell`, depending only on
   `toolspec` and the standard library.
@@ -1493,8 +1495,9 @@ Settled in review:
 
 Still open, each with my recommendation:
 
-- Background shell (4.11, `docs/bash.md`): two tools, the config keys and
-  the timeout behaviour are agreed; it is built as its own package any
+- Background shell (4.11, `docs/bash.md`): two tools, `shell_exec` and
+  `shell_ctrl`, the config keys and the timeout behaviour are agreed; the
+  sub-agent task tools are not changed or reused for shell jobs; it is built as its own package any
   time after the refactoring starts. *(settled)*
 - **D1. Clone spend.** Attribute a sub-agent's accounting records to its
   source agent's id, with the clone label as the name. *Recommended:* yes;

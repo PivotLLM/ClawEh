@@ -35,7 +35,7 @@ the deny, allow and custom-allow patterns (`guardCommand`).
 | Tool | Status | Purpose |
 | --- | --- | --- |
 | `shell_exec` | existing, extended | run a command, in the foreground or as a background job |
-| `shell_job` | new | list, wait on, send input to, or stop a background job |
+| `shell_ctrl` | new | list, wait on, send input to, or stop a background job |
 
 The tool count is deliberate. Every tool is described to the model on every
 request, so the design follows the pattern Claude Code uses for its
@@ -43,12 +43,10 @@ execution tool: background is a flag on the one tool, output is a file read
 with the ordinary file tools, and the end of a job is announced to the
 agent, not polled for.
 
-Agreed with the maintainer: `shell_exec` and exactly one other `shell_`
-tool. Its name, `shell_job`, is the working choice: it names the thing the
-tool acts on. `shell_control` and `shell_status` were considered; `status`
-undersells a tool that also stops jobs and sends input, and `control` hides
-that it is also how you look at them. Confirm the name before the first
-release that includes it; it is one constant.
+Decided by the maintainer: the two tools are **`shell_exec`** and
+**`shell_ctrl`**. The sub-agent task tools (`agent_status`, `agent_list`,
+`agent_cancel`) are for sub-agents and do not change; shell jobs are not
+folded into them.
 
 Out of scope for the first version (section 8): a persistent interactive
 shell, and a terminal (PTY).
@@ -75,13 +73,13 @@ Results:
   elided, and names the file holding the whole of it.
 - **Foreground, reached its timeout:** the command is **not killed**. It is
   kept as a job, and the result says so: the job id, the output so far
-  (head and tail), the output file, and that `shell_job` can wait on it or
+  (head and tail), the output file, and that `shell_ctrl` can wait on it or
   stop it. This replaces today's "Command timed out after 60s" (decided,
   see 7.2).
 - **Background:** returns immediately with the job id and the path of the
   output file.
 
-### 3.2 `shell_job`
+### 3.2 `shell_ctrl`
 
 One tool with an `action`, in the style of the existing `ccv3` tool.
 
@@ -126,16 +124,19 @@ Each of these needs a test.
 1. **A job is not tied to the turn that started it.** It runs on its own
    context. The turn ending, or the person interrupting it, does not stop
    the job.
-2. **A job is a task.** It is registered in the agent's task list (plan
-   section 5), so:
+2. **A job is tracked by the host, but it is not a sub-agent.** It is
+   registered in the agent's task list (plan section 5) so the host can
+   see and stop it, and:
    - `/cancel` leaves jobs running, and its reply counts them among the
-     background tasks still running;
-   - `/cancel all`, `agent_cancel {"all": true}` and the host's
-     `CancelTask` stop them;
-   - `shell_job stop` is the shell-specific way to do the same thing.
+     background work still running;
+   - `/cancel all` and the host's `CancelTask` stop them, since "all"
+     means everything the agent has running;
+   - **the agent itself manages jobs only with `shell_ctrl`.** The
+     sub-agent tools (`agent_status`, `agent_list`, `agent_cancel`) list
+     and cancel sub-agents only; they never show or stop a shell job.
    If this is built before the task list exists (refactoring phase 5b), it
    keeps its own job list behind the same interface and is folded in then;
-   until that point `shell_job stop` and shutdown are the only ways a job
+   until that point `shell_ctrl stop` and shutdown are the only ways a job
    is stopped.
 3. **Ownership.** A job belongs to the agent that started it; a clone acts
    as its source, as for sub-agent tasks. Another agent's job id is
@@ -227,14 +228,14 @@ running for weeks, so they are not optional.
 
 ### 7.1 Granting
 
-An agent granted `shell_exec` gets `shell_job`; an agent without it gets
-neither. `shell_job` is registered together with `shell_exec` and is not a
+An agent granted `shell_exec` gets `shell_ctrl`; an agent without it gets
+neither. `shell_ctrl` is registered together with `shell_exec` and is not a
 separate entry in the `tools` list, the Agents page or `CODING_TOOLS`;
 `deny_tools` can still remove it. This is the same rule already decided
 for `agent_spawn` → `agent_cancel`, and it is shown the same way: on Check
 Up's per-agent tool list and in the capabilities golden file. The existing
 rule that `*` and prefix entries never include `shell_exec` covers
-`shell_job` with it.
+`shell_ctrl` with it.
 
 ### 7.2 Timeout behaviour (decided)
 
@@ -242,7 +243,7 @@ Today a foreground command that runs past its timeout is killed. **Decided:
 it is kept as a background job instead**, with no switch to restore the
 kill. `max_job_seconds` and `max_jobs` are the backstop against runaway
 commands. This is a change on upgrade and gets a `Changed` changelog entry
-that says so and names those two keys. An agent **without** `shell_job`
+that says so and names those two keys. An agent **without** `shell_ctrl`
 (removed by `deny_tools`) keeps today's kill, since it could never collect
 the job.
 
@@ -250,8 +251,8 @@ the job.
 
 - **Audit:** a row for every start (command, working directory,
   background or not), every `input` (length, not content) and every stop,
-  with the turn id where there is one. Kinds proposed: `shell_job_start`,
-  `shell_job_input`, `shell_job_stop`.
+  with the turn id where there is one. Kinds proposed: `shell_ctrl_start`,
+  `shell_ctrl_input`, `shell_ctrl_stop`.
 - **Check Up:** a per-agent row for the job tool with the limits, and a
   Data row for the log folders.
 - **WebUI:** none (decided). The agent starts a job and the agent
@@ -259,9 +260,9 @@ the job.
   remains the person's way to stop everything an agent has running.
 - **Alerts:** none. A job failing is not an outage.
 - **MCP host:** both tools are published like any other, so CLI models
-  get them; `shell_job wait` must respect the MCP call's deadline.
+  get them; `shell_ctrl wait` must respect the MCP call's deadline.
 - **Unattended callers:** classifiers and cron watch probes run tools
-  through `ExecuteUnattended`. `shell_job` and `shell_exec` with
+  through `ExecuteUnattended`. `shell_ctrl` and `shell_exec` with
   `background` are refused there: nothing would ever collect the job.
 
 ### 7.4 Changelog and tests
@@ -269,18 +270,18 @@ the job.
 Operator-visible, so it needs entries under `Added` (the tool, the new
 `shell_exec` arguments, the config keys) and `Changed` (head-and-tail
 output; the timeout behaviour per 7.2; `shell_exec` now implies
-`shell_job`).
+`shell_ctrl`).
 
 - Unit tests on a fake clock for each rule in section 4, plus: output cap
   keeps head and tail; `until` matching; `wait` on an ended job; stop of a
   job with children; limits refused with a clear message; `lost` after a
   simulated restart.
-- A probe case in `tests/test_mcpserver.sh` for `shell_job` and for
+- A probe case in `tests/test_mcpserver.sh` for `shell_ctrl` and for
   `shell_exec` with `background`.
 - An extension of `tests/test_coding_harness.sh`: start a job that writes
   lines over a few seconds, read its log with the file tools, wait with
   `until`, stop it, and check the file modes.
-- The capabilities golden file changes once, for `shell_job`.
+- The capabilities golden file changes once, for `shell_ctrl`.
 - `manual/` page for the shell tools; `CLAUDE.md` "Shell guard" and
   "Shell permission" passages updated in the same change.
 
@@ -296,7 +297,7 @@ output; the timeout behaviour per 7.2; `shell_exec` now implies
   `shell_exec`'s background mode and strip control codes from the log.
 - **Windows.** Process groups and signals differ. Build Unix first;
   elsewhere `shell_exec` keeps today's behaviour, and `background` and
-  `shell_job` are refused with a clear message, not half-working.
+  `shell_ctrl` are refused with a clear message, not half-working.
 
 ## 9. Decisions
 
@@ -308,7 +309,6 @@ Settled:
 - No WebUI job list (7.3).
 - Built as an independent package against `toolspec`, any time after the
   refactoring starts, then swapped in and the old tool removed (section 5).
+- The new tool is named `shell_ctrl`.
 
-Open:
-
-- The new tool's final name (`shell_job` is the working choice).
+Nothing is open.
