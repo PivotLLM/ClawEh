@@ -72,6 +72,54 @@ deliberate exception is the cancellation work in phase 5b, which adds a tool
 and changes what `/cancel` does to waiting sub-agents; it is called out
 there with its changelog entries.
 
+## 1a. Destination: Bison9 Agency
+
+Decided: the product becomes **Bison9 Agency**, in a new repository
+`agency` under Bison9 (module path `go.bison9.com/agency`), beside the SDK
+repository `agent`. The code is not copied yet; a few changes are expected
+on `main` before the release it will be copied from. This document still
+says "ClawEh" for the host throughout; read it as "the host, today ClawEh,
+tomorrow Agency".
+
+When the copy is made:
+
+- **Push the repository with its history**; do not copy files. Blame and
+  bisect matter during a refactoring of this size.
+- **Do it before phase 0**, so every phase is written once against the
+  final import paths. The module-path change is one mechanical commit.
+- **The product name is an edit to `app/app.go`** (the existing rule), and
+  both product-name guards keep enforcing that.
+- **Nothing an install depends on changes in the move:** the `claw` binary
+  name, `CLAW_*` variables, the `.claw` data directory, the service name,
+  cookies, the `mcp__claw__` prefix and the other fixed identifiers in
+  `global/identifiers.go`. Renaming any of them is a separate, later
+  decision with its own migration and changelog entry.
+- **Open, for the maintainer:** where releases are published and how
+  existing installs' `claw upgrade` (which looks in the current release
+  repository) finds them; and whether the old repository is archived,
+  mirrored or kept as the release source for a transition period.
+
+## 1b. How the work will be run
+
+The maintainer intends to have one coordinating session hand work to many
+sub-agents on a cheaper model. What that suits and what it does not:
+
+- **Parallel well:** the mechanical work. The module-path change, the
+  `slog` conversion across the SDK's ~36 files, replacing aliases with
+  direct imports, moving a package with its tests, writing the per-rule
+  cancellation tests, documentation. Also the SDK side and the host side of
+  one phase, which are different repositories.
+- **Not parallel:** the phases themselves (each builds on the one before),
+  and phase 5a, where the loop is restructured in place. That is one piece
+  of reasoning about one set of files; splitting it produces conflicts,
+  not speed.
+- **Rules for the fan-out:** one worktree per sub-agent; each brief names
+  its files, its exit test, and what it must not touch; the coordinator
+  reviews every diff and runs the full gate itself before anything lands,
+  since a sub-agent's report is a summary, not proof. The integration
+  scripts bind ports and are run one at a time by the coordinator, never
+  by sub-agents in parallel.
+
 ## 2. What exists today (verified)
 
 ### The SDK repository (`go.bison9.com/agent`, branch `dev/0.0.1`)
