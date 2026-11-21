@@ -44,13 +44,16 @@
   Decisions stored before this version have the count only.
 - **A macOS installer package.** Releases now include
   `bison9-agency-macos.pkg`, one signed and notarized installer for Apple
-  silicon and Intel Macs, for installing without a terminal. Opening it asks
-  for the Mac's administrator password, installs ClawEh as a system service
-  that starts at boot (running as the account that ran the installer, never
-  as root), and opens a page in the default browser to create the admin
-  account. It runs `claw install --browser-setup`, described in the next
-  entry; the archives and the one-line installer are unchanged. To remove
-  what it installed, run `sudo claw uninstall`.
+  silicon and Intel Macs, for installing without a terminal. It offers two
+  choices. "Install for all users of this computer" asks for the Mac's
+  administrator password and installs ClawEh as a system service that starts
+  at boot. "Install for me only" needs no administrator password and installs
+  a service that runs while that account is logged in. Either way ClawEh runs
+  as the account that ran the installer, never as root, and the installer
+  opens a page in the default browser to create the admin account. It runs
+  `claw install --browser-setup`, described in the next entry; the archives
+  and the one-line installer are unchanged. To remove what it installed, run
+  `sudo claw uninstall` (`claw uninstall` after "Install for me only").
 - **`claw install --browser-setup` asks for the admin account in the
   browser.** When no account exists, the installer serves a one-time page on
   this machine (127.0.0.1 only) asking for the username and the password

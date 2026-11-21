@@ -17,15 +17,17 @@ There are three ways to install from a terminal, and an installer package for a 
 No terminal is needed.
 
 1. Download [`bison9-agency-macos.pkg`](https://github.com/PivotLLM/ClawEh/releases/latest/download/bison9-agency-macos.pkg) and open it. It works on Apple silicon and Intel Macs.
-2. Follow the installer. It asks for your Mac's administrator password.
+2. Follow the installer. It asks who to install for:
+   - **Install for all users of this computer**: ClawEh starts when the Mac starts, without anyone logging in. The installer asks for your Mac's administrator password.
+   - **Install for me only**: ClawEh runs while you are logged in. No administrator password is needed.
 3. Your browser opens a page that asks for a username and a password. This is the admin account you sign in to ClawEh with. The page waits 5 minutes.
 4. The page takes you to the WebUI. Sign in with the account you just created.
 
-ClawEh is installed as a system service: it starts when the Mac starts, without anyone logging in, and runs as the Mac account that ran the installer, never as root. The data directory is `~/.claw` in that account.
+With either choice ClawEh runs as the Mac account that ran the installer, never as root, and its data directory is `~/.claw` in that account.
 
 If the account is not created within 5 minutes, the installer says the installation failed. Open the package again.
 
-To upgrade, open a newer package. It keeps your account and data and does not show the page. A Mac where ClawEh was installed without `sudo` (a user service) is refused: remove that one first with `claw uninstall`.
+To upgrade, open a newer package and make the same choice as the first time. It keeps your account and data and does not show the page. With the other choice the installer says the installation failed and changes nothing. To switch, [remove the service](#removing-the-service) first, then open the package again.
 
 To remove ClawEh, see [Removing the service](#removing-the-service).
 
@@ -167,7 +169,7 @@ You can also run `claw` in a terminal. It starts ClawEh in the foreground until 
 
 ## Removing the service
 
-`claw uninstall` stops and removes the service. The binary and the data directory are left in place. Use `sudo` if the service was installed with `sudo`.
+`claw uninstall` stops and removes the service. The binary and the data directory are left in place. Use `sudo` if the service was installed with `sudo`, or with the Mac installer package for all users.
 
 ## Next step
 

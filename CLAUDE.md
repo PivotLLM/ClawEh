@@ -317,9 +317,12 @@ production instance directly; test against a dev instance.
 **macOS installer package:** a release also carries `bison9-agency-macos.pkg`
 (`package.macos_pkg` in `b9.yaml`; the name is a contract, the manual and
 README link to it). It has no payload: it holds one universal `claw` beside
-`packaging/macos/scripts/postinstall`, which runs as root and calls
-`claw install --yes --browser-setup --user <the person at the screen>`, so
-everything the package does is what `claw install` does. Every file in
+`packaging/macos/scripts/postinstall`, which calls
+`claw install --yes --browser-setup`: as root with
+`--user <the person at the screen>` when the person chose "Install for all
+users of this computer", and as that person, without root, when they chose
+"Install for me only" (offered because of `allow_user_install` in `b9.yaml`).
+So everything the package does is what `claw install` does. Every file in
 `packaging/macos/scripts` must be committed, a regular file, and free of
 secrets; the script's output goes to the Mac's install log, which other
 accounts can read. macOS kills a package's script after 10 minutes, which is
