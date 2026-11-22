@@ -23,6 +23,8 @@ No terminal is needed.
 3. Your browser opens a page that asks for a username and a password. This is the admin account you sign in to ClawEh with. The page waits 5 minutes.
 4. The page takes you to the WebUI. Sign in with the account you just created.
 
+The installer also adds **Bison9 Agency** to Applications. Open it to get back to the WebUI. After **Install for me only** it is in the Applications folder inside your home folder; Spotlight finds it.
+
 With either choice ClawEh runs as the Mac account that ran the installer, never as root, and its data directory is `~/.claw` in that account.
 
 If the account is not created within 5 minutes, the installer says the installation failed. Open the package again.
@@ -127,6 +129,7 @@ It also:
 - creates the data directory, `~/.claw` by default (`CLAW_HOME` overrides it; an existing `/opt/claw` is used if present);
 - writes a complete `config.json` there on first start;
 - creates an `openclaw` link next to `claw`, which the Rabbit R1 needs (see [Devices](../channels/devices.md));
+- on a Mac, adds **Bison9 Agency** to Applications, which opens the WebUI in your browser: `/Applications` for a system service, `~/Applications` for a user service;
 - on an `/opt/claw` install whose binary was in `/opt/claw` itself, names the old `/opt/claw/claw` and `/opt/claw/openclaw`, which are no longer used and can be removed;
 - prints the addresses where the WebUI can be opened.
 
@@ -142,6 +145,8 @@ By default ClawEh listens on:
 - `https://<this machine>:18443/` — HTTPS on every interface, with a self-signed certificate. Your browser warns about it once.
 
 Other machines are refused until you allow their network, even over HTTPS (see [HTTPS and certificates](../admin/https.md)). `claw status` prints the current addresses at any time.
+
+On a Mac, **Bison9 Agency** in Applications opens the WebUI in your browser, and so does `claw webui`.
 
 ## Installing on a headless or remote host
 
@@ -169,7 +174,7 @@ You can also run `claw` in a terminal. It starts ClawEh in the foreground until 
 
 ## Removing the service
 
-`claw uninstall` stops and removes the service. The binary and the data directory are left in place. Use `sudo` if the service was installed with `sudo`, or with the Mac installer package for all users.
+`claw uninstall` stops and removes the service, and on a Mac removes **Bison9 Agency** from Applications. The binary and the data directory are left in place. Use `sudo` if the service was installed with `sudo`, or with the Mac installer package for all users.
 
 ## Next step
 

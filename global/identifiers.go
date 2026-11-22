@@ -68,4 +68,14 @@ const (
 	// SelfSignedFallbackCN is the common name of a generated self-signed
 	// certificate that has no host name or address to carry.
 	SelfSignedFallbackCN = "claw"
+
+	// MacAppName is the name of the app `install` adds to Applications on
+	// macOS; its folder is MacAppName + ".app". `uninstall` and a later
+	// `install` look for it by this name, so it does not follow the product's
+	// label.
+	MacAppName = "Bison9 Agency"
+
+	// MacAppBundleID is that app's bundle identifier; `install` and
+	// `uninstall` replace or remove only a bundle that carries it.
+	MacAppBundleID = "com.tenebris.claweh.app"
 )

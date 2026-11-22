@@ -7,6 +7,7 @@ package main
 
 import (
 	"os"
+	"runtime"
 
 	"github.com/spf13/cobra"
 
@@ -70,6 +71,10 @@ func NewClawCommand() *cobra.Command {
 		upgrade.NewUpgradeCommand(),
 		version.NewVersionCommand(),
 	)
+	// `webui` is what the macOS app runs; elsewhere there is no app.
+	if runtime.GOOS == "darwin" {
+		cmd.AddCommand(install.NewWebUICommand())
+	}
 
 	return cmd
 }

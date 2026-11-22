@@ -2,9 +2,11 @@ package main
 
 import (
 	"os"
+	"runtime"
 	"slices"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -60,6 +62,10 @@ func TestNewClawCommand(t *testing.T) {
 		"upgrade",
 		"version",
 	}
+	// `webui` is registered on macOS only.
+	if runtime.GOOS == "darwin" {
+		allowedCommands = append(allowedCommands, "webui")
+	}
 
 	subcommands := cmd.Commands()
 	assert.Len(t, subcommands, len(allowedCommands))
@@ -70,6 +76,8 @@ func TestNewClawCommand(t *testing.T) {
 
 		assert.False(t, subcmd.Hidden)
 	}
+	hasWebUI := slices.ContainsFunc(subcommands, func(c *cobra.Command) bool { return c.Name() == "webui" })
+	assert.Equal(t, runtime.GOOS == "darwin", hasWebUI, "webui is registered on macOS and nowhere else")
 }
 
 func TestUpdateAlias(t *testing.T) {

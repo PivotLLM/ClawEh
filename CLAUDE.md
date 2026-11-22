@@ -230,7 +230,8 @@ service, launchd label, `/opt/claw`, log and lock file names, the release
 repository, the Maestro host model label `claw`, the folder-watch marker
 header, the shell-rc marker `install` writes, the default agent ID `claw`
 (a directory name and routing key; its display name is the short name), the
-self-signed certificate's fallback CN — are defined once in
+self-signed certificate's fallback CN, the name and bundle identifier of the
+app `install` adds to Applications on macOS — are defined once in
 `global/identifiers.go`. Anything written to disk or matched later uses one
 of these, never `ShortName()` or `BinaryName()`.
 
@@ -330,6 +331,33 @@ why `admin.BrowserSetupLimit` is 5 minutes: do not raise it past what leaves
 room for the service to start. `claw-auth` is not in the package
 (`packages: [per_platform]`). The package can only be tested by opening it on
 a Mac; see `manual/getting-started/install.md`.
+
+**macOS Applications icon:** on macOS `claw install` writes
+`Bison9 Agency.app` (`global.MacAppName`; `internal/install/macapp.go`) into
+`/Applications` in system mode and `~/Applications` in user mode, after the
+service is registered, and `claw uninstall` removes it. Both replace or remove
+only a bundle (a real folder, never a link) whose `Info.plist` gives
+`global.MacAppBundleID` as its `CFBundleIdentifier`; anything else at that path
+is left alone. In system mode root writes into `/Applications`, which the
+admin group can also write to, so the bundle is built in a private temp folder
+there through an `os.Root` checked to be that folder, and renamed into place:
+never write, chmod or mkdir by path inside the bundle. A failure to write it is
+a warning, never a failed install, and leaves an earlier app as it was. It is not a compiled or signed program, so a release has nothing
+extra to sign: its executable is a shell script that runs
+`<installed binary> webui` with `CLAW_HOME` set, and its icon is
+`internal/install/macapp/AppIcon.icns`, embedded in the binary and rebuilt
+from the WebUI's 512-pixel logo by `packaging/macos/make-icon.sh` (run it on a
+Mac after the logo changes and commit the result). `claw webui`
+(`internal/install/webui.go`, registered in `main.go` on macOS only) waits up
+to `launcherWait` (10 s) for `/health`, then opens the local HTTP address in
+the default browser; when the service does not answer it returns
+"<short name> is not running." and, without a terminal, also shows that in a
+dialog. The address comes from `config.ReadGateway` (the file's `gateway`
+block over the defaults, like `config.ReadPermissions`: no secret reference is
+resolved and no environment override applied, because an app started from
+Finder has none of the shell's environment), through `installedGateway`, which
+the installer's own summary and wait use too; a file that cannot be read gives
+the default address. It never creates or seeds anything.
 
 **Vulnerability gate and `b9.yaml`:** `make govulncheck` (part of `make test`)
 is `go run go.bison9.com/vulncheck/cmd/vulncheck@latest .` (`VULNCHECK` in

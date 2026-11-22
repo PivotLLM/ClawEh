@@ -104,7 +104,7 @@ func (bs *browserSetup) ensureAccount(opts admin.EnsureOptions, tu *TargetUser) 
 // whether the WebUI answered.
 func (bs *browserSetup) finish(ctx context.Context, page *admin.BrowserSetup, clawHome string) bool {
 	address := webUIAddress(installedGateway(clawHome))
-	answered := bs.waitForWebUI(ctx, address)
+	answered := waitForWebUI(ctx, bs.clock, bs.probe, address, webUIWait)
 	if answered {
 		page.Started(address)
 	} else {
@@ -115,18 +115,18 @@ func (bs *browserSetup) finish(ctx context.Context, page *admin.BrowserSetup, cl
 }
 
 // waitForWebUI reports whether the WebUI at address answers its health
-// check within webUIWait.
-func (bs *browserSetup) waitForWebUI(ctx context.Context, address string) bool {
+// check, asked with probe, within wait on clk (nil means the system clock).
+func waitForWebUI(ctx context.Context, clk clock.Clock, probe func(context.Context, string) error, address string, wait time.Duration) bool {
 	healthURL, err := url.JoinPath(address, "health")
 	if err != nil {
 		return false
 	}
-	clk := clock.Or(bs.clock)
-	waitCtx, cancel := clk.WithTimeout(ctx, webUIWait)
+	clk = clock.Or(clk)
+	waitCtx, cancel := clk.WithTimeout(ctx, wait)
 	defer cancel()
 	for {
 		// Probe on ctx, not waitCtx: a test clock's deadline is not wall time.
-		if bs.probe(ctx, healthURL) == nil {
+		if probe(ctx, healthURL) == nil {
 			return true
 		}
 		select {
@@ -206,15 +206,18 @@ func appleScriptString(s string) string {
 }
 
 // installedGateway is the gateway config of the install, or the defaults
-// when config.json cannot be read (a fresh install has none yet).
+// when config.json cannot be read (a fresh install has none yet; another
+// account on the Mac cannot read the data folder). Only the gateway block is
+// read, so a secret reference the caller's environment cannot resolve does
+// not hide the configured port.
 func installedGateway(clawHome string) config.GatewayConfig {
-	gw := config.DefaultConfig().Gateway
 	cfgPath := internal.GetConfigPath()
 	if clawHome != "" {
 		cfgPath = filepath.Join(clawHome, "config.json")
 	}
-	if cfg, err := config.LoadConfig(cfgPath); err == nil {
-		gw = cfg.Gateway
+	gw, err := config.ReadGateway(cfgPath)
+	if err != nil {
+		return config.DefaultConfig().Gateway
 	}
 	return gw
 }

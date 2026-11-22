@@ -78,6 +78,8 @@ func NewInstallCommand() *cobra.Command {
 			"    • Linux: registers a systemd system service (/etc/systemd/system/claw.service)\n" +
 			"    • macOS: registers a launchd LaunchDaemon (/Library/LaunchDaemons/com.pivotllm.claweh.plist)\n" +
 			"    • Binary copied to /usr/local/bin\n\n" +
+			"On macOS it also adds \"" + global.MacAppName + "\" to Applications, which opens the WebUI in your\n" +
+			"browser; `" + app.BinaryName() + " uninstall` removes it.\n\n" +
 			"The WebUI requires an admin login. If <CLAW_HOME>/credentials.json does not exist, the\n" +
 			"installer creates the account before starting the service: from CLAW_ADMIN_USER and\n" +
 			"CLAW_ADMIN_PASSWORD when both are exported, else by prompting on the terminal (/dev/tty\n" +
@@ -368,6 +370,9 @@ func runInstall(host string, port int, allowedCIDRs, targetUser, customBinDir st
 	fmt.Printf("  Target Binary:   %s\n", targetBin)
 	fmt.Printf("  Alias Symlink:   %s -> %s\n", filepath.Join(binDir, openClawAlias), global.InstalledBinaryName)
 	fmt.Printf("  Service File:    %s\n", serviceFilePath)
+	if runtime.GOOS == "darwin" {
+		fmt.Printf("  App Icon:        %s\n", macAppPath(applicationsDir(tu)))
+	}
 	fmt.Println()
 
 	confirmed, err := confirmPrompt("Do you want to proceed with installation?", autoYes)
@@ -441,6 +446,15 @@ func runInstall(host string, port int, allowedCIDRs, targetUser, customBinDir st
 		return provErr
 	}
 	fixOwnership(filepath.Join(clawHome, "logs"), tu)
+
+	// 5. Add the app that opens the WebUI to Applications (macOS).
+	if runtime.GOOS == "darwin" {
+		if bundle, appErr := installMacApp(applicationsDir(tu), targetBin, clawHome); appErr != nil {
+			fmt.Printf("Warning: could not add the Applications icon (%v).\n", appErr)
+		} else {
+			fmt.Printf("Added to Applications: %s\n", bundle)
+		}
+	}
 
 	if notAnswering {
 		fmt.Printf("\nInstalled. %s has not answered yet.\n", app.ShortName())
@@ -616,6 +630,11 @@ func runUninstall(targetUser string, autoYes bool) error {
 	fmt.Printf("\n%s Uninstallation Summary:\n", app.Name())
 	fmt.Printf("  Platform:     %s (%s)\n", runtime.GOOS, serviceManagerName())
 	fmt.Printf("  Target:       %s\n", serviceDesc)
+	if runtime.GOOS == "darwin" {
+		if bundle := macAppPath(applicationsDir(tu)); isOurMacApp(bundle) {
+			fmt.Printf("  App Icon:     %s\n", bundle)
+		}
+	}
 	fmt.Printf("  Action:       Stop service, disable autostart, and remove service file.\n")
 	fmt.Printf("  Note:         Installed binary and data in %s will NOT be deleted.\n\n", dataDirectory)
 
@@ -633,6 +652,11 @@ func runUninstall(targetUser string, autoYes bool) error {
 	case "darwin":
 		if err := uninstallLaunchd(tu); err != nil {
 			return fmt.Errorf("uninstalling launchd service: %w", err)
+		}
+		if removed, appErr := uninstallMacApp(applicationsDir(tu)); appErr != nil {
+			fmt.Printf("Warning: could not remove the Applications icon (%v).\n", appErr)
+		} else if removed != "" {
+			fmt.Printf("Removed from Applications: %s\n", removed)
 		}
 	}
 

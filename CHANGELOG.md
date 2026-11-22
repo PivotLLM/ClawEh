@@ -54,6 +54,15 @@
   `claw install --browser-setup`, described in the next entry; the archives
   and the one-line installer are unchanged. To remove what it installed, run
   `sudo claw uninstall` (`claw uninstall` after "Install for me only").
+- **On a Mac, `claw install` adds an app to Applications.** "Bison9 Agency"
+  opens the WebUI in the default browser, so there is a way back to it
+  without remembering the address. It is in `/Applications` for a system
+  service ("Install for all users of this computer" in the installer package)
+  and in `~/Applications` for a user service ("Install for me only").
+  `claw uninstall` removes it. An existing install gets it the next time
+  `claw install` is run. The app runs the new command `claw webui`, on macOS
+  only, which waits up to 10 seconds for ClawEh to answer and otherwise says
+  that it is not running.
 - **`claw install --browser-setup` asks for the admin account in the
   browser.** When no account exists, the installer serves a one-time page on
   this machine (127.0.0.1 only) asking for the username and the password
@@ -141,6 +150,13 @@
 
 ### Fixed
 
+- **`claw install` shows the configured WebUI addresses when the
+  configuration cannot be loaded in full.** The summary at the end of an
+  install fell back to the default port when `config.json` named a secret
+  through an environment variable the installer's shell did not have. It now
+  reads only the saved `gateway` block. For the same reason, `CLAW_GATEWAY_*`
+  variables set only in the installer's shell no longer change that summary;
+  the service never received them.
 - **A valid service token is no longer refused just after a start or a
   configuration reload.** The MCP host opened its port before it had loaded
   the tokens issued with the `token` command, so a client calling in that

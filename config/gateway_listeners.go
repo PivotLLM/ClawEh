@@ -4,7 +4,9 @@
 package config
 
 import (
+	"encoding/json"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 )
@@ -235,4 +237,26 @@ func (g GatewayConfig) Listeners() ListenerSettings {
 		s.KeyFile = strings.TrimSpace(g.TLS.KeyFile)
 	}
 	return s
+}
+
+// ReadGateway returns the gateway block of the config file at path laid over
+// the built-in defaults, for a command that needs the listeners but must not
+// load the whole config (which resolves secret references the command's
+// environment may not have, and validates the rest). Environment overrides
+// are not applied. A missing file gives the defaults.
+func ReadGateway(path string) (GatewayConfig, error) {
+	doc := struct {
+		Gateway GatewayConfig `json:"gateway"`
+	}{Gateway: DefaultConfig().Gateway}
+	data, err := os.ReadFile(path) //nolint:gosec // the config path the caller resolved
+	if err != nil {
+		if os.IsNotExist(err) {
+			return doc.Gateway, nil
+		}
+		return GatewayConfig{}, err
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return GatewayConfig{}, err
+	}
+	return doc.Gateway, nil
 }
