@@ -42,6 +42,42 @@
   number of items) and `only_unknown` (the items that cited an unknown label
   and no rule; `unknown` minus `only_unknown` cited a rule as well).
   Decisions stored before this version have the count only.
+- **A macOS installer package.** Releases now include
+  `bison9-agency-macos.pkg`, one signed and notarized installer for Apple
+  silicon and Intel Macs, for installing without a terminal. It offers two
+  choices. "Install for all users of this computer" asks for the Mac's
+  administrator password and installs ClawEh as a system service that starts
+  at boot. "Install for me only" needs no administrator password and installs
+  a service that runs while that account is logged in. Either way ClawEh runs
+  as the account that ran the installer, never as root, and the installer
+  opens a page in the default browser to create the admin account. It runs
+  `claw install --browser-setup`, described in the next entry; the archives
+  and the one-line installer are unchanged. To remove what it installed, run
+  `sudo claw uninstall` (`claw uninstall` after "Install for me only").
+- **On a Mac, `claw install` adds an app to Applications.** "Bison9 Agency"
+  opens the WebUI in the default browser, so there is a way back to it
+  without remembering the address. It is in `/Applications` for a system
+  service ("Install for all users of this computer" in the installer package)
+  and in `~/Applications` for a user service ("Install for me only").
+  `claw uninstall` removes it. An existing install gets it the next time
+  `claw install` is run. The app runs the new command `claw webui`, on macOS
+  only, which waits up to 10 seconds for ClawEh to answer and otherwise says
+  that it is not running.
+- **`claw install --browser-setup` asks for the admin account in the
+  browser.** When no account exists, the installer serves a one-time page on
+  this machine (127.0.0.1 only) asking for the username and the password
+  twice, instead of prompting in the terminal. On macOS it opens the page in
+  the default browser of the account the service runs as; on Linux it shows
+  the link on the terminal. The link is shown only when the installer's
+  output is a terminal, never in a log; without a terminal and without a
+  browser, the installer stops at once. The account is still
+  created before the service is registered and started; the page then
+  follows the start and goes on to the WebUI once it answers. The page can
+  be used once and waits 5 minutes; after that, or on Ctrl+C, the installer
+  stops without registering or starting the service, and rerunning it is
+  safe. An existing account is kept, and `CLAW_ADMIN_USER` with
+  `CLAW_ADMIN_PASSWORD` still take precedence. Without the flag nothing
+  changes.
 
 ### Changed
 
@@ -114,6 +150,13 @@
 
 ### Fixed
 
+- **`claw install` shows the configured WebUI addresses when the
+  configuration cannot be loaded in full.** The summary at the end of an
+  install fell back to the default port when `config.json` named a secret
+  through an environment variable the installer's shell did not have. It now
+  reads only the saved `gateway` block. For the same reason, `CLAW_GATEWAY_*`
+  variables set only in the installer's shell no longer change that summary;
+  the service never received them.
 - **A valid service token is no longer refused just after a start or a
   configuration reload.** The MCP host opened its port before it had loaded
   the tokens issued with the `token` command, so a client calling in that

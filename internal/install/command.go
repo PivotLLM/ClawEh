@@ -5,6 +5,7 @@ package install
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -60,6 +62,7 @@ func NewInstallCommand() *cobra.Command {
 		targetUser   string
 		customBinDir string
 		yes          bool
+		browserSetup bool
 	)
 	cmd := &cobra.Command{
 		Use:   "install",
@@ -75,17 +78,22 @@ func NewInstallCommand() *cobra.Command {
 			"    • Linux: registers a systemd system service (/etc/systemd/system/claw.service)\n" +
 			"    • macOS: registers a launchd LaunchDaemon (/Library/LaunchDaemons/com.pivotllm.claweh.plist)\n" +
 			"    • Binary copied to /usr/local/bin\n\n" +
+			"On macOS it also adds \"" + global.MacAppName + "\" to Applications, which opens the WebUI in your\n" +
+			"browser; `" + app.BinaryName() + " uninstall` removes it.\n\n" +
 			"The WebUI requires an admin login. If <CLAW_HOME>/credentials.json does not exist, the\n" +
 			"installer creates the account before starting the service: from CLAW_ADMIN_USER and\n" +
 			"CLAW_ADMIN_PASSWORD when both are exported, else by prompting on the terminal (/dev/tty\n" +
 			"when stdin is a pipe). With neither it stops without starting the service. --yes does\n" +
-			"not skip this. An existing account is never changed; use `" + app.BinaryName() + " admin` to replace it.\n\n" +
+			"not skip this. With --browser-setup the prompt is a one-time page on this machine instead,\n" +
+			"opened in the default browser on macOS, and its link is shown when the installer runs in a\n" +
+			"terminal; it waits " + strconv.Itoa(int(admin.BrowserSetupLimit/time.Minute)) + " minutes.\n" +
+			"An existing account is never changed; use `" + app.BinaryName() + " admin` to replace it.\n\n" +
 			"On a headless host, pass --host 0.0.0.0 so the WebUI listens on the network, AND\n" +
 			"--allowed-cidrs to define allowed network clients (e.g. --allowed-cidrs 192.168.1.0/24).",
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runInstall(host, port, allowedCIDRs, targetUser, customBinDir, yes)
+			return runInstall(host, port, allowedCIDRs, targetUser, customBinDir, yes, browserSetup)
 		},
 	}
 	cmd.Flags().StringVar(&host, "host", "", "Plain-HTTP bind address for the WebUI/API (default 127.0.0.1; 0.0.0.0 serves unencrypted HTTP on every interface). HTTPS is placed by gateway.tls.mode. Empty keeps the current/seeded value.")
@@ -98,6 +106,7 @@ func NewInstallCommand() *cobra.Command {
 	cmd.Flags().StringVar(&targetUser, "user", "", "Target user account for service execution when running with sudo (defaults to $SUDO_USER).")
 	cmd.Flags().StringVar(&customBinDir, "bin-dir", "", "Custom directory to install the binary to (defaults to ~/bin or ~/.local/bin in user mode, /usr/local/bin in system mode).")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Skip interactive confirmation prompt.")
+	cmd.Flags().BoolVar(&browserSetup, "browser-setup", false, "Ask for the admin account on a one-time web page instead of the terminal.")
 	return cmd
 }
 
@@ -274,7 +283,7 @@ func confirmPrompt(prompt string, autoYes bool) (bool, error) {
 	return response == "y" || response == "yes", nil
 }
 
-func runInstall(host string, port int, allowedCIDRs, targetUser, customBinDir string, autoYes bool) error {
+func runInstall(host string, port int, allowedCIDRs, targetUser, customBinDir string, autoYes, useBrowserSetup bool) error {
 	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
 		return fmt.Errorf("`%s install` is only supported on Linux and macOS; this is %s", app.BinaryName(), runtime.GOOS)
 	}
@@ -361,6 +370,9 @@ func runInstall(host string, port int, allowedCIDRs, targetUser, customBinDir st
 	fmt.Printf("  Target Binary:   %s\n", targetBin)
 	fmt.Printf("  Alias Symlink:   %s -> %s\n", filepath.Join(binDir, openClawAlias), global.InstalledBinaryName)
 	fmt.Printf("  Service File:    %s\n", serviceFilePath)
+	if runtime.GOOS == "darwin" {
+		fmt.Printf("  App Icon:        %s\n", macAppPath(applicationsDir(tu)))
+	}
 	fmt.Println()
 
 	confirmed, err := confirmPrompt("Do you want to proceed with installation?", autoYes)
@@ -425,13 +437,30 @@ func runInstall(host string, port int, allowedCIDRs, targetUser, customBinDir st
 
 	// 4. Make sure the admin account exists, then register and start the
 	// background service. Without the account the service is not started.
-	adminUser, provErr := provisionAndRegister(tu, targetBin, binDir, clawHome, homeExisted)
+	var browser *browserSetup
+	if useBrowserSetup {
+		browser = newBrowserSetup()
+	}
+	adminUser, notAnswering, provErr := provisionAndRegister(tu, targetBin, binDir, clawHome, homeExisted, browser)
 	if provErr != nil {
 		return provErr
 	}
 	fixOwnership(filepath.Join(clawHome, "logs"), tu)
 
-	fmt.Println("\nInstalled and running.")
+	// 5. Add the app that opens the WebUI to Applications (macOS).
+	if runtime.GOOS == "darwin" {
+		if bundle, appErr := installMacApp(applicationsDir(tu), targetBin, clawHome); appErr != nil {
+			fmt.Printf("Warning: could not add the Applications icon (%v).\n", appErr)
+		} else {
+			fmt.Printf("Added to Applications: %s\n", bundle)
+		}
+	}
+
+	if notAnswering {
+		fmt.Printf("\nInstalled. %s has not answered yet.\n", app.ShortName())
+	} else {
+		fmt.Println("\nInstalled and running.")
+	}
 	printInstalledURLs(clawHome)
 	fmt.Printf("Admin account: %s (%s)\n", adminUser, admin.Path(clawHome))
 	fmt.Println()
@@ -483,12 +512,17 @@ var adminTerminal func(io.Writer) (*admin.Terminal, error)
 
 // provisionAndRegister ensures clawHome holds an admin account and only then
 // registers and starts the service, so an install never leaves a WebUI that
-// nobody can sign in to. It returns the account's username. homeExisted says
+// nobody can sign in to. It returns the account's username and, with the
+// one-time page only, whether the WebUI did not answer once started
+// (notAnswering). homeExisted says
 // whether clawHome was there before the install began; a directory the
-// installer created as root is handed to the service account.
-func provisionAndRegister(tu *TargetUser, targetBin, binDir, clawHome string, homeExisted bool) (string, error) {
+// installer created as root is handed to the service account. A non-nil
+// browser (--browser-setup) asks for a new account on a one-time page
+// (admin.BrowserSetup) instead of the terminal, and that page follows the
+// service start.
+func provisionAndRegister(tu *TargetUser, targetBin, binDir, clawHome string, homeExisted bool, browser *browserSetup) (string, bool, error) {
 	if err := os.MkdirAll(clawHome, 0o700); err != nil {
-		return "", fmt.Errorf("creating %s: %w", clawHome, err)
+		return "", false, fmt.Errorf("creating %s: %w", clawHome, err)
 	}
 	if !homeExisted {
 		fixOwnership(clawHome, tu)
@@ -497,25 +531,48 @@ func provisionAndRegister(tu *TargetUser, targetBin, binDir, clawHome string, ho
 	// an existing config; only that block is read.
 	perms, err := config.ReadPermissions(filepath.Join(clawHome, "config.json"))
 	if err != nil {
-		return "", fmt.Errorf("reading security.permissions: %w", err)
+		return "", false, fmt.Errorf("reading security.permissions: %w", err)
 	}
 	opts := admin.EnsureOptions{Home: clawHome, OpenTerminal: adminTerminal, FileMode: perms.Modes(config.AreaSecrets).File}
 	if tu.IsRoot {
 		opts.Chown = func(path string) error { return chownToTarget(path, tu) }
 	}
-	username, created, err := admin.EnsureAccount(opts)
+	var (
+		username string
+		created  bool
+		page     *admin.BrowserSetup // the one-time page, once it has the account
+	)
+	if browser != nil {
+		username, created, page, err = browser.ensureAccount(opts, tu)
+	} else {
+		username, created, err = admin.EnsureAccount(opts)
+	}
+	// From here on Ctrl+C is no longer intercepted, as without the page.
+	ctx := context.Background()
 	if err != nil {
-		return "", fmt.Errorf("%w\nThe %s service was not registered or started. Rerunning the installer is safe", err, serviceName)
+		if page != nil {
+			page.SaveFailed()
+			page.Close(ctx)
+		}
+		return "", false, fmt.Errorf("%w\nThe %s service was not registered or started. Rerunning the installer is safe", err, serviceName)
 	}
 	if created {
 		fmt.Printf("Created admin account %q (%s)\n", username, admin.Path(clawHome))
 	} else {
 		fmt.Printf("Admin account %q already exists (%s); left unchanged\n", username, admin.Path(clawHome))
 	}
-	if err := registerService(tu, targetBin, binDir, clawHome); err != nil {
-		return "", err
+	if page != nil {
+		page.AccountCreated()
 	}
-	return username, nil
+	if err := registerService(tu, targetBin, binDir, clawHome); err != nil {
+		if page != nil {
+			page.StartFailed()
+			page.Close(ctx)
+		}
+		return "", false, err
+	}
+	notAnswering := page != nil && !browser.finish(ctx, page, clawHome)
+	return username, notAnswering, nil
 }
 
 // chownToTarget hands path to the service account; unlike fixOwnership a
@@ -573,6 +630,11 @@ func runUninstall(targetUser string, autoYes bool) error {
 	fmt.Printf("\n%s Uninstallation Summary:\n", app.Name())
 	fmt.Printf("  Platform:     %s (%s)\n", runtime.GOOS, serviceManagerName())
 	fmt.Printf("  Target:       %s\n", serviceDesc)
+	if runtime.GOOS == "darwin" {
+		if bundle := macAppPath(applicationsDir(tu)); isOurMacApp(bundle) {
+			fmt.Printf("  App Icon:     %s\n", bundle)
+		}
+	}
 	fmt.Printf("  Action:       Stop service, disable autostart, and remove service file.\n")
 	fmt.Printf("  Note:         Installed binary and data in %s will NOT be deleted.\n\n", dataDirectory)
 
@@ -590,6 +652,11 @@ func runUninstall(targetUser string, autoYes bool) error {
 	case "darwin":
 		if err := uninstallLaunchd(tu); err != nil {
 			return fmt.Errorf("uninstalling launchd service: %w", err)
+		}
+		if removed, appErr := uninstallMacApp(applicationsDir(tu)); appErr != nil {
+			fmt.Printf("Warning: could not remove the Applications icon (%v).\n", appErr)
+		} else if removed != "" {
+			fmt.Printf("Removed from Applications: %s\n", removed)
 		}
 	}
 
@@ -707,15 +774,7 @@ func printListenerSummary(w io.Writer, gw config.GatewayConfig) {
 // printInstalledURLs prints the listener summary for the installed config,
 // or for the defaults when it cannot be read.
 func printInstalledURLs(clawHome string) {
-	gw := config.DefaultConfig().Gateway
-	cfgPath := internal.GetConfigPath()
-	if clawHome != "" {
-		cfgPath = filepath.Join(clawHome, "config.json")
-	}
-	if cfg, err := config.LoadConfig(cfgPath); err == nil {
-		gw = cfg.Gateway
-	}
-	printListenerSummary(os.Stdout, gw)
+	printListenerSummary(os.Stdout, installedGateway(clawHome))
 }
 
 // linkOpenClawAlias points <binDir>/openclaw at the installed binary. The link is

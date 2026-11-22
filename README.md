@@ -113,6 +113,8 @@ The one-line installer installs ClawEh as a background service, asks for the adm
 curl -fsSL https://raw.githubusercontent.com/PivotLLM/ClawEh/main/claw-online-install.sh | bash
 ```
 
+On a Mac you can skip the terminal: download [`bison9-agency-macos.pkg`](https://github.com/PivotLLM/ClawEh/releases/latest/download/bison9-agency-macos.pkg) and open it. It installs ClawEh as a service, for all users of the Mac (starting at boot) or for you only, then opens a page in your browser where you create the admin account. It also adds Bison9 Agency to Applications, which opens the WebUI.
+
 Or download an archive from [GitHub Releases](https://github.com/PivotLLM/ClawEh/releases) (Linux and macOS, amd64 and arm64) and run `./claw install` (`sudo ./claw install` for a service that starts at boot). Then open **http://localhost:18790** and sign in.
 
 Other options (a bare binary with `claweh.sh`, an unattended install, a headless or remote host) are in the manual: [Installing ClawEh](manual/getting-started/install.md), then [Quick start](manual/getting-started/quickstart.md).

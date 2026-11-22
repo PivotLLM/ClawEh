@@ -22,8 +22,8 @@ Options:
 
 | Command | What it does |
 |---|---|
-| `claw install` | Copies the binary, registers the background service, creates the admin account if there is none, and starts ClawEh. Run with `sudo` for a system service. |
-| `claw uninstall` | Stops and removes the service. The binary and the data directory are kept. |
+| `claw install` | Copies the binary, registers the background service, creates the admin account if there is none, and starts ClawEh. Run with `sudo` for a system service. On a Mac it also adds **Bison9 Agency** to Applications. |
+| `claw uninstall` | Stops and removes the service, and on a Mac removes **Bison9 Agency** from Applications. The binary and the data directory are kept. |
 | `claw upgrade` | Downloads the latest release, verifies its signature, replaces the binary and restarts the service. Alias: `claw update`. |
 | `claw version` | Shows the version. Alias: `claw v`. |
 
@@ -55,6 +55,7 @@ See [Installing ClawEh](../getting-started/install.md) and [Upgrading](../gettin
 | `claw admin [username]` | Creates or replaces the WebUI admin account. Asks for the password twice. Also clears every login lockout. |
 | `claw network [cidrs]` | Shows or sets who may reach the WebUI. |
 | `claw tls` | Shows the HTTPS certificate: source, names, expiry and fingerprint. |
+| `claw webui` | On a Mac only: opens the WebUI in your default browser. It is what **Bison9 Agency** in Applications runs. |
 
 `claw network`:
 
